@@ -1,96 +1,148 @@
-# Violyx 0.1.0
+# Violyx
 
-Eigenes 64-Bit-Betriebssystem für x86-PCs mit tastaturgesteuertem Desktop in
-Textoptik. Es startet per BIOS und UEFI über Limine. Kernel, Treiber, Dateisystem
-und Oberfläche sind eigener Code.
+**A keyboard-only 64-bit operating system for x86 PCs, with a retro text desktop in glowing violet.**
 
-## Starten in QEMU
+Violyx is written from scratch: its own kernel, drivers, file system, windowed text
+desktop and programs. There is no Linux underneath. It boots on BIOS and UEFI, connects
+to the internet and browses the web in a text browser, all without ever touching a mouse.
 
-    qemu-system-x86_64 -drive file=violyx.img,format=raw -m 256
+![Violyx boot logo](docs/logo.png)
 
-Mit UEFI (Pfad zur Firmware je nach Installation):
+| | |
+|---|---|
+| ![Programs](docs/programs.png) | ![Text browser](docs/browser.png) |
 
-    qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=edk2-x86_64-code.fd -drive file=violyx.img,format=raw -m 256
+> **Status: experimental hobby project (version 0.1.0).** Tested in QEMU and VirtualBox,
+> not yet on real hardware. Violyx has no memory protection, so please do not enter
+> passwords or use it for anything sensitive. See [Limitations](#limitations).
 
-## VirtualBox
+## Features
 
-Neue VM mit Typ "Other", Version "Other/Unknown (64-bit)", mindestens 256 MB RAM.
+- **Keyboard-only desktop** with overlapping windows, menus and dialogs
+- **Text browser** with HTTPS, certificate checks, links, search forms and link numbers
+- **Programs:** Write, Files, Commands, Calculator, Pong, Settings
+- **Networking:** Intel E1000 driver, DHCP, DNS, ping, TCP/IP via lwIP
+- **HTTPS:** TLS 1.2 and 1.3 via Mbed TLS with Mozilla root certificates
+- **Storage:** IDE, AHCI (SATA), NVMe and USB mass storage, with its own file system
+- **USB keyboards** on xHCI controllers, plus PS/2
+- **Installer** with several safety prompts
+- **Two languages:** English and German, with US and German keyboard layouts
+- **Boots on BIOS and UEFI** through the Limine bootloader
 
-- `violyx.vdi` als vorhandene Festplatte einbinden: Dateien werden gespeichert.
-- `violyx.iso` als CD einbinden: nur zum Ausprobieren, ohne Speichern.
+## Try it
 
-Für UEFI in der VM "EFI aktivieren" einschalten.
+Download `violyx.iso` or another image from the [Releases](../../releases) page.
 
-Für Netzwerk den Adapter auf "Intel PRO/1000 MT Desktop" stellen. Im Befehlsfenster zeigt
-`netz` den Status, `ping NAME` testet die Verbindung, `hole ADRESSE` ruft eine Seite ab.
+### QEMU
 
-## Sprache und Tastatur
+```sh
+qemu-system-x86_64 -drive file=violyx.img,format=raw -m 512 -nic user,model=e1000
+```
 
-Unter System, Einstellungen lassen sich Sprache (Deutsch, English) und Tastaturlayout
-(Deutsch, US) getrennt umstellen. Das wirkt sofort, bleibt gespeichert und wird bei der
-Installation übernommen.
+For UEFI, also pass your QEMU firmware file:
 
-## Installieren
+```sh
+qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=edk2-x86_64-code.fd \
+  -drive file=violyx.img,format=raw -m 512 -nic user,model=e1000
+```
 
-Von `violyx.iso` oder dem USB-Stick starten, dann System, Installieren. Violyx belegt die
-gesamte gewählte Platte, alle Daten darauf gehen verloren. Die Vorauswahl ist immer Nein,
-danach muss LÖSCHEN (auf Englisch DELETE) eingetippt werden. Das Installieren in eine einzelne Partition neben
-anderen Systemen wird noch nicht unterstützt.
+### VirtualBox
 
-## USB-Stick
+1. Create a VM with type **Other** and version **Other/Unknown (64-bit)**. The 64-bit
+   version matters: Violyx does not run on the 32-bit setting.
+2. Give it at least **512 MB** of memory.
+3. Attach `violyx.vdi` as an existing hard disk, or use `violyx.iso` to try Violyx
+   without saving.
+4. Set the network adapter type to **Intel PRO/1000 MT Desktop**.
+5. Optional: enable EFI to boot through UEFI.
 
-`violyx.img` lässt sich mit Rufus im DD-Modus auf einen Stick schreiben. Dabei wird
-der Stick komplett überschrieben. Violyx kann auf dem Stick auch speichern.
+### USB stick
 
-## Selbst bauen (Linux)
+Write `violyx.img` to a stick, for example with Rufus in DD mode. This erases the
+stick. Secure Boot must be turned off because Violyx is not signed.
 
-Benötigt: gcc, nasm, make, binutils, python3
+## Keyboard
 
-    make
-    make run
+| Key | Action |
+|---|---|
+| F1 | Help |
+| F2 | Programs overview |
+| F3 / F4 | Files / Commands |
+| F5 / F6 | Zoom / switch window |
+| F7 | Internet |
+| F9 | Calculator |
+| F10 | Menu |
+| Alt+S, P, W, H | Open a menu directly |
+| Esc | Close the window |
+| Ctrl+Arrows / Shift+Arrows | Move / resize the window |
 
-Die Ergebnisse liegen in `build/`: `violyx.img`, `violyx.iso` und `violyx.vdi`.
+In the browser: Tab selects links, Enter opens them, Backspace goes back, Ctrl+L opens
+the address bar. Press N to show link numbers, then type a number and Enter.
 
-## Bedienung
+## Language and keyboard layout
 
-F1 Hilfe, F2 Programmübersicht, F3 Dateien, F4 Befehle, F5 Zoom, F6 Fenster wechseln,
-F7 Internet, F9 Rechner, F10 Menü. Alt+S/P/F/H öffnet Menüs. Esc schließt das aktive Fenster.
-Strg+Pfeile verschiebt, Umschalt+Pfeile ändert die Größe.
+Violyx starts in English with a US keyboard layout. Change both under
+**System → Settings**. The choice takes effect immediately, is saved, and carries over
+into an installation.
 
-## Aufbau
+## Installing
 
-- `kernel/entry.asm`, `main.c`: Einstieg, Interrupts, Speicher, Timer, Uhr
-- `kernel/ui.c`: Grafikausgabe, Fenster, Menüs, Dialoge
-- `kernel/kbd.c`: Tastatur mit deutschem Layout, gemeinsam für PS/2 und USB
-- `kernel/pci.c`: Geräteerkennung
-- `kernel/disk.c`: Blockschicht, IDE und VioFS
-- `kernel/ahci.c`, `nvme.c`: SATA und NVMe
-- `kernel/xhci.c`: USB 3 mit Tastaturen und USB-Speicher
-- `kernel/acpi.c`: Ausschalten über ACPI
-- `kernel/net.c`: Intel-E1000-Treiber, lwIP-Anbindung, DNS, Ping und TCP
-- `kernel/tls.c`, `http.c`: HTTPS über Mbed TLS, HTTP-Abruf
-- `kernel/install.c`: Installer
-- `kernel/html.c`, `browser.c`: HTML-Layout (auch auf dem Host testbar) und Textbrowser
-- `kernel/apps.c`: Programme
+Start Violyx from the ISO or a USB stick and open **System → Install**.
 
-Neue Treiber melden sich bei der Blockschicht mit `blk_register()` an.
-USB-Eingaben laufen über `kbd_in()` durch denselben Tastaturtreiber wie PS/2.
+**Violyx always uses the entire disk and erases everything on it.** The default answer
+is always No, and you must type `DELETE` to continue. Installing into a single partition
+next to another system is not supported yet. Please check the disk model carefully.
 
-## Bekannte Grenzen
+## Build from source
 
-- Nur in QEMU getestet, noch nicht in VirtualBox oder auf echter Hardware.
-- Keine USB-Hubs, kein Einstecken im laufenden Betrieb, nur xHCI-Controller.
-- USB-Speicher und NVMe nur mit 512-Byte-Sektoren. Von der ISO aus kein Speichern.
-- Secure Boot muss aus sein, weil Violyx nicht signiert ist.
-- Netzwerk nur über Intel E1000, kein WLAN.
-- Browser ohne JavaScript, Bilder und Cookies, Seiten bis 4 MB. Formulare mit Text und Knöpfen, ohne Auswahllisten und Passwortfelder.
-- HTTPS prüft Zertifikate, aber keine Sperrlisten. Die Stammzertifikate werden nur mit Updates erneuert.
-- Antworten mit `hole` sind auf 1 MB begrenzt.
-- Keine getrennten Prozesse, kein Speicherschutz. Daher keine Passwörter verwenden.
+You need Linux with `gcc`, `nasm`, `make`, `binutils` and `python3`.
 
-Datenträger werden nur beschrieben, wenn sie eine Violyx-GPT-Partition mit
-gültiger VioFS-Signatur haben. Formatiert wird nie automatisch.
+```sh
+make
+```
 
-## Lizenz
+The results are in `build/`: `violyx.img`, `violyx.iso` and `violyx.vdi`.
 
-MIT, siehe `LICENSE`. Fremdkomponenten: siehe `THIRD-PARTY-NOTICES.md`.
+## Project layout
+
+| Path | Contents |
+|---|---|
+| `kernel/main.c`, `entry.asm` | Startup, interrupts, memory, timers, clock |
+| `kernel/ui.c` | Graphics output, windows, menus, dialogs |
+| `kernel/apps.c`, `browser.c` | Programs and text browser |
+| `kernel/html.c` | HTML layout, also testable on a host system |
+| `kernel/kbd.c`, `xhci.c` | Keyboard layouts, USB |
+| `kernel/disk.c`, `ahci.c`, `nvme.c` | Block layer, IDE, file system, storage drivers |
+| `kernel/net.c`, `tls.c`, `http.c` | Network driver, TLS, HTTP |
+| `kernel/install.c`, `acpi.c` | Installer, power off |
+| `tools/` | Image builders and test tools |
+| `third_party/` | Bundled components |
+
+## Limitations
+
+- No memory protection or separate processes: a bug can bring down the whole system.
+- Browser: no JavaScript, images, cookies or password fields. Many modern sites will not work.
+- Network: Intel E1000 cards only, no Wi-Fi.
+- USB: xHCI only, no hubs, devices must be connected at boot.
+- File system: 62 files of up to 64 KB each, no folders, 8 MB data area.
+- NVMe and USB storage: 512-byte sectors only.
+- Root certificates only update with new Violyx releases. Certificate revocation is not checked.
+
+## License
+
+Violyx is released under the [MIT License](LICENSE). Bundled components keep their own
+licenses, listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+## Deutsch
+
+Violyx ist ein eigenes 64-Bit-Betriebssystem für x86-PCs, das komplett per Tastatur
+bedient wird. Es hat einen Retro-Textdesktop in leuchtendem Violett, einen Textbrowser
+mit HTTPS und läuft ohne Linux-Unterbau.
+
+Violyx startet auf Englisch mit US-Tastatur. Unter **System → Settings** stellst du
+**Language** auf Deutsch und **Keyboard** auf das deutsche Layout um. Beides bleibt
+gespeichert.
+
+Violyx ist ein experimentelles Hobbyprojekt und bisher nur in QEMU und VirtualBox
+getestet. Es hat keinen Speicherschutz, gib daher keine Passwörter ein. Der Installer
+löscht die gesamte gewählte Platte.

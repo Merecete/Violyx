@@ -13,7 +13,7 @@ static const u8 us_base[0x59]={0,0,'1','2','3','4','5','6','7','8','9','0','-','
 static const u8 us_shft[0x59]={0,0,'!','@','#','$','%','^','&','*','(',')','_','+',0,0,
  'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,'A','S','D','F','G','H','J','K','L',':','"','~',0,'|',
  'Z','X','C','V','B','N','M','<','>','?',0,'*',0,' ',0,[0x4A]='-',[0x4E]='+',[0x56]='|'};
-int cfg_kbd;
+int cfg_kbd=1;
 static key_t q[64]; static volatile u8 qh,qt;
 static u8 shift,ctrl,alt,altgr,caps,ext; static volatile u8 held[128];
 int key_down(u8 s){ return held[s&127]; }

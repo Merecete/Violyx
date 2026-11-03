@@ -60,7 +60,7 @@ static void pit_check(void){
 }
 /* Die Hardware-Uhr bleibt unberuehrt. Violyx speichert die Abweichung zur
    gewuenschten Zeit, so bleibt sie auch in QEMU ueber Neustarts erhalten. */
-static int time_off; int cfg_wall,cfg_lang;
+static int time_off; int cfg_wall,cfg_lang=1;
 typedef struct { u32 magic; int off,wall,lang,kbd; } cfg_t;
 #define CFG_NAME ".system"
 static u32 to_secs(const rtc_t*t){ int y=t->year,m=t->mon; y-=m<=2; int era=y/400,yoe=y-era*400,doy=(153*(m+(m>2?-3:9))+2)/5+t->day-1,doe=yoe*365+yoe/4-yoe/100+doy;

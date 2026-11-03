@@ -56,7 +56,7 @@ static void sh_put(sh_t*s,const char*t){ if(s->n==SL){ memmove(s->l[0],s->l[1],(
 #define HOLE_MAX (1024*1024)
 static sh_t*sh_cur; static void sh_prog(const char*t){ sh_put(sh_cur,t); ui_render(); ui_show(); }
 static void sh_exec(sh_t*s){ char line[SW+4]; ksnprintf(line,SW+4,"> %s",s->in); sh_put(s,line); char*c=s->in; char*a=c; while(*a&&*a!=' ')a++; if(*a){*a++=0; while(*a==' ')a++;} char b[80];
-  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  type DATEI  del DATEI  edit DATEI  mem  zeit  ver  cls","dir  type FILE  del FILE  edit FILE  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE  neustart","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS  restart")); }
+  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  type DATEI  del DATEI  edit DATEI  mem  zeit  ver  cls","dir  type FILE  del FILE  edit FILE  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS")); sh_put(s,TR("neustart","restart")); }
   else if(!strcmp(c,"cls")||!strcmp(c,"clear")) s->n=0;
   else if(!strcmp(c,"ver")) sh_put(s,"Violyx " VERSION);
   else if(!strcmp(c,"echo")) sh_put(s,a);
