@@ -1,0 +1,99 @@
+#include "html.h"
+#ifdef HOST
+#include <string.h>
+#else
+void *memcpy(void*,const void*,size_t); void *memmove(void*,const void*,size_t); void *memset(void*,int,size_t); size_t strlen(const char*); int strncmp(const char*,const char*,size_t);
+#endif
+#include "cp437.h"
+int html_lang;
+/* Alle Eingaben kommen aus dem Netz und gelten als feindlich: jeder Schreibzugriff ist begrenzt. */
+#define MAXDEPTH 16
+typedef struct { const char *p,*e; hpage *g; int w,ind,col,pend,pre,bold,head,code,dim,lat,cell,tmode,blank; uint16_t lk; int form; int depth; int cnt[MAXDEPTH]; int stop; } C;
+static int lc(int c){ return c>='A'&&c<='Z'?c+32:c; }
+static int ws(int c){ return c==' '||c=='\n'||c=='\r'||c=='\t'||c=='\f'; }
+static int alnum(int c){ return (c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9'); }
+static int ieq(const char *a,const char *b,size_t n){ for(size_t i=0;i<n;i++) if(lc((unsigned char)a[i])!=lc((unsigned char)b[i]))return 0; return 1; }
+static int cstyle(C*c){ return c->lk?HS_LINK:c->head?HS_HEAD:c->code?HS_CODE:c->bold?HS_BOLD:c->dim?HS_DIM:HS_NORM; }
+static int room(C*c,uint32_t n){ hpage*g=c->g; if(g->used+n+8>=g->cap||g->nl+2>=g->maxl){ g->full=1; c->stop=1; return 0; } return 1; }
+static void pushline(C*c,uint32_t len){ hpage*g=c->g; hline*l=&g->l[g->nl]; if(g->nl+1<g->maxl){ l[1].off=l->off+len; l[1].len=0; l->len=len>65535?65535:(uint16_t)len; g->nl++; } }
+static void indent(C*c){ int n=c->ind>c->w/2?c->w/2:c->ind; if(!room(c,n))return; hpage*g=c->g; for(int i=0;i<n;i++){ g->ch[g->used]=' '; g->st[g->used]=HS_NORM; g->lk[g->used]=0; g->used++; } c->col=n; }
+static void newline(C*c){ hpage*g=c->g; if(c->stop)return; pushline(c,g->used-g->l[g->nl].off); c->col=0; c->pend=0; indent(c); }
+static int atstart(C*c){ int n=c->ind>c->w/2?c->w/2:c->ind; return c->col<=n; }
+static int atstart_any(C*c){ hpage*g=c->g; uint32_t o=g->l[g->nl].off; for(uint32_t i=o;i<g->used;i++) if(g->ch[i]!=' ')return 0; return 1; }
+static void flush(C*c){ if(!atstart(c))newline(c); }
+static void blank(C*c){ flush(c); if(c->blank||c->g->nl==0)return; if(c->g->nl>0&&c->g->l[c->g->nl-1].len==0)return; int s=c->ind; c->ind=0; hpage*g=c->g; g->used-=c->col; c->col=0; newline(c); c->ind=s; g->used-=c->col; c->col=0; indent(c); }
+static void reind(C*c,int d){ c->ind+=d; if(c->ind<0)c->ind=0; if(c->ind>60)c->ind=60; hpage*g=c->g; if(g->used>=g->l[g->nl].off+(uint32_t)c->col&&atstart_any(c)){ g->used-=c->col; c->col=0; indent(c); } }
+static void wrap(C*c){ hpage*g=c->g; uint32_t o=g->l[g->nl].off,L=g->used-o; uint8_t*h=g->ch+o; int sp=-1,n=c->ind>c->w/2?c->w/2:c->ind; for(int i=(int)L-1;i>n;i--) if(h[i]==' '){ sp=i; break; }
+  if(sp<0){ newline(c); return; } uint32_t tail=L-sp-1; if(!room(c,tail+n+2))return; pushline(c,(uint32_t)sp); uint32_t no=o+sp; g->l[g->nl].off=no; /* Zeile endet vor dem Leerzeichen */
+  uint32_t src=o+sp+1; memmove(g->ch+no+n,g->ch+src,tail); memmove(g->st+no+n,g->st+src,tail); memmove(g->lk+no+n,g->lk+src,tail*2); memset(g->ch+no,' ',n); memset(g->st+no,HS_NORM,n); memset(g->lk+no,0,n*2); g->used=no+n+tail; c->col=n+tail; }
+static void put(C*c,uint8_t b,int st){ if(c->stop||!room(c,1))return; hpage*g=c->g; if(c->col>=c->w)wrap(c); if(c->stop)return; g->ch[g->used]=b; g->st[g->used]=(uint8_t)st; g->lk[g->used]=c->lk; g->used++; c->col++; c->blank=0; }
+static void puts_(C*c,const char*s,int st){ while(*s)put(c,(uint8_t)*s++,st); }
+static void outcp(C*c,uint32_t u,int st){ if(u<32||u==127)return; if(u<127){ put(c,(uint8_t)u,st); return; } if(u==0xA0){ put(c,' ',st); return; }
+  int a=0,b=sizeof cp437_map/sizeof cp437_map[0]-1; while(a<=b){ int m=(a+b)/2; if(cp437_map[m].u==u){ put(c,cp437_map[m].c,st); return; } if(cp437_map[m].u<u)a=m+1; else b=m-1; }
+  switch(u){ case 0x2013:case 0x2014:case 0x2212:case 0x2010:case 0x2011: put(c,'-',st); break; case 0x2018:case 0x2019:case 0x201A:case 0x2032: put(c,'\'',st); break; case 0x201C:case 0x201D:case 0x201E:case 0x2033:case 0xAB:case 0xBB: put(c,'"',st); break; case 0x2026: puts_(c,"...",st); break; case 0x2022:case 0xB7:case 0x25CF: put(c,0xF9,st); break; case 0x20AC: puts_(c,"EUR",st); break; case 0xA9: puts_(c,"(c)",st); break; case 0xAE: puts_(c,"(R)",st); break; case 0x2122: puts_(c,"(TM)",st); break; case 0xD7: put(c,'x',st); break; case 0x2192: puts_(c,"->",st); break; case 0x2190: puts_(c,"<-",st); break; case 0x200B:case 0x200C:case 0x200D:case 0xAD:case 0xFEFF:case 0x200E:case 0x200F: break; default: put(c,'?',st); } }
+static void text1(C*c,uint32_t u){ int st=cstyle(c); if(!c->pre&&(u==' '||u=='\n'||u=='\r'||u=='\t'||u==12)){ if(!atstart(c))c->pend=1; return; } if(c->pre){ if(u=='\n'){ newline(c); return; } if(u=='\r')return; if(u=='\t'){ for(int i=0;i<4;i++)put(c,' ',st); return; } } if(c->pend){ c->pend=0; put(c,' ',st); } outcp(c,u,st); }
+static uint32_t nextcp(const char**pp,const char*e,int lat){ const uint8_t*p=(const uint8_t*)*pp; uint8_t b=*p++; uint32_t u=b; if(!lat&&b>=0x80){ int n=b>=0xF0?3:b>=0xE0?2:b>=0xC0?1:-1; if(n<0||(const char*)p+n>e){ u=0xFFFD; } else { u=b&(0x3F>>n); int ok=1; for(int i=0;i<n;i++){ if((p[i]&0xC0)!=0x80){ ok=0; break; } u=u<<6|(p[i]&0x3F); } if(ok)p+=n; else u=0xFFFD; } } *pp=(const char*)p; return u; }
+static const struct { const char*n; uint16_t u; } ents[]={{"amp",'&'},{"lt",'<'},{"gt",'>'},{"quot",'"'},{"apos",'\''},{"nbsp",0xA0},{"auml",0xE4},{"ouml",0xF6},{"uuml",0xFC},{"Auml",0xC4},{"Ouml",0xD6},{"Uuml",0xDC},{"szlig",0xDF},{"euro",0x20AC},{"ndash",0x2013},{"mdash",0x2014},{"hellip",0x2026},{"laquo",0xAB},{"raquo",0xBB},{"copy",0xA9},{"reg",0xAE},{"middot",0xB7},{"bull",0x2022},{"times",0xD7},{"bdquo",0x201E},{"ldquo",0x201C},{"rdquo",0x201D},{"lsquo",0x2018},{"rsquo",0x2019},{"shy",0xAD},{"eacute",0xE9},{"egrave",0xE8},{"agrave",0xE0},{"ccedil",0xE7},{"deg",0xB0},{"sect",0xA7},{"trade",0x2122},{"rarr",0x2192},{"larr",0x2190},{"zwnj",0x200C},{"zwj",0x200D},{0,0}};
+/* Dekodiert eine Entitaet ab p; gibt Code und neue Position zurueck, 0 wenn keine gueltige */
+static uint32_t entity(const char*p,const char*e,const char**o){ const char*q=p+1; if(q<e&&*q=='#'){ q++; uint32_t v=0; int hex=q<e&&(*q=='x'||*q=='X'),n=0; if(hex)q++; while(q<e&&n<8){ int d=*q>='0'&&*q<='9'?*q-'0':hex&&lc(*q)>='a'&&lc(*q)<='f'?lc(*q)-'a'+10:-1; if(d<0)break; v=v*(hex?16:10)+d; q++; n++; } if(!n)return 0; if(q<e&&*q==';')q++; *o=q; return v?v:0xFFFD; }
+  const char*s=q; while(q<e&&q-s<10&&alnum(*q))q++; size_t l=q-s; if(!l)return 0; for(int i=0;ents[i].n;i++) if(strlen(ents[i].n)==l&&!strncmp(ents[i].n,s,l)){ if(q<e&&*q==';')q++; *o=q; return ents[i].u; } return 0; }
+uint16_t html_cp437_uni(uint8_t c){ if(c<0x80)return c; for(unsigned i=0;i<sizeof cp437_map/sizeof cp437_map[0];i++) if(cp437_map[i].c==c)return cp437_map[i].u; return '?'; }
+uint32_t html_hash(const char*s){ uint32_t h=2166136261u; for(;*s;s++)h=(h^(uint8_t)*s)*16777619u; return h; }
+static uint32_t hashn(const char*s,size_t n){ uint32_t h=2166136261u; while(n--)h=(h^(uint8_t)*s++)*16777619u; return h; }
+enum { A_HREF,A_ID,A_NAME,A_ALT,A_TYPE,A_VALUE,A_ACTION,A_METHOD,A_N };
+typedef struct { const char*v[A_N]; int n[A_N]; int hidden,checked; } attrs;
+/* Liest die Attribute bis zum Tag-Ende */
+static void parse_attrs(C*c,attrs*a){ memset(a,0,sizeof*a); const char*p=c->p,*e=c->e; while(p<e&&*p!='>'){ if(ws(*p)||*p=='/'){ p++; continue; } const char*k=p; while(p<e&&!ws(*p)&&*p!='='&&*p!='>'&&*p!='/')p++; size_t kl=p-k; while(p<e&&ws(*p))p++; const char*v=0; size_t vl=0; if(p<e&&*p=='='){ p++; while(p<e&&ws(*p))p++; if(p<e&&(*p=='"'||*p=='\'')){ char q=*p++; v=p; while(p<e&&*p!=q)p++; vl=p-v; if(p<e)p++; } else { v=p; while(p<e&&!ws(*p)&&*p!='>')p++; vl=p-v; } }
+    if(!kl){ if(p<e&&*p!='>')p++; continue; } int i=kl==4&&ieq(k,"href",4)?A_HREF:kl==2&&ieq(k,"id",2)?A_ID:kl==4&&ieq(k,"name",4)?A_NAME:kl==3&&ieq(k,"alt",3)?A_ALT:kl==4&&ieq(k,"type",4)?A_TYPE:kl==5&&ieq(k,"value",5)?A_VALUE:kl==6&&ieq(k,"action",6)?A_ACTION:kl==6&&ieq(k,"method",6)?A_METHOD:-1; if(i>=0&&v&&vl<4096){ a->v[i]=v; a->n[i]=(int)vl; } if(kl==6&&ieq(k,"hidden",6))a->hidden=1; if(kl==7&&ieq(k,"checked",7))a->checked=1; }
+  if(p<e)p++; c->p=p; }
+static int pool_add(C*c,const char*s,int n){ hpage*g=c->g; uint32_t o=g->pu; if(o+(uint32_t)n+2>=g->pc)return -1; char*w=g->pool+o; const char*p=s,*e=s+n; while(p<e){ if(*p=='&'){ const char*q; uint32_t u=entity(p,e,&q); if(u&&u<128){ *w++=(char)u; p=q; continue; } } *w++=*p++; } *w++=0; g->pu=(uint32_t)(w-g->pool); return (int)o; }
+static int newlink(C*c,uint32_t off,int field){ hpage*g=c->g; if(g->nlk>=g->maxlk||g->nlk>=65000)return 0; g->links[g->nlk].off=off; g->links[g->nlk].line=-1; g->links[g->nlk].field=field; g->nlk++; return g->nlk; }
+static void linknum(C*c,int id,int st){ if(!c->g->nums)return; char b[12]; int k=0; b[k++]='['; int d=id>=10000?10000:id>=1000?1000:id>=100?100:id>=10?10:1; for(;d;d/=10)b[k++]='0'+(id/d)%10; b[k++]=']'; b[k]=0; uint16_t s=c->lk; c->lk=0; puts_(c,b,HS_DIM); c->lk=s; (void)st; }
+static int addfield(C*c,int type,const attrs*a,int cols){ hpage*g=c->g; if(c->form<0||g->nf>=g->maxf||(!a->v[A_NAME]&&type!=HF_SUBMIT))return -1; int nm=a->v[A_NAME]?pool_add(c,a->v[A_NAME],a->n[A_NAME]):pool_add(c,"",0); int vl=a->v[A_VALUE]?pool_add(c,a->v[A_VALUE],a->n[A_VALUE]):pool_add(c,"",0); if(nm<0||vl<0)return -1; hfield*f=&g->fld[g->nf]; f->name=(uint32_t)nm; f->value=(uint32_t)vl; f->form=c->form; f->type=type; f->link=0; f->cols=cols; return g->nf++; }
+static void pendsp(C*c){ if(c->pend){ c->pend=0; put(c,' ',cstyle(c)); } }
+static void widget_text(C*c,const attrs*a,int cols){ int f=addfield(c,HF_TEXT,a,cols); if(f<0)return; int id=newlink(c,0,f); if(!id)return; c->g->fld[f].link=id; pendsp(c); if(c->col+cols+10>=c->w)flush(c); linknum(c,id,0); uint16_t s=c->lk; c->lk=(uint16_t)id; put(c,'[',HS_FIELD); for(int i=0;i<cols;i++)put(c,'_',HS_FIELD); put(c,']',HS_FIELD); c->lk=s; }
+static void widget_submit(C*c,const attrs*a,const char*lab,size_t ll){ int f=addfield(c,HF_SUBMIT,a,0); if(f<0)return; int id=newlink(c,0,f); if(!id)return; c->g->fld[f].link=id; pendsp(c); if(c->col+(int)(ll<28?ll:28)+10>=c->w)flush(c); linknum(c,id,0); uint16_t s=c->lk; c->lk=(uint16_t)id; put(c,'[',HS_FIELD); put(c,' ',HS_FIELD); const char*t=lab,*te=lab+ll; int k=0; while(t<te&&k<28){ uint32_t u=nextcp(&t,te,c->lat); if(u=='<'||u<32)break; outcp(c,u,HS_FIELD); k++; } put(c,' ',HS_FIELD); put(c,']',HS_FIELD); c->lk=s; }
+static void skip_raw(C*c,const char*name,size_t l){ const char*p=c->p,*e=c->e; while(p+l+2<e){ if(p[0]=='<'&&p[1]=='/'&&ieq(p+2,name,l)){ p+=2+l; while(p<e&&*p!='>')p++; c->p=p<e?p+1:e; return; } p++; } c->p=e; }
+#define IS(s) (nl==sizeof(s)-1&&!strncmp(n,s,nl))
+static void tag(C*c){ const char*p=c->p+1,*e=c->e; int cl_=0; if(p<e&&*p=='/'){ cl_=1; p++; } char n[16]; size_t nl=0; while(p<e&&(alnum(*p)||*p=='-'||*p==':')){ if(nl<15)n[nl++]=(char)lc(*p); p++; } n[nl]=0; c->p=p; attrs a; if(cl_){ while(c->p<e&&*c->p!='>')c->p++; if(c->p<e)c->p++; memset(&a,0,sizeof a); } else parse_attrs(c,&a);
+  if(!cl_){ hpage*g=c->g; for(int k=1;k<=2;k++) if(a.v[k]&&g->nan<g->maxan){ g->anch[g->nan].h=hashn(a.v[k],a.n[k]); g->anch[g->nan].line=g->nl; g->nan++; } }
+  if(IS("form")){ flush(c); if(cl_){ c->form=-1; return; } hpage*g=c->g; c->form=-1; if(g->nfrm<g->maxfrm){ int o=a.v[A_ACTION]?pool_add(c,a.v[A_ACTION],a.n[A_ACTION]):pool_add(c,"",0); if(o>=0){ g->frm[g->nfrm].action=(uint32_t)o; g->frm[g->nfrm].post=a.v[A_METHOD]&&a.n[A_METHOD]==4&&ieq(a.v[A_METHOD],"post",4); c->form=g->nfrm++; } } return; }
+  if(!cl_&&IS("input")){ const char*t=a.v[A_TYPE]; int tl=a.n[A_TYPE]; if(!t||(tl==4&&ieq(t,"text",4))||(tl==6&&ieq(t,"search",6))||(tl==5&&ieq(t,"email",5))||(tl==3&&(ieq(t,"url",3)||ieq(t,"tel",3)))||(tl==6&&ieq(t,"number",6))){ widget_text(c,&a,20); return; } if(tl==8&&ieq(t,"password",8)){ pendsp(c); puts_(c,html_lang?"[Password field disabled]":"[Passwortfeld gesperrt]",HS_DIM); return; } if(tl==6&&ieq(t,"hidden",6)){ addfield(c,HF_HIDDEN,&a,0); return; } if((tl==8&&ieq(t,"checkbox",8))||(tl==5&&ieq(t,"radio",5))){ if(a.checked)addfield(c,HF_HIDDEN,&a,0); return; } if((tl==6&&ieq(t,"submit",6))||(tl==5&&ieq(t,"image",5))){ const char*dfl=html_lang?"Send":"Senden"; const char*l=a.v[A_VALUE]?a.v[A_VALUE]:a.v[A_ALT]?a.v[A_ALT]:dfl; size_t n2=a.v[A_VALUE]?(size_t)a.n[A_VALUE]:a.v[A_ALT]?(size_t)a.n[A_ALT]:strlen(dfl); widget_submit(c,&a,l,n2); } return; }
+  if(!cl_&&IS("textarea")){ widget_text(c,&a,30); skip_raw(c,n,nl); return; }
+  if(!cl_&&IS("button")){ const char*s=c->p; skip_raw(c,n,nl); const char*t=a.v[A_TYPE]; if(t&&!(a.n[A_TYPE]==6&&ieq(t,"submit",6)))return; const char*q=s; while(q<c->p&&*q=='<'){ while(q<c->p&&*q!='>')q++; if(q<c->p)q++; while(q<c->p&&ws(*q))q++; } const char*qe=q; while(qe<c->p&&*qe!='<')qe++; while(qe>q&&ws(qe[-1]))qe--; if(qe==q){ q=html_lang?"Send":"Senden"; qe=q+strlen(q); } if(qe-q>4095)qe=q+4095; widget_submit(c,&a,q,(size_t)(qe-q)); return; }
+  if(!cl_&&(IS("script")||IS("style")||IS("svg")||IS("template")||IS("select")||IS("iframe")||IS("object")||IS("canvas"))){ skip_raw(c,n,nl); return; }
+  if(!cl_&&IS("title")){ const char*s=c->p; skip_raw(c,"title",5); hpage*g=c->g; const char*t=s; int o=0; while(t<c->p&&o<78&&*t!='<'){ uint32_t u; if(*t=='&'){ const char*q; u=entity(t,c->p,&q); if(u)t=q; else { u='&'; t++; } } else u=nextcp(&t,c->p,c->lat); if(u=='\n'||u=='\r'||u=='\t')u=' '; if(u<127&&u>=32)g->title[o++]=(char)u; else if(u==0xE4||u==0xF6||u==0xFC||u==0xC4||u==0xD6||u==0xDC||u==0xDF){ uint8_t m=u==0xE4?0x84:u==0xF6?0x94:u==0xFC?0x81:u==0xC4?0x8E:u==0xD6?0x99:u==0xDC?0x9A:0xE1; g->title[o++]=(char)m; } else if(u>=0x2010&&u<=0x2015)g->title[o++]='-'; } g->title[o]=0; return; }
+  if(IS("br")){ if(!cl_){ if(atstart(c)&&c->col==0)indent(c); newline(c); } return; }
+  if(IS("hr")){ if(!cl_){ blank(c); int s=c->col; for(int i=s;i<c->w-1;i++)put(c,0xC4,HS_DIM); newline(c); } return; }
+  if(IS("h1")||IS("h2")||IS("h3")||IS("h4")||IS("h5")||IS("h6")){ blank(c); c->head=!cl_; c->pend=0; return; }
+  if(IS("blockquote")){ if(cl_){ flush(c); reind(c,-2); blank(c); } else { blank(c); reind(c,2); } return; }
+  if(IS("p")||IS("dl")||IS("figure")){ blank(c); return; }
+  if(IS("div")||IS("section")||IS("article")||IS("header")||IS("footer")||IS("main")||IS("nav")||IS("aside")||IS("dd")||IS("dt")||IS("figcaption")||IS("caption")||IS("center")||IS("details")||IS("summary")||IS("address")){ flush(c); return; }
+  if(IS("ul")||IS("ol")){ if(c->depth)flush(c); else blank(c); if(!cl_){ if(c->depth<MAXDEPTH-1){ c->depth++; c->cnt[c->depth]=IS("ol")?1:0; } reind(c,2); } else { if(c->depth>0)c->depth--; reind(c,-2); if(!c->depth)blank(c); } return; }
+  if(IS("li")){ flush(c); if(!cl_){ int s=c->lk; c->lk=0; if(c->cnt[c->depth]){ int v=c->cnt[c->depth]++; char b[12]; int k=0; if(v>=1000)b[k++]='0'+v/1000%10; if(v>=100)b[k++]='0'+v/100%10; if(v>=10)b[k++]='0'+v/10%10; b[k++]='0'+v%10; b[k++]='.'; b[k++]=' '; b[k]=0; puts_(c,b,HS_DIM); } else { put(c,0xF9,HS_DIM); put(c,' ',HS_NORM); } c->lk=s; } return; }
+  if(IS("tr")){ flush(c); c->cell=0; return; } if(IS("table")){ blank(c); c->cell=0; return; }
+  if(IS("td")||IS("th")){ if(!cl_){ if(c->cell){ c->pend=0; puts_(c," | ",HS_DIM); } c->cell=1; c->pend=0; if(IS("th"))c->bold++; } else if(IS("th")&&c->bold)c->bold--; return; }
+  if(IS("b")||IS("strong")||IS("em")||IS("i")){ if(cl_){ if(c->bold)c->bold--; } else if(c->bold<16)c->bold++; return; }
+  if(IS("pre")){ blank(c); c->pre=!cl_; c->code=!cl_; return; } if(IS("code")||IS("kbd")||IS("samp")||IS("tt")){ if(!c->pre)c->code=!cl_; return; }
+  if(IS("a")){ if(cl_){ c->lk=0; return; } c->lk=0; if(a.v[0]){ int o=pool_add(c,a.v[0],a.n[0]); if(o>=0){ int id=newlink(c,(uint32_t)o,-1); if(id){ pendsp(c); linknum(c,id,0); c->lk=(uint16_t)id; } } } return; }
+  if(IS("img")&&!cl_){ if(a.v[3]&&a.n[3]){ if(c->pend){ c->pend=0; put(c,' ',cstyle(c)); } put(c,'[',HS_DIM); const char*t=a.v[3],*te=t+a.n[3]; int k=0; while(t<te&&k<60){ uint32_t u; if(*t=='&'){ const char*q; u=entity(t,te,&q); if(u)t=q; else { u='&'; t++; } } else u=nextcp(&t,te,c->lat); outcp(c,u<32?' ':u,c->lk?HS_LINK:HS_DIM); k++; } put(c,']',HS_DIM); } else if(c->lk)puts_(c,html_lang?"[Image]":"[Bild]",HS_LINK); return; }
+}
+void html_layout(const char*src,size_t len,int w,int lat,int plain,hpage*g){ C c; memset(&c,0,sizeof c); if(w<20)w=20; if(w>400)w=400; c.p=src;c.e=src+len;c.g=g;c.w=w;c.lat=lat;c.form=-1; g->nf=0;g->nfrm=0; g->nl=0;g->used=0;g->pu=0;g->nlk=0;g->nan=0;g->title[0]=0;g->full=0; g->l[0].off=0;g->l[0].len=0; c.blank=1;
+  if(plain)c.pre=1; while(c.p<c.e&&!c.stop){ char ch=*c.p; if(ch=='<'&&!plain&&c.p+1<c.e){ char d=c.p[1]; if(d=='!'){ if(c.p+3<c.e&&c.p[2]=='-'&&c.p[3]=='-'){ const char*q=c.p+4; while(q+2<c.e&&!(q[0]=='-'&&q[1]=='-'&&q[2]=='>'))q++; c.p=q+3<=c.e?q+3:c.e; } else { while(c.p<c.e&&*c.p!='>')c.p++; if(c.p<c.e)c.p++; } continue; } if(d=='?'){ while(c.p<c.e&&*c.p!='>')c.p++; if(c.p<c.e)c.p++; continue; } if(alnum((unsigned char)d)||d=='/'){ tag(&c); continue; } }
+    if(ch=='&'&&!plain){ const char*q; uint32_t u=entity(c.p,c.e,&q); if(u){ c.p=q; text1(&c,u); continue; } } const char*t=c.p; uint32_t u=nextcp(&t,c.e,lat); c.p=t; text1(&c,u); }
+  uint32_t ll=g->used-g->l[g->nl].off; if(ll&&g->nl+1<g->maxl)pushline(&c,ll);
+  for(uint32_t i=0;i<g->used;i++) if(g->lk[i]&&g->links[g->lk[i]-1].line<0){ int a=0,b=g->nl>0?g->nl-1:0; while(a<b){ int m=(a+b+1)/2; if(g->l[m].off<=i)a=m; else b=m-1; } g->links[g->lk[i]-1].line=a; } }
+static size_t sl(const char*s,size_t m){ size_t n=0; while(n<m&&s[n])n++; return n; }
+static int hasscheme(const char*r){ const char*p=r; if(!((*p>='a'&&*p<='z')||(*p>='A'&&*p<='Z')))return 0; while(alnum(*p)||*p=='+'||*p=='-'||*p=='.')p++; return *p==':'; }
+int html_resolve(const char*b,const char*r,char*o,size_t n){ while(*r==' '||*r=='\n'||*r=='\t')r++; if(n<16)return -1; size_t bl=sl(b,4096),m=0;
+  size_t sc=0; while(sc+2<bl&&!(b[sc]==':'&&b[sc+1]=='/'&&b[sc+2]=='/'))sc++; if(sc+2>=bl)return -1; size_t hs=sc+3,he=hs; while(he<bl&&b[he]!='/'&&b[he]!='?'&&b[he]!='#')he++;
+#define OUT(c) do{ if(m+4>=n)return -1; char x=(c); if(x==' '){ o[m++]='%';o[m++]='2';o[m++]='0'; } else o[m++]=x; }while(0)
+  if(hasscheme(r)){ if(strncmp(r,"http://",7)&&strncmp(r,"https://",8)&&strncmp(r,"HTTP://",7)&&strncmp(r,"HTTPS://",8))return -1; for(const char*p=r;*p;p++)OUT(*p); o[m]=0; return 0; }
+  if(r[0]=='/'&&r[1]=='/'){ for(size_t i=0;i<=sc;i++)OUT(b[i]); for(const char*p=r;*p;p++)OUT(*p); o[m]=0; return 0; }
+  for(size_t i=0;i<he;i++)OUT(b[i]);
+  size_t pe=he; while(pe<bl&&b[pe]!='?'&&b[pe]!='#')pe++;
+  if(r[0]=='/'){ for(const char*p=r;*p;p++)OUT(*p); o[m]=0; return 0; }
+  if(r[0]=='#'||r[0]==0){ size_t qe=he; while(qe<bl&&b[qe]!='#')qe++; for(size_t i=he;i<qe;i++)OUT(b[i]); if(qe==he)OUT('/'); for(const char*p=r;*p;p++)OUT(*p); o[m]=0; return 0; }
+  if(r[0]=='?'){ for(size_t i=he;i<pe;i++)OUT(b[i]); if(pe==he)OUT('/'); for(const char*p=r;*p;p++)OUT(*p); o[m]=0; return 0; }
+  size_t dir=he; for(size_t i=he;i<pe;i++) if(b[i]=='/')dir=i+1; size_t root=m; if(dir==he)OUT('/'); else for(size_t i=he;i<dir;i++)OUT(b[i]);
+  const char*p=r; while(*p){ if(p[0]=='.'&&p[1]=='/'){ p+=2; continue; } if(p[0]=='.'&&p[1]=='.'&&(p[2]=='/'||p[2]==0)){ p+=p[2]?3:2; if(m>root+1){ m--; while(m>root+1&&o[m-1]!='/')m--; } continue; } while(*p&&*p!='/'&&*p!='?'&&*p!='#')OUT(*p++); if(*p=='/'){ OUT('/'); p++; } else if(*p){ while(*p)OUT(*p++); } } o[m]=0; return 0; }
