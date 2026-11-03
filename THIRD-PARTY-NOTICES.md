@@ -1,15 +1,15 @@
-# Fremdkomponenten
+# Third-Party Notices
 
-Violyx selbst steht unter der MIT-Lizenz (siehe `LICENSE`). Diese Komponenten
-behalten ihre eigenen Lizenzen. Ihre Hinweise müssen bei einer Weitergabe,
-auch als fertiges Abbild, mitgeliefert werden.
+Violyx itself is released under the MIT License (see `LICENSE`). The components below
+keep their own licenses. Their notices must be included when Violyx is redistributed,
+including as a prebuilt image.
 
-| Komponente | Zweck | Lizenz | Lizenztext |
+| Component | Purpose | License | License text |
 |---|---|---|---|
-| Limine 9.x | Bootloader für BIOS und UEFI | BSD-2-Clause | `third_party/limine/LICENSE` |
-| Limine-Abhängigkeiten | in den Limine-Binärdateien enthalten | u. a. BSD, MIT, Zlib, Apache-2.0 WITH LLVM-exception | Übersicht in `third_party/limine/3RDPARTY.md` |
-| `kernel/limine.h` | Limine-Bootprotokoll | 0BSD | Kopf der Datei |
-| lwIP 2.2.1 | TCP/IP | BSD-3-Clause | `third_party/lwip/COPYING` |
-| Mbed TLS 3.6.7 | TLS, Kryptografie, Zertifikatsprüfung | Apache-2.0 (gewählt aus Apache-2.0 OR GPL-2.0-or-later) | `third_party/mbedtls/LICENSE` |
-| Mozilla-Stammzertifikate (über certifi) | vertrauenswürdige Zertifizierungsstellen | MPL-2.0 | `third_party/cacert/LICENSE-certifi.txt` |
-| Spleen 8x16 | Systemschrift | BSD-2-Clause | `third_party/spleen/LICENSE` |
+| Limine 9.x | BIOS and UEFI bootloader | BSD-2-Clause | `third_party/limine/LICENSE` |
+| Limine dependencies | Included in the Limine binaries | BSD, MIT, Zlib, Apache-2.0 WITH LLVM-exception and others | Overview in `third_party/limine/3RDPARTY.md` |
+| `kernel/limine.h` | Limine boot protocol | 0BSD | File header |
+| lwIP 2.2.1 | TCP/IP stack | BSD-3-Clause | `third_party/lwip/COPYING` |
+| Mbed TLS 3.6.7 | TLS, cryptography, certificate verification | Apache-2.0 (chosen from Apache-2.0 OR GPL-2.0-or-later) | `third_party/mbedtls/LICENSE` |
+| Mozilla root certificates (via certifi) | Trusted certificate authorities | MPL-2.0 | `third_party/cacert/LICENSE-certifi.txt` |
+| Spleen 8x16 | System font | BSD-2-Clause | `third_party/spleen/LICENSE` |
