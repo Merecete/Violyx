@@ -132,17 +132,3 @@ The results are in `build/`: `violyx.img`, `violyx.iso` and `violyx.vdi`.
 
 Violyx is released under the [MIT License](LICENSE). Bundled components keep their own
 licenses, listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-
-## Deutsch
-
-Violyx ist ein eigenes 64-Bit-Betriebssystem für x86-PCs, das komplett per Tastatur
-bedient wird. Es hat einen Retro-Textdesktop in leuchtendem Violett, einen Textbrowser
-mit HTTPS und läuft ohne Linux-Unterbau.
-
-Violyx startet auf Englisch mit US-Tastatur. Unter **System → Settings** stellst du
-**Language** auf Deutsch und **Keyboard** auf das deutsche Layout um. Beides bleibt
-gespeichert.
-
-Violyx ist ein experimentelles Hobbyprojekt und bisher nur in QEMU und VirtualBox
-getestet. Es hat keinen Speicherschutz, gib daher keine Passwörter ein. Der Installer
-löscht die gesamte gewählte Platte.
