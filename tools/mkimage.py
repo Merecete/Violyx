@@ -3,7 +3,7 @@
 import os, struct, sys, zlib, uuid
 kernel, limdir, conf, out = sys.argv[1:5]
 module = sys.argv[5] if len(sys.argv)>5 else None
-SEC=512; ESP_SEC=128*1024; FS_SEC=16*1024; START=2048
+SEC=512; ESP_SEC=128*1024; FS_SEC=64*1024; START=2048
 TOTAL=START+ESP_SEC+FS_SEC+2048
 class Fat:
     def __init__(s,sectors):
@@ -69,7 +69,7 @@ esp=f.build()
 img=bytearray(TOTAL*SEC)
 img[START*SEC:START*SEC+len(esp)]=esp
 fs_lba=START+ESP_SEC
-img[fs_lba*SEC:fs_lba*SEC+16]=b'VIOLYXFS'+struct.pack('<II',1,62)
+img[fs_lba*SEC:fs_lba*SEC+8]=b'VIOFSNEW'
 # GPT
 def part(typ,uid,a,b,name): return typ+uid+struct.pack('<QQQ',a,b,0)+name.encode('utf-16-le').ljust(72,b'\0')
 ESP=uuid.UUID('C12A7328-F81F-11D2-BA4B-00A0C93EC93B').bytes_le

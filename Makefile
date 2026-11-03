@@ -12,7 +12,7 @@ MBSRC   = $(wildcard $(MB)/library/*.c)
 MBOBJ   = $(patsubst $(MB)/library/%.c,build/mb/%.o,$(MBSRC))
 CACERTS ?= third_party/cacert/cacert.pem
 INC     = -Ikernel/lwip_port -Ikernel/libc -I$(LW)/include -I$(MB)/include -Ikernel/mbed_port -DMBEDTLS_CONFIG_FILE='"violyx_tls_config.h"'
-OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/tls.o build/http.o build/html.o build/browser.o build/install.o $(LWOBJ) $(MBOBJ)
+OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/tls.o build/http.o build/html.o build/browser.o build/install.o build/viofs.o build/fat.o build/drives.o $(LWOBJ) $(MBOBJ)
 all: build/violyx.img build/violyx.iso build/violyx.vdi
 build/font.h: tools/mkfont.py
 	@mkdir -p build
@@ -26,6 +26,8 @@ build/cp437.h: tools/mkcp437.py
 	@mkdir -p build
 	python3 tools/mkcp437.py $@
 build/html.o: build/cp437.h kernel/html.h
+build/fat.o: build/cp437.h kernel/fat.h kernel/viofs.h
+build/drives.o: kernel/fat.h kernel/viofs.h
 build/browser.o: kernel/html.h
 build/http.o: kernel/html.h
 build/mb/%.o: $(MB)/library/%.c kernel/mbed_port/violyx_tls_config.h

@@ -6,6 +6,7 @@ REQ struct limine_framebuffer_request fbreq={.id=LIMINE_FRAMEBUFFER_REQUEST,.rev
 REQ struct limine_memmap_request mmreq={.id=LIMINE_MEMMAP_REQUEST,.revision=0};
 REQ struct limine_hhdm_request hhreq={.id=LIMINE_HHDM_REQUEST,.revision=0};
 REQ struct limine_rsdp_request rsreq={.id=LIMINE_RSDP_REQUEST,.revision=0};
+REQ struct limine_kernel_file_request kfreq={.id=LIMINE_KERNEL_FILE_REQUEST,.revision=0};
 REQ struct limine_module_request modreq={.id=LIMINE_MODULE_REQUEST,.revision=0};
 
 typedef struct __attribute__((packed)) { u16 lo,sel; u8 ist,flags; u16 mid; u32 hi,z; } idt_e;
@@ -28,7 +29,7 @@ void isr_handler(regs*r){
   outb(0x20,0x20);
 }
 /* Wartet auf das naechste Ereignis. Ohne PIT (manche neuen Intel-Systeme) laeuft die Zeit ueber den TSC. */
-void idle(void){ if(pit_ok){ __asm__("sti;hlt"); net_poll(); return; } __asm__("pause"); ticks=(rdtsc()-tsc0)/tsc_tick; __asm__("cli"); xhci_poll(); __asm__("sti"); net_poll(); }
+void idle(void){ usb_hotplug(); if(pit_ok){ __asm__("sti;hlt"); net_poll(); return; } __asm__("pause"); ticks=(rdtsc()-tsc0)/tsc_tick; __asm__("cli"); xhci_poll(); __asm__("sti"); net_poll(); }
 static void cpu_init(void){
   gdtr.lim=sizeof gdt-1; gdtr.base=(u64)gdt; gdt_load(&gdtr);
   for(int i=0;i<48;i++){ u64 a=isr_table[i]; idt[i]=(idt_e){(u16)a,0x08,0,0x8E,(u16)(a>>16),(u32)(a>>32),0}; }
@@ -62,7 +63,7 @@ static void pit_check(void){
    gewuenschten Zeit, so bleibt sie auch in QEMU ueber Neustarts erhalten. */
 static int time_off; int cfg_wall,cfg_lang=1;
 typedef struct { u32 magic; int off,wall,lang,kbd; } cfg_t;
-#define CFG_NAME ".system"
+#define CFG_NAME "/system/config"
 static u32 to_secs(const rtc_t*t){ int y=t->year,m=t->mon; y-=m<=2; int era=y/400,yoe=y-era*400,doy=(153*(m+(m>2?-3:9))+2)/5+t->day-1,doe=yoe*365+yoe/4-yoe/100+doy;
   return (u32)(era*146097+doe-719468)*86400u+t->h*3600u+t->m*60u+t->s; }
 u32 rtc_unix(const rtc_t*t){ return to_secs(t); }
@@ -79,12 +80,13 @@ static void rtc_raw(rtc_t*t){
   t->h=h;t->m=m;t->s=s;t->day=d;t->mon=mo;t->year=2000+y; }
 void rtc_read(rtc_t*t){ rtc_t r; rtc_raw(&r); from_secs(to_secs(&r)+(u32)time_off,t); }
 void rtc_set(const rtc_t*t){ rtc_t r; rtc_raw(&r); time_off=(int)(to_secs(t)-to_secs(&r)); }
-int cfg_save(void){ cfg_t c={0x32464356,time_off,cfg_wall,cfg_lang,cfg_kbd}; return fs_write(CFG_NAME,(char*)&c,sizeof c); }
-void cfg_load(void){ cfg_t c; if(fs_read(CFG_NAME,(char*)&c,sizeof c)==sizeof c&&c.magic==0x32464356){ time_off=c.off; if(c.wall>=0&&c.wall<WALLS)cfg_wall=c.wall; cfg_lang=c.lang==1; cfg_kbd=c.kbd==1; } }
+int cfg_save(void){ cfg_t c={0x32464356,time_off,cfg_wall,cfg_lang,cfg_kbd}; return fs_ok()?vfs_write(CFG_NAME,&c,sizeof c,fs_now()):-1; }
+void cfg_load(void){ cfg_t c; if(fs_ok()&&vfs_read(CFG_NAME,&c,sizeof c)==sizeof c&&c.magic==0x32464356){ time_off=c.off; if(c.wall>=0&&c.wall<WALLS)cfg_wall=c.wall; cfg_lang=c.lang==1; cfg_kbd=c.kbd==1; } }
 void reboot(void){ __asm__("cli"); outb(0xE9,'R'); for(int i=0;i<100000&&(inb(0x64)&2);i++); outb(0x64,0xFE); udelay(50000);
   outb(0xCF9,6); udelay(50000); struct __attribute__((packed)) { u16 l; u64 b; } z={0,0}; __asm__("lidt %0; int3"::"m"(z)); halt(); }
 void poweroff(void){ outb(0xE9,'O'); u64 r=rsreq.response?(u64)rsreq.response->address:0; if(r>=hhdm)r-=hhdm; acpi_poweroff(r);
   ui_goodbye(TR("Violyx ist beendet.","Violyx has shut down."),TR("Du kannst den Rechner jetzt ausschalten.","You can now turn off the computer.")); halt(); }
+int fs_live(void){ return kfreq.response&&kfreq.response->kernel_file&&kfreq.response->kernel_file->media_type==LIMINE_MEDIA_TYPE_OPTICAL; }
 void kmain(void){
   if(!LIMINE_BASE_REVISION_SUPPORTED||!fbreq.response||!fbreq.response->framebuffer_count||!mmreq.response||!hhreq.response) halt();
   hhdm=hhreq.response->offset;
@@ -95,7 +97,7 @@ void kmain(void){
   kbd_init(); pit_check();
   pci_t d[64]; int n=pci_scan(d,64);
   for(int i=0;i<n;i++){ if(d[i].cls==1&&d[i].sub==6&&d[i].pif==1) ahci_init(&d[i]); else if(d[i].cls==1&&d[i].sub==8&&d[i].pif==2) nvme_init(&d[i]); else if(d[i].cls==0xC&&d[i].sub==3&&d[i].pif==0x30) xhci_init(&d[i]); else if(d[i].cls==2&&d[i].sub==0&&d[i].ven==0x8086&&(d[i].did==0x100E||d[i].did==0x100F||d[i].did==0x1004||d[i].did==0x10D3)) e1000_init(&d[i]); }
-  ide_probe(); if(modreq.response&&modreq.response->module_count) install_set_image(modreq.response->modules[0]->address,modreq.response->modules[0]->size); fs_init(); cfg_load(); ui_init(); net_init(); ui_splash();
+  ide_probe(); if(modreq.response&&modreq.response->module_count) install_set_image(modreq.response->modules[0]->address,modreq.response->modules[0]->size); fs_init(); cfg_load(); drives_sync(); ui_init(); net_init(); ui_splash();
   app_help();
   ui_run();
 }

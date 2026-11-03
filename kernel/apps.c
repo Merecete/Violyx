@@ -5,23 +5,26 @@
 #define SEL AT(C_SEL,C_GLOW)
 #define ST AT(C_VOID,C_VIOLET)
 #define SI AT(C_VOID,C_NEON)
+static void simple_free(win_t*w){ kfree(w->st); }
+static void fm_free_direct(void*f);
 /* ---------- Schreiben ---------- */
-typedef struct { char*b; int len,cur,top,col,dirty; char file[FS_NAME]; } ed_t;
-#define ED_CAP (FS_MAXFILE-1)
+typedef struct { char*b; int len,cur,top,col,dirty; char file[VFS_PATH]; } ed_t;
+#define ED_CAP (1024*1024)
 static int ls(ed_t*e,int p){ while(p>0&&e->b[p-1]!='\n')p--; return p; }
 static int le(ed_t*e,int p){ while(p<e->len&&e->b[p]!='\n')p++; return p; }
 static int lineno(ed_t*e,int p){ int n=0; for(int i=0;i<p;i++) if(e->b[i]=='\n')n++; return n; }
 static int linepos(ed_t*e,int n){ int p=0; while(n>0&&p<e->len){ if(e->b[p++]=='\n')n--; } return p; }
-static void ed_name(win_t*w,ed_t*e){ char t[40]; ksnprintf(t,40,"%s%s",e->dirty?"* ":"",e->file[0]?e->file:TR("Unbenannt","Untitled")); win_title(w,t); }
+static const char*base(const char*p){ const char*s=p; for(;*p;p++) if(*p=='/'&&p[1])s=p+1; return s; }
+static void ed_name(win_t*w,ed_t*e){ char t[40]; ksnprintf(t,40,"%s%s",e->dirty?"* ":"",e->file[0]?base(e->file):TR("Unbenannt","Untitled")); win_title(w,t); }
 static void ed_draw(win_t*w){ ed_t*e=w->st; int cl=lineno(e,e->cur),cc=e->cur-ls(e,e->cur),H_=ch(w),W_=cw(w);
   if(cl<e->top)e->top=cl; if(cl>=e->top+H_)e->top=cl-H_+1; if(cc<e->col)e->col=cc; if(cc>=e->col+W_)e->col=cc-W_+1;
   cfill(w,T); int p=linepos(e,e->top); for(int y=0;y<H_&&p<=e->len;y++){ int x=0; while(p<e->len&&e->b[p]!='\n'){ cput(w,x-e->col,y,(u8)e->b[p],T); x++;p++; } if(p>=e->len)break; p++; }
   w->cx=cc-e->col;w->cy=cl-e->top;w->cur=1; if(w->w>=52) ksnprintf(w->foot,64,TR(" Z %d  S %d   Strg+S Speichern  Strg+O Öffnen "," Ln %d  Col %d   Ctrl+S Save  Ctrl+O Open "),cl+1,cc+1); else ksnprintf(w->foot,64,TR(" Z %d  S %d "," Ln %d  Col %d "),cl+1,cc+1); ed_name(w,e); }
-static void ed_save(ed_t*e){ if(!fs_ok()){ dlg_msg(TR("Speichern","Save"),fs_status()); return; } if(!e->file[0]&&!dlg_input(TR("Speichern unter","Save as"),TR("Dateiname:","File name:"),e->file,FS_NAME))return; if(fs_write(e->file,e->b,e->len)) dlg_msg(TR("Speichern","Save"),TR("Speichern fehlgeschlagen.","Saving failed.")); else e->dirty=0; }
+static void ed_save(ed_t*e){ if(!e->file[0]){ char n[VFS_PATH],p[VFS_PATH]; ksnprintf(n,VFS_PATH,"%s/",fsx_home()); if(!dlg_input(TR("Speichern unter","Save as"),TR("Pfad und Dateiname:","Path and file name:"),n,VFS_PATH-1))return; if(vfs_norm(fsx_home(),n,p,VFS_PATH)){ dlg_msg(TR("Speichern","Save"),vfs_errstr(VE_INVAL,cfg_lang)); return; } strlcpy_(e->file,p,VFS_PATH); } int r=fsx_write(e->file,e->b,e->len,fs_now()); if(r)dlg_msg(TR("Speichern","Save"),vfs_errstr(r,cfg_lang)); else e->dirty=0; }
 static void ed_ins(ed_t*e,char c){ if(e->len>=ED_CAP)return; memmove(e->b+e->cur+1,e->b+e->cur,e->len-e->cur); e->b[e->cur++]=c; e->len++; e->dirty=1; }
 static void ed_vert(ed_t*e,int d){ int c=e->cur-ls(e,e->cur),l=lineno(e,e->cur)+d; if(l<0)l=0; int p=linepos(e,l); int end=le(e,p); e->cur=p+c>end?end:p+c; }
 static void ed_key(win_t*w,key_t k){ ed_t*e=w->st; int c=k.mods&M_CTRL;
-  if(c){ if(k.key=='s')ed_save(e); else if(k.key=='o'){ char n[FS_NAME]; if(dlg_pick(TR("Öffnen","Open"),n,FS_NAME)) app_write(n); } else if(k.key==K_HOME)e->cur=0; else if(k.key==K_END)e->cur=e->len; return; }
+  if(c){ if(k.key=='s')ed_save(e); else if(k.key=='o'){ char n[VFS_PATH]; if(dlg_pick(TR("Öffnen","Open"),n,VFS_PATH)) app_write(n); } else if(k.key==K_HOME)e->cur=0; else if(k.key==K_END)e->cur=e->len; return; }
   switch(k.key){ case K_LEFT:if(e->cur)e->cur--;break; case K_RIGHT:if(e->cur<e->len)e->cur++;break; case K_UP:ed_vert(e,-1);break; case K_DOWN:ed_vert(e,1);break;
    case K_HOME:e->cur=ls(e,e->cur);break; case K_END:e->cur=le(e,e->cur);break; case K_PGUP:ed_vert(e,-ch(w));break; case K_PGDN:ed_vert(e,ch(w));break;
    case K_ENTER:ed_ins(e,'\n');break; case K_TAB:for(int i=0;i<4;i++)ed_ins(e,' ');break;
@@ -32,31 +35,44 @@ static int ed_cc(win_t*w){ ed_t*e=w->st; if(!e->dirty)return 1; int c=dlg_savech
 static void ed_free(win_t*w){ ed_t*e=w->st; kfree(e->b); kfree(e); }
 static const app_t ed_app={ed_draw,ed_key,0,ed_cc,ed_free};
 void app_write(const char*f){ ed_t*e=kmalloc(sizeof*e); char*b=kmalloc(ED_CAP+1); if(!e||!b){ dlg_msg(TR("Schreiben","Write"),TR("Nicht genug Speicher.","Not enough memory.")); kfree(e);kfree(b); return; } memset(e,0,sizeof*e); e->b=b;
-  if(f){ int n=fs_read(f,b,ED_CAP); if(n<0){ dlg_msg(TR("Öffnen","Open"),TR("Datei nicht lesbar.","File cannot be read.")); kfree(b);kfree(e); return; } e->len=n; strlcpy_(e->file,f,FS_NAME); }
+  if(f){ vfs_ent st; int sr=fsx_stat(f,&st); int64_t n=sr==VE_OK&&st.size>ED_CAP?VE_NOSPC:sr?sr:fsx_read(f,b,ED_CAP); if(n==VE_NOSPC){ dlg_msg(TR("Öffnen","Open"),TR("Datei ist zu groß für Schreiben (max. 1 MB).","File is too large for Write (1 MB max).")); kfree(b);kfree(e); return; } if(n==VE_NOENT)n=0; else if(n<0){ dlg_msg(TR("Öffnen","Open"),vfs_errstr((int)n,cfg_lang)); kfree(b);kfree(e); return; } { int o=0; for(int i=0;i<n;i++) if(b[i]!='\r')b[o++]=b[i]; n=o; } e->len=(int)n; strlcpy_(e->file,f,VFS_PATH); }
   if(!win_open(TR("Unbenannt","Untitled"),6,3,62,17,&ed_app,e)){ kfree(b);kfree(e); } }
 /* ---------- Dateien ---------- */
-typedef struct { int s,top; } fm_t;
-static int fm_idx(int*o){ int n=0; for(int i=0;fs_ok()&&i<FS_SLOTS;i++) if(fs_visible(i))o[n++]=i; return n; }
-static void fm_draw(win_t*w){ win_title(w,TR("Dateien","Files")); fm_t*f=w->st; int o[FS_SLOTS],n=fm_idx(o); cfill(w,T); if(!fs_ok()){ ctext(w,1,1,T,TR("Datenträger:","Storage:")); ctext(w,1,2,HI,fs_status()); return; }
-  if(f->s>=n)f->s=n?n-1:0; int vis=ch(w)-2; if(f->s<f->top)f->top=f->s; if(f->s>=f->top+vis)f->top=f->s-vis+1;
-  ctext(w,1,0,HI,TR("Name                     Größe","Name                     Size"));
-  for(int i=0;i<vis&&f->top+i<n;i++){ fs_entry*e=fs_slot(o[f->top+i]); char l[60]; ksnprintf(l,60,"%24s %d B",e->name,e->size); int sel=f->top+i==f->s; if(sel) for(int x=0;x<cw(w);x++)cput(w,x,i+1,' ',SEL); ctext(w,1,i+1,sel?SEL:T,l); }
-  if(!n)ctext(w,1,2,DIM,TR("Noch keine Dateien. F2 startet Schreiben.","No files yet. Use F2 to open Write.")); ctext(w,1,ch(w)-1,DIM,TR("Enter Öffnen  N Neu  Entf Löschen","Enter Open  N New  Del Delete")); }
-static void fm_key(win_t*w,key_t k){ fm_t*f=w->st; int o[FS_SLOTS],n=fm_idx(o);
-  if(k.key==K_UP&&f->s)f->s--; else if(k.key==K_DOWN&&f->s<n-1)f->s++; else if(k.key=='n')app_write(0);
-  else if(k.key==K_ENTER&&n)app_write(fs_slot(o[f->s])->name); else if(k.key==K_DEL&&n){ char t[60],nm[FS_NAME]; strlcpy_(nm,fs_slot(o[f->s])->name,FS_NAME); ksnprintf(t,60,TR("%s löschen?","Delete %s?"),nm); if(dlg_confirm(TR("Löschen","Delete"),t))fs_delete(nm); } }
-static void simple_free(win_t*w){ kfree(w->st); }
-static const app_t fm_app={fm_draw,fm_key,0,0,simple_free};
-void app_files(void){ fm_t*f=kmalloc(sizeof*f); if(!f)return; memset(f,0,sizeof*f); if(!win_open(TR("Dateien","Files"),3,2,50,16,&fm_app,f))kfree(f); }
+typedef struct { char cwd[VFS_PATH]; fs_item*it; int n,s,top; u32 gen; } fm_t;
+static void sizes(u64 v,char*o,int n){ if(v>=1024*1024)ksnprintf(o,n,"%ld MB",v>>20); else if(v>=1024)ksnprintf(o,n,"%ld KB",v>>10); else ksnprintf(o,n,"%ld B",v); }
+static void fm_load(fm_t*f){ f->gen=fsx_gen; kfree(f->it); f->it=0; f->n=fs_load(f->cwd,&f->it); if(f->n<0){ f->n=0; } if(f->s>=f->n)f->s=f->n?f->n-1:0; }
+static void fm_path(fm_t*f,const char*name,char*o,int n){ ksnprintf(o,n,"%s/%s",strcmp(f->cwd,"/")?f->cwd:"",name); }
+static void fm_draw(win_t*w){ fm_t*f=w->st; win_title(w,TR("Dateien","Files")); cfill(w,T); ctext(w,1,0,HI,f->cwd); int atd=!strcmp(f->cwd,"/drives"); int vis=ch(w)-2; if(f->s<f->top)f->top=f->s; if(f->s>=f->top+vis)f->top=f->s-vis+1;
+  for(int i=0;i<vis&&f->top+i<f->n;i++){ fs_item*e=&f->it[f->top+i]; char l[300],z[16]; if(e->dir)ksnprintf(l,300,"[%s]",e->name); else ksnprintf(l,300,"%s",e->name); int sel=f->top+i==f->s; if(sel) for(int x=0;x<cw(w);x++)cput(w,x,i+1,' ',SEL); ctext(w,1,i+1,sel?SEL:T,l); if(!e->dir){ sizes(e->size,z,16); ctext(w,cw(w)-10,i+1,sel?SEL:DIM,z); } else if(atd){ char d[60]; fsx_info(e->name,d,60); ctext(w,9,i+1,sel?SEL:DIM,d); } }
+  if(!f->n)ctext(w,1,2,DIM,atd?TR("Kein USB-Laufwerk gefunden. Stecke einen FAT32-Stick ein.","No USB drive found. Plug in a FAT32 stick."):TR("Ordner ist leer.","Folder is empty.")); if(atd&&!fs_ok()){ char st[64]; ksnprintf(st,64,TR("Systemplatte: %s","System disk: %s"),fs_status()); ctext(w,1,ch(w)-2,DIM,st); } if(atd)ctext(w,1,ch(w)-1,DIM,TR("Enter Öffnen  Rück Hoch  E Auswerfen","Enter Open  Bksp Up  E Eject")); else ctext(w,1,ch(w)-1,DIM,TR("Enter Öffnen Rück Hoch N Neu O Ordner C Kopie R Name Entf Weg","Enter Open Bksp Up N New O Folder C Copy R Name Del Delete")); }
+static void fm_key(win_t*w,key_t k){ fm_t*f=w->st; char p[VFS_PATH+260],q[VFS_PATH+260],n[VFS_NAME+1]; int r=0;
+  if(k.key==K_UP){ if(f->s)f->s--; return; } if(k.key==K_DOWN){ if(f->s<f->n-1)f->s++; return; } if(k.key==K_BS){ if(strcmp(f->cwd,"/")){ ksnprintf(p,sizeof p,"%s/..",f->cwd); vfs_norm("/",p,f->cwd,VFS_PATH); f->s=f->top=0; fm_load(f); } return; }
+  if(k.key=='n'||k.key=='N'){ app_write(0); return; }
+  if(k.key=='o'||k.key=='O'){ n[0]=0; if(dlg_input(TR("Neuer Ordner","New folder"),TR("Name:","Name:"),n,VFS_NAME)){ fm_path(f,n,p,sizeof p); r=fsx_mkdir(p,fs_now()); fm_load(f); } }
+  else if(f->n&&k.key==K_ENTER){ fm_path(f,f->it[f->s].name,p,sizeof p); if(f->it[f->s].dir){ vfs_ent e; r=fsx_stat(p,&e); if(r==VE_DENIED)return; if(!r){ strlcpy_(f->cwd,p,VFS_PATH); f->s=f->top=0; fm_load(f); } } else { app_write(p); return; } }
+  else if(!strcmp(f->cwd,"/drives")){ if(f->n&&(k.key=='e'||k.key=='E')){ r=fsx_eject(f->it[f->s].name); if(!r){ ksnprintf(p,sizeof p,TR("%s kann jetzt abgezogen werden.","%s can be removed now."),f->it[f->s].name); dlg_msg(TR("Auswerfen","Eject"),p); } } }
+  else if(f->n&&(k.key=='c'||k.key=='C')){ char d[VFS_PATH]; const char*nm=f->it[f->s].name; char t[VFS_PATH]; d[0]=0; if(!memcmp(f->cwd,"/drives/",8)){ if(fs_ok())ksnprintf(d,VFS_PATH,"/home/%s",nm); else ksnprintf(d,VFS_PATH,"%s",nm); } else if(fsx_first(t,VFS_PATH))ksnprintf(d,VFS_PATH,"%s/%s",t,nm); else ksnprintf(d,VFS_PATH,"%s",nm); if(dlg_input(TR("Kopieren","Copy"),TR("Ziel:","Target:"),d,VFS_PATH-1)){ fm_path(f,nm,p,sizeof p); if(vfs_norm(f->cwd,d,q,VFS_PATH))r=VE_INVAL; else { vfs_ent e; int ex=fsx_stat(q,&e); if(ex==VE_DENIED)return; if(!ex&&e.dir){ ksnprintf(t,VFS_PATH,"%s/%s",strcmp(q,"/")?q:"",nm); strlcpy_(q,t,VFS_PATH); ex=fsx_stat(q,&e); } if(!ex&&!dlg_confirm(TR("Kopieren","Copy"),TR("Ziel ersetzen?","Replace target?")))return; r=fsx_copy(p,q); } fm_load(f); } }
+  else if(f->n&&(k.key=='r'||k.key=='R')){ strlcpy_(n,f->it[f->s].name,VFS_NAME+1); if(dlg_input(TR("Umbenennen","Rename"),TR("Neuer Name oder Pfad:","New name or path:"),n,VFS_NAME)){ fm_path(f,f->it[f->s].name,p,sizeof p); if(vfs_norm(f->cwd,n,q,VFS_PATH))r=VE_INVAL; else r=fsx_rename(p,q); fm_load(f); } }
+  else if(f->n&&k.key==K_DEL){ char t[80]; ksnprintf(t,80,f->it[f->s].dir?TR("Ordner %s samt Inhalt löschen?","Delete folder %s with contents?"):TR("%s löschen?","Delete %s?"),f->it[f->s].name); if(dlg_confirm(TR("Löschen","Delete"),t)){ fm_path(f,f->it[f->s].name,p,sizeof p); r=fsx_rmtree(p); fm_load(f); } }
+  if(r)dlg_msg(TR("Dateien","Files"),vfs_errstr(r,cfg_lang)); }
+static void fm_tick(win_t*w){ fm_t*f=w->st; if(f->gen==fsx_gen)return; if(!fsx_quiet(f->cwd)){ strlcpy_(f->cwd,"/drives",VFS_PATH); f->s=f->top=0; } fm_load(f); }
+static void fm_free(win_t*w){ fm_t*f=w->st; kfree(f->it); kfree(f); }
+static void fm_free_direct(void*p){ fm_t*f=p; kfree(f->it); kfree(f); }
+static const app_t fm_app={fm_draw,fm_key,fm_tick,0,fm_free};
+void app_files(void){ fm_t*f=kmalloc(sizeof*f); if(!f)return; memset(f,0,sizeof*f); strlcpy_(f->cwd,fsx_home(),VFS_PATH); if(!fsx_quiet(f->cwd))strlcpy_(f->cwd,"/drives",VFS_PATH); fm_load(f); if(!win_open(TR("Dateien","Files"),3,2,64,18,&fm_app,f))fm_free_direct(f); }
 /* ---------- Befehle ---------- */
 #define SL 120
 #define SW 78
-typedef struct { char l[SL][SW+1]; int n; char in[SW]; int il; int top; } sh_t;
+typedef struct { char l[SL][SW+1]; int n; char in[SW]; int il; int top; char cwd[VFS_PATH]; } sh_t;
 static void sh_put(sh_t*s,const char*t){ if(s->n==SL){ memmove(s->l[0],s->l[1],(SL-1)*(SW+1)); s->n--; } strlcpy_(s->l[s->n++],t,SW+1); s->top=0; }
 #define HOLE_MAX (1024*1024)
 static sh_t*sh_cur; static void sh_prog(const char*t){ sh_put(sh_cur,t); ui_render(); ui_show(); }
-static void sh_exec(sh_t*s){ char line[SW+4]; ksnprintf(line,SW+4,"> %s",s->in); sh_put(s,line); char*c=s->in; char*a=c; while(*a&&*a!=' ')a++; if(*a){*a++=0; while(*a==' ')a++;} char b[80];
-  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  type DATEI  del DATEI  edit DATEI  mem  zeit  ver  cls","dir  type FILE  del FILE  edit FILE  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS")); sh_put(s,TR("neustart","restart")); }
+typedef struct { sh_t*s; int n; } shl;
+static int sh_ls(const vfs_ent*e,void*x){ shl*l=x; char b[100],z[16]; sizes(e->size,z,16); if(e->dir)ksnprintf(b,100,"[%s]",e->name); else ksnprintf(b,100,"%24s %s",e->name,z); sh_put(l->s,b); l->n++; return 0; }
+static void sh_err(sh_t*s,int r){ if(r)sh_put(s,vfs_errstr(r,cfg_lang)); }
+static int sh_path(sh_t*s,const char*a,char*o){ if(vfs_norm(s->cwd,a,o,VFS_PATH)){ sh_err(s,VE_INVAL); return -1; } return 0; }
+static void sh_exec(sh_t*s){ if(!fsx_quiet(s->cwd))strlcpy_(s->cwd,"/drives",VFS_PATH); char line[SW+4]; ksnprintf(line,SW+4,"> %s",s->in); sh_put(s,line); char*c=s->in; char*a=c; while(*a&&*a!=' ')a++; if(*a){*a++=0; while(*a==' ')a++;} char b[80]; static char p[VFS_PATH],q[VFS_PATH];
+  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  mem  zeit  ver  cls","dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS")); sh_put(s,TR("neustart","restart")); }
   else if(!strcmp(c,"cls")||!strcmp(c,"clear")) s->n=0;
   else if(!strcmp(c,"ver")) sh_put(s,"Violyx " VERSION);
   else if(!strcmp(c,"echo")) sh_put(s,a);
@@ -69,16 +85,23 @@ static void sh_exec(sh_t*s){ char line[SW+4]; ksnprintf(line,SW+4,"> %s",s->in);
   else if((!strcmp(c,"neustart")||!strcmp(c,"restart")||!strcmp(c,"reboot"))){ outb(0xE9,'S'); reboot(); }
   else if(!strcmp(c,"mem")){ ksnprintf(b,80,TR("RAM %ld KB, Heap frei %ld KB","RAM %ld KB, heap free %ld KB"),mem_total_kb,heap_free()/1024); sh_put(s,b); }
   else if((!strcmp(c,"zeit")||!strcmp(c,"time"))){ rtc_t r; rtc_read(&r); if(cfg_lang)ksnprintf(b,80,"%d-%02d-%02d %02d:%02d:%02d",r.year,r.mon,r.day,r.h,r.m,r.s); else ksnprintf(b,80,"%02d.%02d.%d %02d:%02d:%02d",r.day,r.mon,r.year,r.h,r.m,r.s); sh_put(s,b); }
-  else if(!strcmp(c,"dir")||!strcmp(c,"ls")){ if(!fs_ok())sh_put(s,fs_status()); else { for(int i=0;i<FS_SLOTS;i++) if(fs_visible(i)){ ksnprintf(b,80,"%24s %d B",fs_slot(i)->name,fs_slot(i)->size); sh_put(s,b);} ksnprintf(b,80,TR("%d Datei(en)","%d file(s)"),fs_count()); sh_put(s,b);} }
-  else if(!strcmp(c,"del")||!strcmp(c,"rm")) sh_put(s,fs_delete(a)?TR("Datei nicht gefunden.","File not found."):TR("Gelöscht.","Deleted."));
-  else if(!strcmp(c,"edit")) app_write(*a?a:0);
-  else if(!strcmp(c,"type")||!strcmp(c,"cat")){ static char f[4096]; int n=fs_read(a,f,4095); if(n<0)sh_put(s,TR("Datei nicht gefunden.","File not found.")); else { f[n]=0; char*p=f; while(p<f+n){ char*e=p; while(*e&&*e!='\n')e++; char sv=*e; *e=0; sh_put(s,p); *e=sv; p=e+1; } } }
+  else if(!strcmp(c,"eject")){ if(!*a&&!memcmp(s->cwd,"/drives/",8))a=s->cwd+8; char dn[8]; int k=0; while(a[k]&&a[k]!='/'&&k<7){ dn[k]=a[k]; k++; } dn[k]=0; if(!k)sh_put(s,TR("Aufruf: eject usb1","Usage: eject usb1")); else { int r=fsx_eject(dn); if(r)sh_err(s,r); else { ksnprintf(b,80,TR("%s kann jetzt abgezogen werden.","%s can be removed now."),dn); sh_put(s,b); } } }
+  else if(!strcmp(c,"pwd")) sh_put(s,s->cwd);
+  else if(!strcmp(c,"df")&&!fs_ok())sh_put(s,fs_status());
+  else if(!strcmp(c,"df")){ u64 t,f; u32 n; vfs_usage(&t,&f,&n); ksnprintf(b,80,TR("%ld MB frei von %ld MB, %d Dateien","%ld MB free of %ld MB, %d files"),f>>20,t>>20,n); sh_put(s,b); }
+  else if(!strcmp(c,"cd")){ if(!sh_path(s,*a?a:"/",p)){ vfs_ent e; int r=fsx_stat(p,&e); if(r)sh_err(s,r); else if(!e.dir)sh_err(s,VE_NOTDIR); else strlcpy_(s->cwd,p,VFS_PATH); } }
+  else if(!strcmp(c,"dir")||!strcmp(c,"ls")){ if(!sh_path(s,*a?a:".",p)){ shl l={s,0}; int r=fsx_list(p,sh_ls,&l); sh_err(s,r); if(!r){ ksnprintf(b,80,TR("%d Einträge","%d entries"),l.n); sh_put(s,b); } } }
+  else if(!strcmp(c,"mkdir")){ if(!sh_path(s,a,p))sh_err(s,fsx_mkdir(p,fs_now())); }
+  else if(!strcmp(c,"del")||!strcmp(c,"rm")||!strcmp(c,"rmdir")){ if(!sh_path(s,a,p)){ int r=fsx_remove(p); if(r)sh_err(s,r); else sh_put(s,TR("Gelöscht.","Deleted.")); } }
+  else if(!strcmp(c,"mv")||!strcmp(c,"cp")){ char*d=a; while(*d&&*d!=' ')d++; if(*d){ *d++=0; while(*d==' ')d++; } if(!*a||!*d)sh_put(s,TR("Aufruf: mv/cp QUELLE ZIEL","Usage: mv/cp SOURCE TARGET")); else if(!sh_path(s,a,p)&&!sh_path(s,d,q)){ vfs_ent e; if(!fsx_stat(q,&e)&&e.dir){ char t[VFS_PATH+260]; ksnprintf(t,sizeof t,"%s/%s",strcmp(q,"/")?q:"",base(p)); strlcpy_(q,t,VFS_PATH); } if(c[0]=='m')sh_err(s,fsx_rename(p,q)); else sh_err(s,fsx_copy(p,q)); } }
+  else if(!strcmp(c,"edit")){ if(*a){ if(!sh_path(s,a,p))app_write(p); } else app_write(0); }
+  else if(!strcmp(c,"type")||!strcmp(c,"cat")){ static char f[4096]; if(!sh_path(s,a,p)){ int64_t n=fsx_read(p,f,4095); if(n<0)sh_err(s,(int)n); else { f[n]=0; char*t=f; while(t<f+n){ char*e=t; while(*e&&*e!='\n')e++; char sv=*e; *e=0; sh_put(s,t); *e=sv; t=e+1; } } } }
   else sh_put(s,TR("Unbekannter Befehl. Tippe: hilfe","Unknown command. Type: help"));
   s->in[0]=0;s->il=0; }
-static void sh_draw(win_t*w){ win_title(w,TR("Befehle","Commands")); sh_t*s=w->st; cfill(w,ST); int h=ch(w)-1,st=s->n-h-s->top; if(st<0)st=0; for(int i=0;i<h&&st+i<s->n;i++)ctext(w,0,i,ST,s->l[st+i]); int y=s->n-st; if(y>h)y=h; ctext(w,0,y,SI,"> "); int o=s->il>cw(w)-3?s->il-cw(w)+3:0; for(int i=o;i<s->il;i++)cput(w,2+i-o,y,s->in[i],AT(C_VOID,C_GLOW)); w->cx=2+s->il-o;w->cy=y;w->cur=1; }
+static void sh_draw(win_t*w){ win_title(w,TR("Befehle","Commands")); sh_t*s=w->st; cfill(w,ST); int h=ch(w)-1,st=s->n-h-s->top; if(st<0)st=0; for(int i=0;i<h&&st+i<s->n;i++)ctext(w,0,i,ST,s->l[st+i]); int y=s->n-st; if(y>h)y=h; char pr[40]; int cl=strlen(s->cwd); ksnprintf(pr,40,"%s> ",cl>24?s->cwd+cl-24:s->cwd); int pl=strlen(pr); ctext(w,0,y,SI,pr); int o=s->il>cw(w)-pl-1?s->il-cw(w)+pl+1:0; for(int i=o;i<s->il;i++)cput(w,pl+i-o,y,s->in[i],AT(C_VOID,C_GLOW)); w->cx=pl+s->il-o;w->cy=y;w->cur=1; }
 static void sh_key(win_t*w,key_t k){ sh_t*s=w->st; if(k.key==K_ENTER)sh_exec(s); else if(k.key==K_BS){ if(s->il)s->in[--s->il]=0; } else if(k.key==K_PGUP){ if(s->top<s->n)s->top+=ch(w)-1; } else if(k.key==K_PGDN){ s->top-=ch(w)-1; if(s->top<0)s->top=0; } else if(k.key>=32&&k.key<256&&!(k.mods&(M_CTRL|M_ALT))&&s->il<SW-1){ s->in[s->il++]=k.key;s->in[s->il]=0; } }
 static const app_t sh_app={sh_draw,sh_key,0,0,simple_free};
-void app_shell(void){ sh_t*s=kmalloc(sizeof*s); if(!s)return; memset(s,0,sizeof*s); sh_put(s,TR("Violyx Befehle. Tippe: hilfe","Violyx commands. Type: help")); if(!win_open(TR("Befehle","Commands"),8,4,64,15,&sh_app,s))kfree(s); }
+void app_shell(void){ sh_t*s=kmalloc(sizeof*s); if(!s)return; memset(s,0,sizeof*s); strlcpy_(s->cwd,fsx_home(),VFS_PATH); if(!fsx_quiet(s->cwd))strlcpy_(s->cwd,"/drives",VFS_PATH); sh_put(s,TR("Violyx Befehle. Tippe: hilfe","Violyx commands. Type: help")); if(!win_open(TR("Befehle","Commands"),8,4,64,15,&sh_app,s))kfree(s); }
 /* ---------- Rechner ---------- */
 /* Festkomma: 4 Nachkommastellen, 64 Bit, bis rund 900 Billionen */
 typedef long long i64;
@@ -182,15 +205,15 @@ void app_launcher(void){ static int s,top; for(;;){ int x,y,rows=(NP+PC-1)/PC; d
     if(k.key==K_ESC||k.key==K_F2)return; if(k.key==K_ENTER){ progs[s].fn(); return; }
     if(k.key==K_RIGHT){ if(s<NP-1)s++; } else if(k.key==K_LEFT){ if(s)s--; } else if(k.key==K_DOWN){ if(s/PC<rows-1){ s+=PC; if(s>=NP)s=NP-1; } } else if(k.key==K_UP){ if(s>=PC)s-=PC; } } }
 /* ---------- Systeminfo ---------- */
-static void in_draw(win_t*w){ char b[60]; rtc_t r; rtc_read(&r); u64 s=ticks/100; cfill(w,T); ctext(w,1,0,HI,"Violyx " VERSION); ksnprintf(b,60,TR("RAM:      %ld MB","RAM:      %ld MB"),mem_total_kb/1024); ctext(w,1,2,T,b); ksnprintf(b,60,TR("Heap:     %ld KB frei","Heap:     %ld KB free"),heap_free()/1024); ctext(w,1,3,T,b); ksnprintf(b,60,TR("Laufzeit: %d:%02d:%02d","Uptime:   %d:%02d:%02d"),(u32)(s/3600),(u32)((s/60)%60),(u32)(s%60)); ctext(w,1,4,T,b); ksnprintf(b,60,TR("Dateien:  %d / %d","Files:    %d / %d"),fs_count(),FS_SLOTS); ctext(w,1,5,T,b); ksnprintf(b,60,"Disk:     %s",fs_status()); ctext(w,1,6,T,b); ksnprintf(b,60,TR("USB-Tastaturen: %d","USB keyboards: %d"),usb_keyboards); ctext(w,1,7,T,b); ksnprintf(b,60,TR("Netzwerk: %s","Network:  %s"),net_status()); ctext(w,1,8,T,b); }
+static void in_draw(win_t*w){ char b[60]; rtc_t r; rtc_read(&r); u64 s=ticks/100; cfill(w,T); ctext(w,1,0,HI,"Violyx " VERSION); ksnprintf(b,60,TR("RAM:      %ld MB","RAM:      %ld MB"),mem_total_kb/1024); ctext(w,1,2,T,b); ksnprintf(b,60,TR("Heap:     %ld KB frei","Heap:     %ld KB free"),heap_free()/1024); ctext(w,1,3,T,b); ksnprintf(b,60,TR("Laufzeit: %d:%02d:%02d","Uptime:   %d:%02d:%02d"),(u32)(s/3600),(u32)((s/60)%60),(u32)(s%60)); ctext(w,1,4,T,b); { u64 t_,f_; u32 n_; vfs_usage(&t_,&f_,&n_); ksnprintf(b,60,TR("Platte:   %ld MB frei von %ld MB","Disk:     %ld MB free of %ld MB"),f_>>20,t_>>20); ctext(w,1,5,T,b); } ksnprintf(b,60,TR("Status:   %s","Status:   %s"),fs_status()); ctext(w,1,6,T,b); ksnprintf(b,60,TR("USB-Tastaturen: %d","USB keyboards: %d"),usb_keyboards); ctext(w,1,7,T,b); ksnprintf(b,60,TR("Netzwerk: %s","Network:  %s"),net_status()); ctext(w,1,8,T,b); }
 static const app_t in_app={in_draw,0,0,0,0};
 void app_info(void){ win_open("Systeminfo",20,6,44,11,&in_app,0); }
 /* ---------- Hilfe ---------- */
 static const char*help_de[]={"Willkommen bei Violyx!","",
-"F1 Hilfe    F2 Programme   F3 Dateien   F4 Befehle","F5 Zoom     F6 Fenster wechseln   F7 Internet   F9 Rechner","F10 Menü    Alt+S/P/F/H öffnet Menüs direkt","Esc schließt das Fenster (auch Strg+W oder Alt+F3)",
+"F1 Hilfe    F2 Programme   F3 Dateien   F4 Befehle","F5 Zoom     F6 Fenster wechseln   F7 Internet   F9 Rechner","F10 Menü    Alt+S/P/F/H öffnet Menüs direkt","Esc schließt das Fenster (auch Strg+W oder Alt+F3)","USB-Sticks (FAT32): im Ordner /drives unter F3 Dateien",
 "Strg+Pfeile verschiebt, Umschalt+Pfeile ändert die Größe","","Im Schreibprogramm:","Strg+S speichern   Strg+O öffnen","Strg+Pos1/Ende springt an Anfang/Ende","","Sprache: System, Einstellungen, Sprache",0};
 static const char*help_en[]={"Welcome to Violyx!","",
-"F1 Help     F2 Programs    F3 Files     F4 Commands","F5 Zoom     F6 Switch   F7 Internet   F9 Calculator","F10 Menu    Alt+S/P/W/H opens menus directly","Esc closes the window (also Ctrl+W or Alt+F3)",
+"F1 Help     F2 Programs    F3 Files     F4 Commands","F5 Zoom     F6 Switch   F7 Internet   F9 Calculator","F10 Menu    Alt+S/P/W/H opens menus directly","Esc closes the window (also Ctrl+W or Alt+F3)","USB sticks (FAT32): folder /drives in F3 Files",
 "Ctrl+Arrows moves, Shift+Arrows resizes","","In Write:","Ctrl+S save   Ctrl+O open","Ctrl+Home/End jumps to start/end","","Language: System, Settings, Language",0};
 static void he_draw(win_t*w){ win_title(w,TR("Hilfe","Help")); cfill(w,T); const char**help=cfg_lang?help_en:help_de; for(int i=0;help[i];i++)ctext(w,1,i,i==0?HI:T,help[i]); }
 static const app_t he_app={he_draw,0,0,0,0};

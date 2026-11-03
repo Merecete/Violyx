@@ -1,0 +1,42 @@
+#include "os.h"
+#include "fat.h"
+/* Laufwerke: legt USB-Datentraeger unter /drives ueber VioFS.
+   Regeln: Nur USB-Geraete erscheinen hier, nie interne Platten. Vor dem ersten Zugriff fragt
+   Violyx nach; bis dahin wird kein Sektor des Sticks gelesen. Die Rueckfrage sitzt absichtlich
+   hier zentral, damit kein Programm an ihr vorbeikommt. */
+#define MAXD 8
+typedef struct { blkdev*d; u32 id; int allowed,st; fatvol v; } drv_t;
+static drv_t dr[MAXD]; static blkdev*cur; u32 fsx_gen=1;
+static int t_rd(uint64_t s,void*b){ return cur&&!cur->gone?cur->rd(cur,s,b):-1; }
+static int t_wr(uint64_t s,const void*b){ return cur&&!cur->gone?cur->wr(cur,s,b):-1; }
+static int t_fl(void){ return cur&&!cur->gone?cur->fl(cur):-1; }
+void drives_sync(void){ for(int i=0;i<MAXD;i++) if(dr[i].d&&(dr[i].d->gone||dr[i].d->id!=dr[i].id)){ dr[i].d=0; dr[i].allowed=0; dr[i].st=0; fsx_gen++; }
+  for(int j=0;j<blk_count();j++){ blkdev*d=blk_get(j); if(!d->usb||d==fs_device())continue; int have=0; for(int i=0;i<MAXD;i++) if(dr[i].d==d)have=1; if(have)continue; for(int i=0;i<MAXD;i++) if(!dr[i].d){ dr[i].d=d; dr[i].id=d->id; dr[i].allowed=0; dr[i].st=0; fsx_gen++; break; } } }
+void drives_reset(void){ for(int i=0;i<MAXD;i++){ dr[i].allowed=0; dr[i].st=0; } fsx_gen++; drives_sync(); }
+/* Findet die FAT32-Partition. Nur Datenpartitionen: EFI-Systempartitionen und VioFS bleiben unberuehrt */
+static int try_(drv_t*x,u64 st,u64 n){ if(st>=cur->sectors)return VE_FORMAT; if(st+n>cur->sectors||!n)n=cur->sectors-st; vfs_dev v={t_rd,t_wr,t_fl,st,n}; return fat_mount(&x->v,&v); }
+static const u8 BASIC[16]={0xA2,0xA0,0xD0,0xEB,0xE5,0xB9,0x33,0x44,0x87,0xC0,0x68,0xB6,0xB7,0x26,0x99,0xC7};
+static int find_fat(drv_t*x){ static u8 s[512],h[512]; if(cur->rd(cur,1,h))return VE_IO; if(!memcmp(h,"EFI PART",8)){ u64 el=*(u64*)(h+72); u32 cnt=*(u32*)(h+80),esz=*(u32*)(h+84); if(esz<128||esz>512||(esz&127)||cnt>256)return VE_FORMAT; for(u32 i=0;i<cnt;i++){ if(cur->rd(cur,el+i*esz/512,s))return VE_IO; u8*e=s+(i*esz)%512; if(memcmp(e,BASIC,16))continue; u64 a=*(u64*)(e+32),b=*(u64*)(e+40); if(b<a)continue; int r=try_(x,a,b-a+1); if(r!=VE_FORMAT)return r; } return VE_FORMAT; }
+  if(cur->rd(cur,0,s))return VE_IO; if(s[510]!=0x55||s[511]!=0xAA)return VE_FORMAT; int r=try_(x,0,cur->sectors); if(r!=VE_FORMAT)return r; for(int i=0;i<4;i++){ u8*e=s+446+i*16; if(e[4]!=0x0B&&e[4]!=0x0C&&e[4]!=0x1C)continue; u32 a,n; memcpy(&a,e+8,4); memcpy(&n,e+12,4); static u8 k[512]; memcpy(k,s,512); r=try_(x,a,n); if(r!=VE_FORMAT)return r; memcpy(s,k,512); } return VE_FORMAT; }
+static void desc(drv_t*x,char*o,int n){ u64 mb=x->d->sectors/2048; const char*m=x->d->model[0]?x->d->model:"USB"; if(mb>=2048)ksnprintf(o,n,"%s, %ld GB",m,mb/1024); else ksnprintf(o,n,"%s, %ld MB",m,mb); }
+/* 0 = VioFS, 1 = /drives selbst, 2 = auf einem Laufwerk */
+static int split(const char*p,int*i,const char**rel){ if(memcmp(p,"/drives",7)||(p[7]&&p[7]!='/'))return 0; const char*q=p+7; while(*q=='/')q++; if(!*q)return 1; *i=-1; *rel="/"; if(!memcmp(q,"usb",3)&&q[3]>='1'&&q[3]<='8'&&(!q[4]||q[4]=='/')){ *i=q[3]-'1'; if(q[4])*rel=q+4; } return 2; }
+static int open_(int i){ if(i<0||i>=MAXD||!dr[i].d||dr[i].d->gone)return VE_NOENT; drv_t*x=&dr[i]; if(!x->allowed){ char t[40],s[72],m[60]; u32 id=x->id; desc(x,m,60); ksnprintf(t,40,TR("Laufwerk usb%d öffnen","Open drive usb%d"),i+1); ksnprintf(s,72,TR("%s: Zugriff erlauben?","%s: allow access?"),m); int yes=dlg_confirm(t,s); if(!x->d||x->d->gone||x->id!=id)return VE_NOENT; if(!yes)return VE_DENIED; x->allowed=1; x->st=0; fsx_gen++; } cur=x->d; if(x->st==0){ x->st=find_fat(x); if(!x->st)x->st=1; } if(x->st<0){ int r=x->st; if(r==VE_IO)x->st=0; return r; } return 0; }
+int fsx_stat(const char*p,vfs_ent*e){ int i; const char*r; int k=split(p,&i,&r); if(k==1||(k==0&&!fs_ok()&&!strcmp(p,"/"))){ if(e){ memset(e,0,sizeof*e); e->dir=1; } return 0; } if(k==0)return fs_ok()?vfs_stat(p,e):VE_NOFS; int o=open_(i); return o?o:fat_stat(&dr[i].v,r,e); }
+int64_t fsx_read(const char*p,void*b,u64 m){ int i; const char*r; int k=split(p,&i,&r); if(k==1)return VE_ISDIR; if(k==0)return fs_ok()?vfs_read(p,b,m):VE_NOFS; int o=open_(i); return o?o:fat_read(&dr[i].v,r,b,m); }
+int fsx_write(const char*p,const void*b,u64 l,u32 now){ int i,x; const char*r; int k=split(p,&i,&r); if(k==1)return VE_ISDIR; if(k==0)x=fs_ok()?vfs_write(p,b,l,now):VE_NOFS; else { x=open_(i); if(!x)x=fat_write(&dr[i].v,r,b,l,now); } fsx_gen++; return x; }
+int fsx_mkdir(const char*p,u32 now){ int i,x; const char*r; int k=split(p,&i,&r); if(k==1)return VE_DENIED; if(k==0)x=fs_ok()?vfs_mkdir(p,now):VE_NOFS; else { x=open_(i); if(!x)x=fat_mkdir(&dr[i].v,r,now); } fsx_gen++; return x; }
+int fsx_protected(const char*p){ int i; const char*r; int k=split(p,&i,&r); if(k==1)return 1; if(k==2){ while(*r=='/')r++; return !*r; } return 0; }
+int fsx_remove(const char*p){ int i,x; const char*r; if(fsx_protected(p))return VE_DENIED; int k=split(p,&i,&r); if(k==0)x=fs_ok()?vfs_remove(p):VE_NOFS; else { x=open_(i); if(!x)x=fat_remove(&dr[i].v,r); } fsx_gen++; return x; }
+typedef struct { int(*cb)(const vfs_ent*,void*); void*a; } rc_t;
+static int rootcb(const vfs_ent*e,void*x){ rc_t*c=x; return strcmp(e->name,"drives")?c->cb(e,c->a):0; }
+int fsx_list(const char*p,int(*cb)(const vfs_ent*,void*),void*a){ int i; const char*r; int k=split(p,&i,&r); static vfs_ent e; if(k==1){ for(int n=0;n<MAXD;n++) if(dr[n].d){ memset(&e,0,sizeof e); ksnprintf(e.name,8,"usb%d",n+1); e.dir=1; if(cb(&e,a))break; } return 0; } if(k==2){ int o=open_(i); return o?o:fat_list(&dr[i].v,r,cb,a); } if(!strcmp(p,"/")){ rc_t c={cb,a}; if(fs_ok()){ int x=vfs_list(p,rootcb,&c); if(x<0)return x; } memset(&e,0,sizeof e); strlcpy_(e.name,"drives",8); e.dir=1; cb(&e,a); return 0; } return fs_ok()?vfs_list(p,cb,a):VE_NOFS; }
+int fsx_rmtree(const char*p){ if(fsx_protected(p))return VE_DENIED; vfs_ent e; int r=fsx_stat(p,&e); if(r)return r; if(e.dir){ fs_item*it; int n=fs_load(p,&it); if(n<0){ kfree(it); return VE_IO; } char*c=kmalloc(VFS_PATH+260); if(!c){ kfree(it); return VE_NOSPC; } for(int i=0;i<n;i++){ ksnprintf(c,VFS_PATH+260,"%s/%s",p,it[i].name); r=fsx_rmtree(c); if(r){ kfree(c); kfree(it); return r; } } kfree(c); kfree(it); } return fsx_remove(p); }
+static int under(const char*a,const char*b){ size_t l=strlen(a); return strlen(b)>=l&&!memcmp(a,b,l)&&(!b[l]||b[l]=='/'); }
+int fsx_copy(const char*a,const char*b){ if(under(a,b))return VE_INVAL; if(fsx_protected(a)||fsx_protected(b))return VE_DENIED; vfs_ent e; int r=fsx_stat(a,&e); if(r)return r; if(e.dir){ r=fsx_mkdir(b,fs_now()); if(r&&r!=VE_EXIST)return r; fs_item*it; int n=fs_load(a,&it); if(n<0){ kfree(it); return VE_IO; } char*x=kmalloc(2*(VFS_PATH+260)); if(!x){ kfree(it); return VE_NOSPC; } char*y=x+VFS_PATH+260; r=0; for(int i=0;i<n&&!r;i++){ ksnprintf(x,VFS_PATH+260,"%s/%s",a,it[i].name); ksnprintf(y,VFS_PATH+260,"%s/%s",b,it[i].name); if(strlen(x)>=VFS_PATH||strlen(y)>=VFS_PATH)r=VE_INVAL; else r=fsx_copy(x,y); } kfree(x); kfree(it); return r; } u64 sz=e.size; char*m=kmalloc(sz+1); if(!m)return VE_NOSPC; int64_t n=fsx_read(a,m,sz); r=n<0?(int)n:fsx_write(b,m,(u64)n,fs_now()); kfree(m); return r; }
+int fsx_rename(const char*a,const char*b){ int i=-1,j=-1; const char*r,*s; if(fsx_protected(a)||fsx_protected(b))return VE_DENIED; int k=split(a,&i,&r),l=split(b,&j,&s); int x; if(k==0&&l==0)x=fs_ok()?vfs_rename(a,b):VE_NOFS; else if(k==2&&l==2&&i==j){ x=open_(i); if(!x)x=fat_rename(&dr[i].v,r,s); } else { if(under(a,b))return VE_INVAL; vfs_ent e; x=fsx_stat(b,&e); if(!x)return VE_EXIST; if(x!=VE_NOENT)return x; x=fsx_copy(a,b); if(!x)x=fsx_rmtree(a); } fsx_gen++; return x; }
+int fsx_quiet(const char*p){ int i; const char*r; if(split(p,&i,&r)!=2)return 1; return i>=0&&i<MAXD&&dr[i].d&&!dr[i].d->gone&&dr[i].allowed&&dr[i].st>=0; }
+int fsx_first(char*o,int n){ for(int i=0;i<MAXD;i++) if(dr[i].d){ ksnprintf(o,n,"/drives/usb%d",i+1); return 1; } return 0; }
+const char*fsx_home(void){ static char b[24]; if(fs_ok())return "/home"; if(fsx_first(b,24))return b; return "/drives"; }
+void fsx_info(const char*name,char*o,int n){ o[0]=0; char p[32]; int i; const char*r; ksnprintf(p,32,"/drives/%s",name); if(split(p,&i,&r)==2&&i>=0&&dr[i].d)desc(&dr[i],o,n); }
+int fsx_eject(const char*name){ char p[VFS_PATH]; int i; const char*r; ksnprintf(p,VFS_PATH,"/drives/%s",name[0]=='/'?name+8:name); if(split(p,&i,&r)!=2||i<0||i>=MAXD||!dr[i].d)return VE_NOENT; if(dr[i].allowed&&!dr[i].d->gone)dr[i].d->fl(dr[i].d); dr[i].allowed=0; dr[i].st=0; fsx_gen++; return 0; }

@@ -23,7 +23,9 @@ to the internet and browses the web in a text browser, all without ever touching
 - **Programs:** Write, Files, Commands, Calculator, Pong, Settings
 - **Networking:** Intel E1000 driver, DHCP, DNS, ping, TCP/IP via lwIP
 - **HTTPS:** TLS 1.2 and 1.3 via Mbed TLS with Mozilla root certificates
-- **Storage:** IDE, AHCI (SATA), NVMe and USB mass storage, with its own file system
+- **Storage:** IDE, AHCI (SATA), NVMe and USB mass storage
+- **File system:** VioFS 2 with folders, long file names and large files
+- **USB sticks:** read and write FAT32 sticks under `/drives`, with hot-plugging and a safety prompt
 - **USB keyboards** on xHCI controllers, plus PS/2
 - **Installer** with several safety prompts
 - **Two languages:** English and German, with US and German keyboard layouts
@@ -77,7 +79,24 @@ stick. Secure Boot must be turned off because Violyx is not signed.
 | Ctrl+Arrows / Shift+Arrows | Move / resize the window |
 
 In the browser: Tab selects links, Enter opens them, Backspace goes back, Ctrl+L opens
-the address bar. Press N to show link numbers, then type a number and Enter.
+the address bar. Press N to show link numbers, then type a number and Enter. Ctrl+S
+saves the page to `/downloads`.
+
+In Files: Enter opens, Backspace goes up, N creates a file, O creates a folder, C
+copies, R renames or moves, Del deletes. In `/drives`, E ejects a drive.
+
+In Commands: `dir`, `cd`, `pwd`, `mkdir`, `del`, `mv`, `cp`, `type`, `edit`, `df`, `eject`.
+
+## USB drives
+
+Plug in a FAT32 stick and it appears in the `/drives` folder as `usb1`, `usb2` and so on.
+Violyx reads nothing from a stick until you allow it: the first time you open a drive it
+asks for confirmation. Answer `Y` or `J` to read and save files there. Only USB drives are
+listed, never internal disks. Use **E** in Files or `eject` in Commands before unplugging.
+
+Sticks can be plugged in while Violyx is running, and the live ISO can save to them too.
+Files use long names and are compatible with Windows, macOS and Linux. exFAT and NTFS are
+not supported.
 
 ## Language and keyboard layout
 
@@ -112,7 +131,9 @@ The results are in `build/`: `violyx.img`, `violyx.iso` and `violyx.vdi`.
 | `kernel/apps.c`, `browser.c` | Programs and text browser |
 | `kernel/html.c` | HTML layout, also testable on a host system |
 | `kernel/kbd.c`, `xhci.c` | Keyboard layouts, USB |
-| `kernel/disk.c`, `ahci.c`, `nvme.c` | Block layer, IDE, file system, storage drivers |
+| `kernel/viofs.c` | VioFS 2 file system, also testable on a host system |
+| `kernel/fat.c`, `drives.c` | FAT32 driver and the `/drives` layer with its access prompt |
+| `kernel/disk.c`, `ahci.c`, `nvme.c` | Block layer, IDE, storage drivers |
 | `kernel/net.c`, `tls.c`, `http.c` | Network driver, TLS, HTTP |
 | `kernel/install.c`, `acpi.c` | Installer, power off |
 | `tools/` | Image builders and test tools |
@@ -123,8 +144,11 @@ The results are in `build/`: `violyx.img`, `violyx.iso` and `violyx.vdi`.
 - No memory protection or separate processes: a bug can bring down the whole system.
 - Browser: no JavaScript, images, cookies or password fields. Many modern sites will not work.
 - Network: Intel E1000 cards only, no Wi-Fi.
-- USB: xHCI only, no hubs, devices must be connected at boot.
-- File system: 62 files of up to 64 KB each, no folders, 8 MB data area.
+- USB: xHCI (USB 3 controllers) only, no hubs. A stick on an external hub is not detected.
+- FAT32: one partition per stick, 512-byte sectors, files up to 4 GB. Writing is slow because data is sent sector by sector. Pulling a stick while writing can lose that file and leave unused space behind, but the tested write order keeps other files intact.
+- File system: no journal. A power failure can lose free space, but the tested write order keeps existing data intact. There is no repair tool yet.
+- Files in Write are limited to 1 MB.
+- Upgrading from older disks requires a reinstall.
 - NVMe and USB storage: 512-byte sectors only.
 - Root certificates only update with new Violyx releases. Certificate revocation is not checked.
 
@@ -142,6 +166,9 @@ mit HTTPS und läuft ohne Linux-Unterbau.
 Violyx startet auf Englisch mit US-Tastatur. Unter **System → Settings** stellst du
 **Language** auf Deutsch und **Keyboard** auf das deutsche Layout um. Beides bleibt
 gespeichert.
+
+FAT32-USB-Sticks erscheinen im Ordner `/drives`. Beim ersten Öffnen fragt Violyx nach,
+erst nach `J` oder `Y` kannst du dort lesen und speichern.
 
 Violyx ist ein experimentelles Hobbyprojekt und bisher nur in QEMU und VirtualBox
 getestet. Es hat keinen Speicherschutz, gib daher keine Passwörter ein. Der Installer

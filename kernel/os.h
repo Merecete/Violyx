@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
+#include "viofs.h"
 #define VERSION "0.1.0"
 extern int cfg_lang,cfg_kbd;
 #define TR(de,en) (cfg_lang?(en):(de))
@@ -43,16 +44,16 @@ typedef struct { u16 key; u8 mods; } key_t;
 void kbd_init(void); void kbd_irq(void); void kbd_in(u8 scancode); int key_poll(key_t*); int key_down(u8 scancode);
 
 /* disk.c: ATA und VioFS */
-typedef struct blkdev { const char *name; u64 sectors; void *p; char model[41];
+typedef struct blkdev { const char *name; u64 sectors; void *p; char model[41]; int usb,gone; u32 id;
   int(*rd)(struct blkdev*,u64,void*); int(*wr)(struct blkdev*,u64,const void*); int(*fl)(struct blkdev*); } blkdev;
-void blk_register(const char*name,u64 sectors,void*p,int(*rd)(blkdev*,u64,void*),int(*wr)(blkdev*,u64,const void*),int(*fl)(blkdev*));
-int blk_count(void); blkdev *blk_get(int); void ide_probe(void); blkdev *fs_device(void); int fs_attach(blkdev*); void blk_model_ata(blkdev*,const u16*);
+blkdev *blk_register(const char*name,u64 sectors,void*p,int(*rd)(blkdev*,u64,void*),int(*wr)(blkdev*,u64,const void*),int(*fl)(blkdev*));
+int blk_count(void); blkdev *blk_get(int); void ide_probe(void); void blk_gone(blkdev*); blkdev *fs_device(void); int fs_attach(blkdev*); void blk_model_ata(blkdev*,const u16*);
 void install_set_image(const void*,u64); int install_available(void); void app_install(void);
 /* pci.c und Treiber */
 typedef struct { u8 bus,dev,fn,cls,sub,pif; u16 ven,did; } pci_t;
 int pci_scan(pci_t*,int max); u32 pci_rd(const pci_t*,u8 off); void pci_wr(const pci_t*,u8 off,u32 v);
 u64 pci_bar(const pci_t*,int n); void pci_enable(const pci_t*);
-void ahci_init(const pci_t*); void nvme_init(const pci_t*); void xhci_init(const pci_t*); void xhci_poll(void);
+extern int usb_hold; void usb_hotplug(void); void ahci_init(const pci_t*); void nvme_init(const pci_t*); void xhci_init(const pci_t*); void xhci_poll(void);
 void e1000_init(const pci_t*); void net_init(void); void net_poll(void); int net_present(void); int net_ready(void); const char *net_status(void); void net_info(char*,int,int);
 extern int net_aborted; int tcp_open(u32 ip,u16 port); int tcp_tx(const void*,size_t); int tcp_tx_all(const void*,int); int tcp_rx(void*,size_t); void tcp_end(void);
 extern char tls_err[80]; int tls_open(const char*host); int tls_write(const void*,int); int tls_read(void*,int); void tls_close(void); int tls_weak(void);
@@ -61,14 +62,13 @@ int http_get(const char*url,const char*post,char*buf,int max,http_res*r,void(*pr
 int atoi(const char*); int strncmp(const char*,const char*,size_t); char *strstr(const char*,const char*); char *strchr(const char*,int);
 int net_resolve(const char*,u32*ip,char*txt); int net_ping(u32 ip,u16 seq,int*ms,int*ttl);
 extern int usb_keyboards; const char *usb_status(void);
-#define FS_SLOTS 62
-#define FS_MAXFILE (64*1024)
-#define FS_NAME 24
-typedef struct { char name[FS_NAME]; u32 size; u32 used; } fs_entry;
-int fs_init(void); int fs_ok(void); const char *fs_status(void);
-fs_entry *fs_slot(int i); int fs_count(void); int fs_visible(int); int fs_find(const char*);
-int fs_read(const char*,char*,int); int fs_write(const char*,const char*,int);
-int fs_delete(const char*);
+int fs_init(void); int fs_ok(void); const char *fs_status(void); u32 fs_now(void); void fs_detach(void); int fs_live(void);
+
+/* drives.c: VioFS und USB-Laufwerke unter /drives */
+extern u32 fsx_gen; void drives_sync(void); void drives_reset(void);
+int fsx_stat(const char*,vfs_ent*); int64_t fsx_read(const char*,void*,u64); int fsx_write(const char*,const void*,u64,u32); int fsx_mkdir(const char*,u32);
+int fsx_remove(const char*); int fsx_rename(const char*,const char*); int fsx_list(const char*,int(*)(const vfs_ent*,void*),void*);
+int fsx_protected(const char*); int fsx_rmtree(const char*); int fsx_copy(const char*,const char*); int fsx_quiet(const char*); int fsx_first(char*,int); const char *fsx_home(void); void fsx_info(const char*,char*,int); int fsx_eject(const char*);
 
 /* Violyx-Palette: 16 Farben, in ui_init() in die VGA-Hardware geschrieben */
 enum { C_VOID,C_DESK,C_PANEL,C_RAISE,C_SEL,C_DIM,C_MID,C_SOFT,C_SHADOW,C_VIOLET,C_NEON,C_LAV,C_HOT,C_WALL,C_ORCH,C_GLOW };
@@ -102,6 +102,8 @@ void dlg_msg(const char*title,const char*text);
 int  dlg_confirm(const char*title,const char*text);
 extern int dlg_fresh; int  dlg_input(const char*title,const char*prompt,char*buf,int max);
 int  dlg_pick(const char*title,char*out,int max);
+typedef struct { char name[251]; int dir; u64 size; } fs_item;
+int fs_load(const char*path,fs_item**out);
 
 /* apps.c */
 void app_write(const char*file); void app_files(void); void app_shell(void);
