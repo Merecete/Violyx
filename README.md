@@ -6,11 +6,15 @@ Violyx is written from scratch: its own kernel, drivers, file system, windowed t
 desktop and programs. There is no Linux underneath. It boots on BIOS and UEFI, connects
 to the internet and browses the web in a text browser, all without ever touching a mouse.
 
+This project was created with the help of AI. It is written in C and x86-64 assembly (NASM), with Python used for the build and test tools.
+
 ![Violyx boot logo](docs/logo.png)
 
 | | |
 |---|---|
 | ![Programs](docs/programs.png) | ![Text browser](docs/browser.png) |
+| ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
+| ![Miness](docs/mines.png) | ![Pong](docs/pong.png) |
 
 > **Status: experimental hobby project (version 0.1.1).** Tested in QEMU and VirtualBox,
 > not yet on real hardware. Violyx has no memory protection, so please do not enter
