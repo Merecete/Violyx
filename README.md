@@ -16,8 +16,8 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 | ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
 | ![Miness](docs/mines.png) | ![Pong](docs/pong.png) |
 
-> **Status: experimental hobby project (version 0.1.1).** Tested in QEMU and VirtualBox,
-> not yet on real hardware. Violyx has no memory protection, so please do not enter
+> **Status: Experimental hobby project (version 0.1.1).** Tested in QEMU, VirtualBox, and on actual hardware (via USB flash drive).
+> Violyx has no memory protection, so please do not enter
 > passwords or use it for anything sensitive. See [Limitations](#limitations).
 
 ## Features
@@ -177,20 +177,3 @@ The results are in `build/`: `violyx.img`, `violyx.iso` and `violyx.vdi`.
 
 Violyx is released under the [MIT License](LICENSE). Bundled components keep their own
 licenses, listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-
-## Deutsch
-
-Violyx ist ein eigenes 64-Bit-Betriebssystem für x86-PCs, das komplett per Tastatur
-bedient wird. Es hat einen Retro-Textdesktop in leuchtendem Violett, einen Textbrowser
-mit HTTPS und läuft ohne Linux-Unterbau.
-
-Violyx startet auf Englisch mit US-Tastatur. Unter **System → Settings** stellst du
-**Language** auf Deutsch und **Keyboard** auf das deutsche Layout um. Beides bleibt
-gespeichert.
-
-FAT32-USB-Sticks erscheinen im Ordner `/drives`. Beim ersten Öffnen fragt Violyx nach,
-erst nach `J` oder `Y` kannst du dort lesen und speichern.
-
-Violyx ist ein experimentelles Hobbyprojekt und bisher nur in QEMU und VirtualBox
-getestet. Es hat keinen Speicherschutz, gib daher keine Passwörter ein. Der Installer
-löscht die gesamte gewählte Platte.
