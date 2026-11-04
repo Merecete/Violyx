@@ -13,7 +13,7 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 | | |
 |---|---|
 | ![Programs](docs/programs.png) | ![Text browser](docs/browser.png) |
-| ![File-Manager](docs/file-manager.png) | ![help-center](docs/help.png) |
+| ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
 | ![Miness](docs/mines.png) | ![Pong](docs/pong.png) |
 
 > **Status: experimental hobby project (version 0.1.0).** Tested in QEMU and VirtualBox,
