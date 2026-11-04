@@ -50,6 +50,7 @@ win_t*win_open(const char*t,int x,int y,int w,int h,const app_t*a,void*st){
   if(p->x+w>W)p->x=W-w; if(p->y+h>H-1)p->y=H-1-h; z[nw++]=p; return p; }
 void win_close(win_t*w){ if(w->app->can_close&&!w->app->can_close(w))return; if(w->app->destroy)w->app->destroy(w);
   int i=0; for(;i<nw;i++)if(z[i]==w)break; for(;i<nw-1;i++)z[i]=z[i+1]; nw--; w->app=0; }
+void win_raise(win_t*w){ int i=0; for(;i<nw;i++)if(z[i]==w)break; if(i==nw)return; for(;i<nw-1;i++)z[i]=z[i+1]; z[nw-1]=w; }
 void win_next(void){ if(nw<2)return; win_t*t=z[nw-1]; for(int i=nw-1;i>0;i--)z[i]=z[i-1]; z[0]=t; }
 void win_zoom(win_t*w){ if(w->zoomed){w->x=w->sx;w->y=w->sy;w->w=w->sw;w->h=w->sh;w->zoomed=0;} else {w->sx=w->x;w->sy=w->y;w->sw=w->w;w->sh=w->h;w->x=0;w->y=1;w->w=W;w->h=H-2;w->zoomed=1;} }
 void win_title(win_t*w,const char*t){ strlcpy_(w->title,t,40); }
@@ -66,13 +67,17 @@ static void draw_win(win_t*w,int active){ u8 a=active?A_FR:A_FRI;
 typedef struct { const char*de,*en; void(*fn)(void); const char*hkde,*hken; } mi;
 #define MT(m) TR((m).de,(m).en)
 #define MK(m) TR((m).hkde,(m).hken)
-static void a_write(void){app_write(0);} static void a_close(void){ if(win_top())win_close(win_top()); }
+static void a_close(void){ if(win_top())win_close(win_top()); }
 static void a_zoom(void){ if(win_top())win_zoom(win_top()); }
 int ui_can_quit(void){ for(int i=nw-1;i>=0;i--) if(z[i]->app->can_close&&!z[i]->app->can_close(z[i]))return 0; return 1; }
 static void a_reboot(void){ if(ui_can_quit()&&dlg_confirm(TR("Neustart","Restart"),TR("Violyx jetzt neu starten?","Restart Violyx now?")))reboot(); }
 static void a_off(void){ if(ui_can_quit()&&dlg_confirm(TR("Ausschalten","Shut down"),TR("Violyx jetzt beenden?","Shut down Violyx now?")))poweroff(); }
 static const mi m_sys[]={{"Über Violyx","About Violyx",dlg_about,0,0},{"Einstellungen","Settings",app_settings,0,0},{"Systeminfo","System info",app_info,0,0},{"Installieren","Install",app_install,0,0},{"Neustart","Restart",a_reboot,"Strg+Alt+Entf","Ctrl+Alt+Del"},{"Ausschalten","Shut down",a_off,0,0},{0,0,0,0,0}};
-static const mi m_app[]={{"Übersicht","Overview",app_launcher,"F2","F2"},{"Schreiben","Write",a_write,0,0},{"Dateien","Files",app_files,"F3","F3"},{"Befehle","Commands",app_shell,"F4","F4"},{"Rechner","Calculator",app_calc,"F9","F9"},{"Pong","Pong",app_pong,0,0},{"Internet","Internet",app_web,"F7","F7"},{0,0,0,0,0}};
+/* Programme-Menue: Uebersicht, darunter die offenen Fenster, oberstes zuerst */
+static const mi m_app[]={{"Übersicht","Overview",app_launcher,"F2","F2"},{0,0,0,0,0}};
+static mi dyn[MAXWIN+2]; static win_t*dynw[MAXWIN+1];
+static const mi*app_items(void){ dyn[0]=m_app[0]; int n=1; for(int i=nw-1;i>=0;i--){ win_t*w=z[i]; dyn[n].de=dyn[n].en=w->title; dyn[n].fn=0; dyn[n].hkde=i==nw-1?"aktiv":0; dyn[n].hken=i==nw-1?"active":0; dynw[n]=w; n++; } memset(&dyn[n],0,sizeof dyn[n]); return dyn; }
+static void menu_run(const mi*it,int i){ if(it[i].fn)it[i].fn(); else if(it==dyn)win_raise(dynw[i]); }
 static const mi m_win[]={{"Zoomen","Zoom",a_zoom,"F5","F5"},{"Nächstes","Next",win_next,"F6","F6"},{"Schließen","Close",a_close,"Strg+W","Ctrl+W"},{0,0,0,0,0}};
 static const mi m_hlp[]={{"Tastenübersicht","Keyboard help",app_help,"F1","F1"},{0,0,0,0,0}};
 static const struct { const char*de,*en; const mi*it; } menus[]={{"System","System",m_sys},{"Programme","Programs",m_app},{"Fenster","Windows",m_win},{"Hilfe","Help",m_hlp}};
@@ -86,13 +91,13 @@ static void status(void){ fill(0,H-1,W,1,' ',A_BAR); static const char*k[][3]={{
 void ui_render(void){ cx=-1; fill(0,1,W,H-2,0xB1,A_DESK); bar(-1); status(); for(int i=0;i<nw;i++)draw_win(z[i],i==nw-1); }
 key_t key_wait(void){ key_t k; while(!key_poll(&k)) idle(); return k; }
 static void menu(int m){ int s=0;
-  for(;;){ ui_render(); bar(m); const mi*it=menus[m].it; int n=0,wd=0; for(;it[n].de;n++){ int l=0; for(const char*p=MT(it[n]);*p;l++)u8dec(&p); if(it[n].hkde)l+=strlen(MK(it[n]))+2; if(l>wd)wd=l; }
+  for(;;){ ui_render(); bar(m); const mi*it=m==1?app_items():menus[m].it; int n=0,wd=0; for(;it[n].de;n++){ int l=0; for(const char*p=MT(it[n]);*p;l++)u8dec(&p); if(it[n].hkde)l+=strlen(MK(it[n]))+2; if(l>wd)wd=l; }
     wd+=4; int x=mx(m)-1,y=1; if(x+wd>=W-2)x=W-wd-2; fill(x,y,wd,n+2,' ',A_DLG); frame(x,y,wd,n+2,0,A_DLG); shadow(x,y,wd,n+2);
     for(int i=0;i<n;i++){ u8 a=i==s?A_SEL:A_DLG; fill(x+1,y+1+i,wd-2,1,' ',a); text(x+2,y+1+i,a,MT(it[i])); if(it[i].hkde)text(x+wd-2-strlen(MK(it[i])),y+1+i,a,MK(it[i]));} 
     cx=-1; present(); key_t k=key_wait();
     switch(k.key){ case K_ESC:case K_F10:return; case K_UP:s=(s+n-1)%n;break; case K_DOWN:s=(s+1)%n;break;
-      case K_LEFT:m=(m+NM-1)%NM;s=0;break; case K_RIGHT:m=(m+1)%NM;s=0;break; case K_ENTER: outb(0xE9,'m'); it[s].fn(); return; 
-      default: if(k.key<256){ int hits=0,first=-1,after=-1; for(int i=0;i<n;i++){ char c=MT(it[i])[0]; if(c>='A'&&c<='Z')c+=32; if(c==(char)k.key){ hits++; if(first<0)first=i; if(after<0&&i>s)after=i; } } if(hits==1){ outb(0xE9,'h'); it[first].fn(); return; } if(hits>1)s=after>=0?after:first; } } } }
+      case K_LEFT:m=(m+NM-1)%NM;s=0;break; case K_RIGHT:m=(m+1)%NM;s=0;break; case K_ENTER: outb(0xE9,'m'); menu_run(it,s); return; 
+      default: if(k.key<256){ int hits=0,first=-1,after=-1; for(int i=0;i<n;i++){ char c=MT(it[i])[0]; if(c>='A'&&c<='Z')c+=32; if(c==(char)k.key){ hits++; if(first<0)first=i; if(after<0&&i>s)after=i; } } if(hits==1){ outb(0xE9,'h'); menu_run(it,first); return; } if(hits>1)s=after>=0?after:first; } } } }
 
 /* Dialoge */
 void dlg_box(const char*t,int w,int h,int*x,int*y){ ui_render(); *x=(W-w)/2;*y=(H-h)/2; fill(*x,*y,w,h,' ',A_DLG); frame(*x,*y,w,h,1,A_DLGF); shadow(*x,*y,w,h); char b[44]; ksnprintf(b,44," %s ",t); text(*x+(w-(int)strlen(b))/2,*y,A_DLGT,b); }

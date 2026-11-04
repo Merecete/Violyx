@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include "viofs.h"
-#define VERSION "0.1.0"
+#define VERSION "0.1.1"
 extern int cfg_lang,cfg_kbd;
 #define TR(de,en) (cfg_lang?(en):(de))
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
@@ -91,7 +91,7 @@ void ctext(win_t*,int x,int y,u8 attr,const char*);
 void cfill(win_t*,u8 attr);
 int cw(win_t*); int ch(win_t*);
 win_t *win_open(const char*t,int x,int y,int w,int h,const app_t*,void*st);
-void win_close(win_t*); void win_next(void); void win_zoom(win_t*); win_t *win_top(void); int ui_can_quit(void);
+void win_close(win_t*); void win_raise(win_t*); void win_next(void); void win_zoom(win_t*); win_t *win_top(void); int ui_can_quit(void);
 void win_title(win_t*,const char*);
 void fb_init(void*addr,u32 w,u32 h,u32 pitch,u32 bpp,u32 rs,u32 gs,u32 bs); void ui_panic(const char*a,const char*b);
 void ui_goodbye(const char*,const char*); void ui_init(void); void ui_splash(void); void ui_show(void); key_t key_wait(void);
@@ -108,4 +108,4 @@ int fs_load(const char*path,fs_item**out);
 /* apps.c */
 void app_write(const char*file); void app_files(void); void app_shell(void);
 void app_calc(void); void app_info(void); void app_help(void);
-void app_launcher(void); void app_pong(void); void app_settings(void); void app_web(void); void web_app_open(const char*);
+void app_launcher(void); void app_pong(void); void app_invaders(void); void app_chomp(void); void app_mines(void); void app_calendar(void); void app_settings(void); void app_web(void); void web_app_open(const char*);

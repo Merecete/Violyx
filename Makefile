@@ -12,7 +12,7 @@ MBSRC   = $(wildcard $(MB)/library/*.c)
 MBOBJ   = $(patsubst $(MB)/library/%.c,build/mb/%.o,$(MBSRC))
 CACERTS ?= third_party/cacert/cacert.pem
 INC     = -Ikernel/lwip_port -Ikernel/libc -I$(LW)/include -I$(MB)/include -Ikernel/mbed_port -DMBEDTLS_CONFIG_FILE='"violyx_tls_config.h"'
-OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/tls.o build/http.o build/html.o build/browser.o build/install.o build/viofs.o build/fat.o build/drives.o $(LWOBJ) $(MBOBJ)
+OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/tls.o build/http.o build/html.o build/browser.o build/install.o build/viofs.o build/fat.o build/drives.o build/games.o build/calendar.o $(LWOBJ) $(MBOBJ)
 all: build/violyx.img build/violyx.iso build/violyx.vdi
 build/font.h: tools/mkfont.py
 	@mkdir -p build

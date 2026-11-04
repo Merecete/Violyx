@@ -12,7 +12,7 @@ to the internet and browses the web in a text browser, all without ever touching
 |---|---|
 | ![Programs](docs/programs.png) | ![Text browser](docs/browser.png) |
 
-> **Status: experimental hobby project (version 0.1.0).** Tested in QEMU and VirtualBox,
+> **Status: experimental hobby project (version 0.1.1).** Tested in QEMU and VirtualBox,
 > not yet on real hardware. Violyx has no memory protection, so please do not enter
 > passwords or use it for anything sensitive. See [Limitations](#limitations).
 
@@ -20,7 +20,8 @@ to the internet and browses the web in a text browser, all without ever touching
 
 - **Keyboard-only desktop** with overlapping windows, menus and dialogs
 - **Text browser** with HTTPS, certificate checks, links, search forms and link numbers
-- **Programs:** Write, Files, Commands, Calculator, Pong, Settings
+- **Programs:** Write, Files, Commands, Calculator, Calendar, Settings
+- **Games:** Pong, Invaders, Chomp and Mines
 - **Networking:** Intel E1000 driver, DHCP, DNS, ping, TCP/IP via lwIP
 - **HTTPS:** TLS 1.2 and 1.3 via Mbed TLS with Mozilla root certificates
 - **Storage:** IDE, AHCI (SATA), NVMe and USB mass storage
@@ -85,6 +86,11 @@ saves the page to `/downloads`.
 In Files: Enter opens, Backspace goes up, N creates a file, O creates a folder, C
 copies, R renames or moves, Del deletes. In `/drives`, E ejects a drive.
 
+In Calendar: arrows pick a day, Page Up/Down change the month, T jumps to today, Enter
+adds a note and Del removes it. Notes are saved in `/system/calendar`.
+
+The Programs menu lists the overview and all open windows, so you can jump to any of them.
+
 In Commands: `dir`, `cd`, `pwd`, `mkdir`, `del`, `mv`, `cp`, `type`, `edit`, `df`, `eject`.
 
 ## USB drives
@@ -97,6 +103,16 @@ listed, never internal disks. Use **E** in Files or `eject` in Commands before u
 Sticks can be plugged in while Violyx is running, and the live ISO can save to them too.
 Files use long names and are compatible with Windows, macOS and Linux. exFAT and NTFS are
 not supported.
+
+## Games
+
+Open them from the Programs overview (F2) or the Programs menu. Esc closes a game.
+
+| Game | Goal | Keys |
+|---|---|---|
+| Invaders | Stop the alien waves | Arrows move, Space fires, P pauses |
+| Chomp | Eat all dots and avoid the ghosts | Arrows or WASD move, P pauses |
+| Mines | Uncover every safe field | Arrows move, Space opens, F flags, 1 to 3 size, N new game |
 
 ## Language and keyboard layout
 
@@ -128,7 +144,8 @@ The results are in `build/`: `violyx.img`, `violyx.iso` and `violyx.vdi`.
 |---|---|
 | `kernel/main.c`, `entry.asm` | Startup, interrupts, memory, timers, clock |
 | `kernel/ui.c` | Graphics output, windows, menus, dialogs |
-| `kernel/apps.c`, `browser.c` | Programs and text browser |
+| `kernel/apps.c`, `browser.c`, `calendar.c` | Programs, text browser and calendar |
+| `kernel/games.c` | Invaders, Chomp and Mines, game logic also testable on a host system |
 | `kernel/html.c` | HTML layout, also testable on a host system |
 | `kernel/kbd.c`, `xhci.c` | Keyboard layouts, USB |
 | `kernel/viofs.c` | VioFS 2 file system, also testable on a host system |
