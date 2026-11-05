@@ -14,10 +14,10 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 |---|---|
 | ![Programs](docs/programs.png) | ![Text browser](docs/browser.png) |
 | ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
-| ![Miness](docs/mines.png) | ![Pong](docs/pong.png) |
+| ![Mines](docs/mines.png) | ![Pong](docs/pong.png) |
 
-> **Status: Experimental hobby project (version 0.1.1).** Tested in QEMU, VirtualBox, and on actual hardware (via USB flash drive).
-> Violyx has no memory protection, so please do not enter
+> **Status: Experimental hobby project (version 0.1.3).** Tested in QEMU, VirtualBox, and on actual hardware (via USB flash drive), including wired internet.
+> Installed programs run in protected memory, but the system itself does not, so please do not enter
 > passwords or use it for anything sensitive. See [Limitations](#limitations).
 
 ## Features
@@ -25,13 +25,14 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 - **Keyboard-only desktop** with overlapping windows, menus and dialogs
 - **Text browser** with HTTPS, certificate checks, links, search forms and link numbers
 - **Programs:** Write, Files, Commands, Calculator, Calendar, Settings
-- **Games:** Pong, Invaders, Chomp and Mines
-- **Networking:** Intel E1000 driver, DHCP, DNS, ping, TCP/IP via lwIP
+- **Games:** Pong, Invaders, Chomp, Mines, Snake, Bricks and Novastrike
+- **Installable programs:** `.vpk` packages that run in protected memory, with an SDK in C
+- **Networking:** Intel E1000 and Realtek RTL8125B/RTL8126 drivers, DHCP, DNS, ping, TCP/IP via lwIP
 - **HTTPS:** TLS 1.2 and 1.3 via Mbed TLS with Mozilla root certificates
 - **Storage:** IDE, AHCI (SATA), NVMe and USB mass storage
 - **File system:** VioFS 2 with folders, long file names and large files
 - **USB sticks:** read and write FAT32 sticks under `/drives`, with hot-plugging and a safety prompt
-- **USB keyboards** on xHCI controllers, plus PS/2
+- **USB keyboards** on several xHCI controllers and behind USB hubs, plus PS/2
 - **Installer** with several safety prompts
 - **Two languages:** English and German, with US and German keyboard layouts
 - **Boots on BIOS and UEFI** through the Limine bootloader
@@ -83,7 +84,7 @@ stick. Secure Boot must be turned off because Violyx is not signed.
 | Esc | Close the window |
 | Ctrl+Arrows / Shift+Arrows | Move / resize the window |
 
-In the browser: Tab selects links, Enter opens them, Backspace goes back, Ctrl+L opens
+In the browser: Tab and Shift+Tab select links and wrap around at the end of the page, Enter opens them, Backspace goes back, Ctrl+L opens
 the address bar. Press N to show link numbers, then type a number and Enter. Ctrl+S
 saves the page to `/downloads`.
 
@@ -95,7 +96,7 @@ adds a note and Del removes it. Notes are saved in `/system/calendar`.
 
 The Programs menu lists the overview and all open windows, so you can jump to any of them.
 
-In Commands: `dir`, `cd`, `pwd`, `mkdir`, `del`, `mv`, `cp`, `type`, `edit`, `df`, `eject`.
+In Commands: `dir`, `cd`, `pwd`, `mkdir`, `del`, `mv`, `cp`, `type`, `edit`, `df`, `eject`, `usb`, `netdiag`, `install`, `run`, `uninstall`.
 
 ## USB drives
 
@@ -117,6 +118,24 @@ Open them from the Programs overview (F2) or the Programs menu. Esc closes a gam
 | Invaders | Stop the alien waves | Arrows move, Space fires, P pauses |
 | Chomp | Eat all dots and avoid the ghosts | Arrows or WASD move, P pauses |
 | Mines | Uncover every safe field | Arrows move, Space opens, F flags, 1 to 3 size, N new game |
+| Snake | Eat and grow without crashing | Arrows move, Enter restarts |
+| Bricks | Clear the wall of bricks | Arrows or A and D move, Space launches, P pauses |
+| Novastrike | Shoot down waves and bosses | Arrows or WASD fly, Space fires, X shield, C nova, P pauses |
+
+Snake, Bricks and Novastrike run as protected programs. Their source is in `sdk/examples/`.
+
+## Installing programs
+
+Programs are single `.vpk` files that you can share, for example on a FAT32 stick. Open one in
+Files and confirm to install it. It then appears in the Programs overview (F2). Select it
+there and press Del to uninstall it together with its data. Commands offers `install`, `run`
+and `uninstall`. The live ISO can start a package directly, without installing it.
+
+Each program runs in its own protected memory, so a crash closes only that program. A program
+can use its private data folder, `/home`, `/downloads` and `/drives`, but not `/system` or other
+programs. It can still read and change your files in `/home`, so only install programs you trust.
+
+To write your own program in C, see [sdk/README.md](sdk/README.md).
 
 ## Language and keyboard layout
 
@@ -153,19 +172,22 @@ The results are in `build/`: `violyx.img`, `violyx.iso` and `violyx.vdi`.
 | `kernel/html.c` | HTML layout, also testable on a host system |
 | `kernel/kbd.c`, `xhci.c` | Keyboard layouts, USB |
 | `kernel/viofs.c` | VioFS 2 file system, also testable on a host system |
+| `kernel/prog.c` | Program packages, ELF loader, address spaces, system calls |
 | `kernel/fat.c`, `drives.c` | FAT32 driver and the `/drives` layer with its access prompt |
 | `kernel/disk.c`, `ahci.c`, `nvme.c` | Block layer, IDE, storage drivers |
-| `kernel/net.c`, `tls.c`, `http.c` | Network driver, TLS, HTTP |
+| `kernel/net.c`, `rge.c`, `tls.c`, `http.c` | Network drivers, TLS, HTTP |
 | `kernel/install.c`, `acpi.c` | Installer, power off |
+| `sdk/` | SDK and example programs |
 | `tools/` | Image builders and test tools |
 | `third_party/` | Bundled components |
 
 ## Limitations
 
-- No memory protection or separate processes: a bug can bring down the whole system.
+- Programs are protected from the system, but the built-in programs and drivers are not: a bug there can bring down the whole system.
+- Programs cannot draw graphics or use the network yet. They only run smoothly while their window is in front.
 - Browser: no JavaScript, images, cookies or password fields. Many modern sites will not work.
-- Network: Intel E1000 cards only, no Wi-Fi.
-- USB: xHCI (USB 3 controllers) only, no hubs. A stick on an external hub is not detected.
+- Network: Intel E1000 cards and Realtek RTL8125B/RTL8126 without vendor firmware. The Realtek driver has been tested on one real RTL8126, not yet on an RTL8125B. No Wi-Fi.
+- USB: xHCI (USB 3 controllers) only. Hub support has only been tested in QEMU so far.
 - FAT32: one partition per stick, 512-byte sectors, files up to 4 GB. Writing is slow because data is sent sector by sector. Pulling a stick while writing can lose that file and leave unused space behind, but the tested write order keeps other files intact.
 - File system: no journal. A power failure can lose free space, but the tested write order keeps existing data intact. There is no repair tool yet.
 - Files in Write are limited to 1 MB.
