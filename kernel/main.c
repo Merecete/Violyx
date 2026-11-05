@@ -101,7 +101,7 @@ void kmain(void){
   cpu_init(); mem_init(); paging_init();
   kbd_init(); pit_check();
   pci_t d[64]; int n=pci_scan(d,64);
-  for(int i=0;i<n;i++){ if(d[i].cls==1&&d[i].sub==6&&d[i].pif==1) ahci_init(&d[i]); else if(d[i].cls==1&&d[i].sub==8&&d[i].pif==2) nvme_init(&d[i]); else if(d[i].cls==0xC&&d[i].sub==3&&d[i].pif==0x30) xhci_init(&d[i]); else if(d[i].cls==2&&d[i].sub==0&&d[i].ven==0x8086&&(d[i].did==0x100E||d[i].did==0x100F||d[i].did==0x1004||d[i].did==0x10D3)) e1000_init(&d[i]); }
+  for(int i=0;i<n;i++){ if(d[i].ven==0x10EC&&(d[i].did==0x8126||d[i].did==0x8125))rge_probe(&d[i]); else if(d[i].cls==1&&d[i].sub==6&&d[i].pif==1) ahci_init(&d[i]); else if(d[i].cls==1&&d[i].sub==8&&d[i].pif==2) nvme_init(&d[i]); else if(d[i].cls==0xC&&d[i].sub==3&&d[i].pif==0x30) xhci_init(&d[i]); else if(d[i].cls==2&&d[i].sub==0&&d[i].ven==0x8086&&(d[i].did==0x100E||d[i].did==0x100F||d[i].did==0x1004||d[i].did==0x10D3)) e1000_init(&d[i]); }
   ide_probe(); if(modreq.response&&modreq.response->module_count) install_set_image(modreq.response->modules[0]->address,modreq.response->modules[0]->size); fs_init(); cfg_load(); drives_sync(); ui_init(); net_init(); ui_splash();
   app_help();
   ui_run();

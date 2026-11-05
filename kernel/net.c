@@ -21,8 +21,10 @@ typedef struct __attribute__((packed)) { u64 addr; u16 len; u8 cso,cmd,st,css; u
 static u64 base; static rxd*rd; static txd*td; static u8*rb,*tb; static int ri,ti; static struct netif nif; static u8 mac[6]; static int present,started; static u64 nextlink; static u32 seed;
 unsigned int net_rand(void){ u32 a,d; __asm__ volatile("rdtsc":"=a"(a),"=d"(d)); seed=seed*1103515245u+12345u+a; return seed^(d<<7); }
 u32_t sys_now(void){ return (u32_t)(ticks*10); }
-static err_t tx(struct netif*n,struct pbuf*p){ if(p->tot_len>BSZ)return ERR_BUF; txd*d=&td[ti]; for(int i=0;i<200000&&!(d->st&1);i++)udelay(1); if(!(d->st&1))return ERR_TIMEOUT; pbuf_copy_partial(p,tb+ti*BSZ,p->tot_len,0); d->len=p->tot_len; d->st=0; d->cmd=1|2|8; ti=(ti+1)%NT; R(0x3818)=ti; return ERR_OK; }
+static int use_rge; int rge_attach(const pci_t*,u8*); int rge_link(void); int rge_send(const void*,int); int rge_recv(void**); void rge_recv_done(void);
+static err_t tx(struct netif*n,struct pbuf*p){ if(p->tot_len>BSZ)return ERR_BUF; if(use_rge){ static u8 b[BSZ]; pbuf_copy_partial(p,b,p->tot_len,0); return rge_send(b,p->tot_len)?ERR_TIMEOUT:ERR_OK; } txd*d=&td[ti]; for(int i=0;i<200000&&!(d->st&1);i++)udelay(1); if(!(d->st&1))return ERR_TIMEOUT; pbuf_copy_partial(p,tb+ti*BSZ,p->tot_len,0); d->len=p->tot_len; d->st=0; d->cmd=1|2|8; ti=(ti+1)%NT; R(0x3818)=ti; return ERR_OK; }
 static err_t nif_init(struct netif*n){ n->name[0]='e';n->name[1]='0'; n->output=etharp_output; n->linkoutput=tx; n->mtu=1500; n->hwaddr_len=6; memcpy(n->hwaddr,mac,6); n->flags=NETIF_FLAG_BROADCAST|NETIF_FLAG_ETHARP|NETIF_FLAG_ETHERNET; return ERR_OK; }
+void rge_probe(const pci_t*c){ if(present)return; if(!rge_attach(c,mac)){ use_rge=1; present=1; } }
 void e1000_init(const pci_t*c){ if(present)return; pci_enable(c); base=pci_bar(c,0); if(!base)return; mmio_map(base,0x20000);
   R(0xD8)=~0u; R(0)|=1u<<26; for(int i=0;i<200000&&(R(0)&(1u<<26));i++)udelay(1); udelay(2000); R(0xD8)=~0u; R(0)|=(1<<6)|(1<<5);
   u32 lo=R(0x5400),hi=R(0x5404); if(!lo&&!(hi&0xFFFF)){ u16 w[3]; for(int i=0;i<3;i++){ R(0x14)=1|(i<<8); u32 v=0; for(int k=0;k<100000;k++){ v=R(0x14); if(v&0x10)break; udelay(1); } w[i]=v>>16; } lo=w[0]|w[1]<<16; hi=w[2]; }
@@ -32,10 +34,11 @@ void e1000_init(const pci_t*c){ if(present)return; pci_enable(c); base=pci_bar(c
   u64 p=phys(rd); R(0x2800)=p;R(0x2804)=p>>32;R(0x2808)=NR*sizeof(rxd);R(0x2810)=0;R(0x2818)=NR-1; R(0x100)=2|(1<<15)|(1<<26);
   p=phys(td); R(0x3800)=p;R(0x3804)=p>>32;R(0x3808)=NT*sizeof(txd);R(0x3810)=0;R(0x3818)=0; R(0x400)=2|8|(0x10<<4)|(0x40<<12); R(0x410)=0x0060200A; present=1; }
 void net_init(void){ if(!present)return; lwip_init(); ip4_addr_t z; ip4_addr_set_zero(&z); netif_add(&nif,&z,&z,&z,0,nif_init,ethernet_input); netif_set_default(&nif); netif_set_up(&nif); dhcp_start(&nif); started=1; }
-void net_poll(void){ if(!started)return; for(int i=0;i<NR;i++){ rxd*d=&rd[ri]; if(!(d->st&1))break; if((d->st&2)&&d->len&&d->len<=BSZ){ struct pbuf*p=pbuf_alloc(PBUF_RAW,d->len,PBUF_POOL); if(p){ pbuf_take(p,rb+ri*BSZ,d->len); if(nif.input(p,&nif)!=ERR_OK)pbuf_free(p); } } d->st=0; R(0x2818)=ri; ri=(ri+1)%NR; }
-  if(ticks>=nextlink){ nextlink=ticks+50; int up=(R(8)&2)!=0; if(up&&!netif_is_link_up(&nif)){ netif_set_link_up(&nif); dhcp_network_changed_link_up(&nif); } else if(!up&&netif_is_link_up(&nif))netif_set_link_down(&nif); }
+int net_link(void);
+void net_poll(void){ if(!started)return; if(use_rge){ for(int i=0;i<NR;i++){ void*b; int l=rge_recv(&b); if(l<=0)break; struct pbuf*p=pbuf_alloc(PBUF_RAW,l,PBUF_POOL); if(p){ pbuf_take(p,b,l); if(nif.input(p,&nif)!=ERR_OK)pbuf_free(p); } rge_recv_done(); } } else for(int i=0;i<NR;i++){ rxd*d=&rd[ri]; if(!(d->st&1))break; if((d->st&2)&&d->len&&d->len<=BSZ){ struct pbuf*p=pbuf_alloc(PBUF_RAW,d->len,PBUF_POOL); if(p){ pbuf_take(p,rb+ri*BSZ,d->len); if(nif.input(p,&nif)!=ERR_OK)pbuf_free(p); } } d->st=0; R(0x2818)=ri; ri=(ri+1)%NR; }
+  if(ticks>=nextlink){ nextlink=ticks+50; int up=net_link(); if(up&&!netif_is_link_up(&nif)){ netif_set_link_up(&nif); dhcp_network_changed_link_up(&nif); } else if(!up&&netif_is_link_up(&nif))netif_set_link_down(&nif); }
   sys_check_timeouts(); }
-int net_present(void){return present;} int net_ready(void){ return started&&dhcp_supplied_address(&nif); } int net_link(void){ return present&&(R(8)&2)!=0; }
+int net_present(void){return present;} int net_ready(void){ return started&&dhcp_supplied_address(&nif); } int net_link(void){ return present&&(use_rge?rge_link():(R(8)&2)!=0); }
 static void ipstr(const ip4_addr_t*a,char*o){ ksnprintf(o,16,"%d.%d.%d.%d",ip4_addr1(a),ip4_addr2(a),ip4_addr3(a),ip4_addr4(a)); }
 const char*net_status(void){ static char b[48]; if(!present)return TR("keine Netzwerkkarte","no network card"); if(!net_link())return TR("kein Kabel","no cable"); if(!net_ready())return TR("warte auf DHCP","waiting for DHCP"); char s[16]; ipstr(netif_ip4_addr(&nif),s); ksnprintf(b,48,"%s",s); return b; }
 void net_info(char*o,int n,int line){ o[0]=0; char a[16]; switch(line){ case 0: ksnprintf(o,n,"Status:  %s",net_status()); break; case 1: if(present)ksnprintf(o,n,"MAC:     %02x:%02x:%02x:%02x:%02x:%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]); break;

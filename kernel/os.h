@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include "viofs.h"
-#define VERSION "0.1.2"
+#define VERSION "0.1.3"
 extern int cfg_lang,cfg_kbd;
 #define TR(de,en) (cfg_lang?(en):(de))
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
@@ -54,7 +54,7 @@ typedef struct { u8 bus,dev,fn,cls,sub,pif; u16 ven,did; } pci_t;
 int pci_scan(pci_t*,int max); u32 pci_rd(const pci_t*,u8 off); void pci_wr(const pci_t*,u8 off,u32 v);
 u64 pci_bar(const pci_t*,int n); void pci_enable(const pci_t*);
 void usb_report(void(*)(const char*,void*),void*); extern int usb_hold; void usb_hotplug(void); void ahci_init(const pci_t*); void nvme_init(const pci_t*); void xhci_init(const pci_t*); void xhci_poll(void);
-void e1000_init(const pci_t*); void net_init(void); void net_poll(void); int net_present(void); int net_ready(void); const char *net_status(void); void net_info(char*,int,int);
+void e1000_init(const pci_t*); void rge_probe(const pci_t*); void rge_diag(void(*)(const char*,void*),void*); void net_init(void); void net_poll(void); int net_present(void); int net_ready(void); const char *net_status(void); void net_info(char*,int,int);
 extern int net_aborted; int tcp_open(u32 ip,u16 port); int tcp_tx(const void*,size_t); int tcp_tx_all(const void*,int); int tcp_rx(void*,size_t); void tcp_end(void);
 extern char tls_err[80]; int tls_open(const char*host); int tls_write(const void*,int); int tls_read(void*,int); void tls_close(void); int tls_weak(void);
 typedef struct { int status,length,tls,redirects,truncated,cert_bad; char type[60],err[80],final_host[120],final_url[1200]; } http_res;

@@ -73,7 +73,7 @@ static void sh_err(sh_t*s,int r){ if(r)sh_put(s,vfs_errstr(r,cfg_lang)); }
 static int sh_path(sh_t*s,const char*a,char*o){ if(vfs_norm(s->cwd,a,o,VFS_PATH)){ sh_err(s,VE_INVAL); return -1; } return 0; }
 static void sh_line(const char*l,void*a){ sh_put(a,l); }
 static void sh_exec(sh_t*s){ if(!fsx_quiet(s->cwd))strlcpy_(s->cwd,"/drives",VFS_PATH); char line[SW+4]; ksnprintf(line,SW+4,"> %s",s->in); sh_put(s,line); char*c=s->in; char*a=c; while(*a&&*a!=' ')a++; if(*a){*a++=0; while(*a==' ')a++;} char b[80]; static char p[VFS_PATH],q[VFS_PATH];
-  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  install  run  uninstall  mem  zeit  ver  cls","dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  install  run  uninstall  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS")); sh_put(s,TR("neustart","restart")); }
+  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  netdiag  install  run  uninstall  mem  zeit  ver  cls","dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  install  run  uninstall  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS")); sh_put(s,TR("neustart","restart")); }
   else if(!strcmp(c,"cls")||!strcmp(c,"clear")) s->n=0;
   else if(!strcmp(c,"ver")) sh_put(s,"Violyx " VERSION);
   else if(!strcmp(c,"echo")) sh_put(s,a);
@@ -87,6 +87,7 @@ static void sh_exec(sh_t*s){ if(!fsx_quiet(s->cwd))strlcpy_(s->cwd,"/drives",VFS
   else if(!strcmp(c,"mem")){ ksnprintf(b,80,TR("RAM %ld KB, Heap frei %ld KB","RAM %ld KB, heap free %ld KB"),mem_total_kb,heap_free()/1024); sh_put(s,b); }
   else if((!strcmp(c,"zeit")||!strcmp(c,"time"))){ rtc_t r; rtc_read(&r); if(cfg_lang)ksnprintf(b,80,"%d-%02d-%02d %02d:%02d:%02d",r.year,r.mon,r.day,r.h,r.m,r.s); else ksnprintf(b,80,"%02d.%02d.%d %02d:%02d:%02d",r.day,r.mon,r.year,r.h,r.m,r.s); sh_put(s,b); }
   else if(!strcmp(c,"usb"))usb_report(sh_line,s);
+  else if(!strcmp(c,"netdiag"))rge_diag(sh_line,s);
   else if(!strcmp(c,"install")){ if(vfs_norm(s->cwd,a,p,VFS_PATH))sh_err(s,VE_INVAL); else { int r=prog_install(p); if(r)sh_err(s,r); else sh_put(s,TR("Installiert.","Installed.")); } }
   else if(!strcmp(c,"run")){ size_t L=strlen(a); int r; if(L>4&&!strcmp(a+L-4,".vpk")){ if(vfs_norm(s->cwd,a,p,VFS_PATH))r=VE_INVAL; else r=prog_run_file(p,0); } else r=prog_run(a); if(r)sh_err(s,r); }
   else if(!strcmp(c,"uninstall")){ int r=prog_uninstall(a); if(r)sh_err(s,r); else sh_put(s,TR("Entfernt.","Removed.")); }
