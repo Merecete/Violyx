@@ -10,29 +10,34 @@ REQ struct limine_kernel_file_request kfreq={.id=LIMINE_KERNEL_FILE_REQUEST,.rev
 REQ struct limine_module_request modreq={.id=LIMINE_MODULE_REQUEST,.revision=0};
 
 typedef struct __attribute__((packed)) { u16 lo,sel; u8 ist,flags; u16 mid; u32 hi,z; } idt_e;
-static idt_e idt[48];
+static idt_e idt[49];
 static struct __attribute__((packed)) { u16 lim; u64 base; } idtr,gdtr;
-static u64 gdt[3]={0,0x00AF9A000000FFFF,0x00CF92000000FFFF};
+static u64 gdt[7]={0,0x00AF9A000000FFFF,0x00CF92000000FFFF,0x00CFF2000000FFFF,0x00AFFA000000FFFF,0,0};
+static struct __attribute__((packed)) { u32 r0; u64 rsp0,rsp1,rsp2,r1,ist[7],r2; u16 r3,iomap; } tss;
 extern u64 isr_table[]; void gdt_load(void*);
 volatile u64 ticks; u64 mem_total_kb; static u64 hhdm; static int pit_ok; static u64 tsc0,tsc_tick;
 u64 phys(const void*p){ return (u64)p-hhdm; }
 
-typedef struct { u64 r15,r14,r13,r12,r11,r10,r9,r8,rdi,rsi,rbp,rbx,rdx,rcx,rax,no,err,rip,cs,rflags,rsp,ss; } regs;
 static inline u64 rdtsc(void){ u32 a,d; __asm__ volatile("rdtsc":"=a"(a),"=d"(d)); return (u64)d<<32|a; }
 static void halt(void){ __asm__("cli"); for(;;)__asm__("hlt"); }
 void panic(const char*s){ __asm__("cli"); outb(0xE9,'P'); char l[100]; ksnprintf(l,100,TR("Violyx angehalten: %s","Violyx stopped: %s"),s); ui_panic(l,0); halt(); }
 void isr_handler(regs*r){
+  int user=r->cs&3; if(r->no==48){ if(user)proc_syscall(r); return; }
+  if(r->no<32&&user)proc_fault(r);
   if(r->no<32){ outb(0xE9,'P'); char d[100]; ksnprintf(d,100,TR("Ausnahme %d  Fehler %lx  RIP %lx","Exception %d  error %lx  RIP %lx"),(int)r->no,r->err,r->rip); ui_panic(TR("Violyx angehalten: CPU-Ausnahme","Violyx stopped: CPU exception"),d); halt(); }
   if(r->no==32){ ticks++; xhci_poll(); }
   else if(r->no==33) kbd_irq();
   if(r->no>=40) outb(0xA0,0x20);
   outb(0x20,0x20);
+  if(user)proc_tick(r);
 }
 /* Wartet auf das naechste Ereignis. Ohne PIT (manche neuen Intel-Systeme) laeuft die Zeit ueber den TSC. */
 void idle(void){ usb_hotplug(); if(pit_ok){ __asm__("sti;hlt"); net_poll(); return; } __asm__("pause"); ticks=(rdtsc()-tsc0)/tsc_tick; __asm__("cli"); xhci_poll(); __asm__("sti"); net_poll(); }
 static void cpu_init(void){
-  gdtr.lim=sizeof gdt-1; gdtr.base=(u64)gdt; gdt_load(&gdtr);
-  for(int i=0;i<48;i++){ u64 a=isr_table[i]; idt[i]=(idt_e){(u16)a,0x08,0,0x8E,(u16)(a>>16),(u32)(a>>32),0}; }
+  u64 ts=(u64)&tss; tss.iomap=sizeof tss; tss.rsp0=proc_stack_top(); gdt[5]=(sizeof tss-1)|(ts&0xFFFFFF)<<16|0x89ull<<40|((ts>>24)&255)<<56; gdt[6]=ts>>32;
+  gdtr.lim=sizeof gdt-1; gdtr.base=(u64)gdt; gdt_load(&gdtr); __asm__ volatile("ltr %%ax"::"a"(0x28));
+  { u64 c; __asm__ volatile("mov %%cr0,%0":"=r"(c)); c=(c&~(u64)((1<<2)|(1<<3)))|(1<<1)|(1<<5); __asm__ volatile("mov %0,%%cr0"::"r"(c)); __asm__ volatile("mov %%cr4,%0":"=r"(c)); c|=(1<<9)|(1<<10); u32 a_=7,b_,c_=0,d_; __asm__ volatile("cpuid":"+a"(a_),"=b"(b_),"+c"(c_),"=d"(d_)); if(b_&(1<<7))c|=1<<20; __asm__ volatile("mov %0,%%cr4"::"r"(c)); u32 lo,hi; __asm__ volatile("rdmsr":"=a"(lo),"=d"(hi):"c"(0xC0000080)); lo|=1<<11; __asm__ volatile("wrmsr"::"a"(lo),"d"(hi),"c"(0xC0000080)); }
+  for(int i=0;i<49;i++){ u64 a=isr_table[i]; idt[i]=(idt_e){(u16)a,0x08,0,(u8)(i==48?0xEE:0x8E),(u16)(a>>16),(u32)(a>>32),0}; }
   idtr.lim=sizeof idt-1; idtr.base=(u64)idt; __asm__ volatile("lidt %0"::"m"(idtr));
   outb(0x20,0x11);outb(0xA0,0x11);outb(0x21,32);outb(0xA1,40);outb(0x21,4);outb(0xA1,2);outb(0x21,1);outb(0xA1,1);
   outb(0x21,0xFC);outb(0xA1,0xFF);
@@ -46,7 +51,7 @@ static void mem_init(void){
 }
 /* Geraeteregister (MMIO) werden in der unteren Haelfte 1:1 und ungecacht eingeblendet.
    Das geschieht gezielt pro Geraet, weil sie je nach Firmware beliebig hoch liegen. */
-static u64*pml4;
+static u64*pml4; u64*kpml4(void){ return pml4; } u64 hhdm_off(void){ return hhdm; }
 static u64*nexttbl(u64*t,int i){ if(!(t[i]&1)){ void*n=dma_alloc(4096); t[i]=phys(n)|3; } return (u64*)((t[i]&~0xFFFull)+hhdm); }
 void mmio_map(u64 a,u64 n){ for(u64 p=a&~0x1FFFFFull;p<a+n;p+=0x200000){ u64*pdpt=nexttbl(pml4,(p>>39)&255),*pd=nexttbl(pdpt,(p>>30)&511); pd[(p>>21)&511]=p|3|(1<<3)|(1<<4)|(1<<7); }
   u64 c; __asm__ volatile("mov %%cr3,%0; mov %0,%%cr3":"=r"(c)); }

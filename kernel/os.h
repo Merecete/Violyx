@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include "viofs.h"
-#define VERSION "0.1.1"
+#define VERSION "0.1.2"
 extern int cfg_lang,cfg_kbd;
 #define TR(de,en) (cfg_lang?(en):(de))
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
@@ -53,7 +53,7 @@ void install_set_image(const void*,u64); int install_available(void); void app_i
 typedef struct { u8 bus,dev,fn,cls,sub,pif; u16 ven,did; } pci_t;
 int pci_scan(pci_t*,int max); u32 pci_rd(const pci_t*,u8 off); void pci_wr(const pci_t*,u8 off,u32 v);
 u64 pci_bar(const pci_t*,int n); void pci_enable(const pci_t*);
-extern int usb_hold; void usb_hotplug(void); void ahci_init(const pci_t*); void nvme_init(const pci_t*); void xhci_init(const pci_t*); void xhci_poll(void);
+void usb_report(void(*)(const char*,void*),void*); extern int usb_hold; void usb_hotplug(void); void ahci_init(const pci_t*); void nvme_init(const pci_t*); void xhci_init(const pci_t*); void xhci_poll(void);
 void e1000_init(const pci_t*); void net_init(void); void net_poll(void); int net_present(void); int net_ready(void); const char *net_status(void); void net_info(char*,int,int);
 extern int net_aborted; int tcp_open(u32 ip,u16 port); int tcp_tx(const void*,size_t); int tcp_tx_all(const void*,int); int tcp_rx(void*,size_t); void tcp_end(void);
 extern char tls_err[80]; int tls_open(const char*host); int tls_write(const void*,int); int tls_read(void*,int); void tls_close(void); int tls_weak(void);
@@ -63,6 +63,12 @@ int atoi(const char*); int strncmp(const char*,const char*,size_t); char *strstr
 int net_resolve(const char*,u32*ip,char*txt); int net_ping(u32 ip,u16 seq,int*ms,int*ttl);
 extern int usb_keyboards; const char *usb_status(void);
 int fs_init(void); int fs_ok(void); const char *fs_status(void); u32 fs_now(void); void fs_detach(void); int fs_live(void);
+
+/* prog.c: eigenstaendige Programme */
+typedef struct { u64 r15,r14,r13,r12,r11,r10,r9,r8,rdi,rsi,rbp,rbx,rdx,rcx,rax,no,err,rip,cs,rflags,rsp,ss; } regs;
+typedef struct { char name[24],title[24],icon[3][7]; } prog_info;
+void proc_syscall(regs*); void proc_fault(regs*); void proc_tick(regs*); u64 proc_stack_top(void); u64 hhdm_off(void);
+int prog_run(const char*); int prog_run_file(const char*,const char*); int prog_install(const char*); int prog_uninstall(const char*); int prog_scan(prog_info*,int);
 
 /* drives.c: VioFS und USB-Laufwerke unter /drives */
 extern u32 fsx_gen; void drives_sync(void); void drives_reset(void);

@@ -6,19 +6,15 @@ Violyx is written from scratch: its own kernel, drivers, file system, windowed t
 desktop and programs. There is no Linux underneath. It boots on BIOS and UEFI, connects
 to the internet and browses the web in a text browser, all without ever touching a mouse.
 
-This project was created with the help of AI. It is written in C and x86-64 assembly (NASM), with Python used for the build and test tools.
-
 ![Violyx boot logo](docs/logo.png)
 
 | | |
 |---|---|
 | ![Programs](docs/programs.png) | ![Text browser](docs/browser.png) |
-| ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
-| ![Miness](docs/mines.png) | ![Pong](docs/pong.png) |
 
-> **Status: experimental hobby project (version 0.1.1).** Tested in QEMU and VirtualBox,
-> not yet on real hardware. Violyx has no memory protection, so please do not enter
-> passwords or use it for anything sensitive. See [Limitations](#limitations).
+> **Status: experimental hobby project (version 0.1.2).** Tested in QEMU and VirtualBox,
+> and booted from a USB stick on one real PC (UEFI). Please do not enter passwords or use
+> it for anything sensitive. See [Limitations](#limitations).
 
 ## Features
 
@@ -26,6 +22,7 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 - **Text browser** with HTTPS, certificate checks, links, search forms and link numbers
 - **Programs:** Write, Files, Commands, Calculator, Calendar, Settings
 - **Games:** Pong, Invaders, Chomp and Mines
+- **Installable programs:** `.vpk` packages that run in protected memory, with an SDK in C
 - **Networking:** Intel E1000 driver, DHCP, DNS, ping, TCP/IP via lwIP
 - **HTTPS:** TLS 1.2 and 1.3 via Mbed TLS with Mozilla root certificates
 - **Storage:** IDE, AHCI (SATA), NVMe and USB mass storage
@@ -95,7 +92,7 @@ adds a note and Del removes it. Notes are saved in `/system/calendar`.
 
 The Programs menu lists the overview and all open windows, so you can jump to any of them.
 
-In Commands: `dir`, `cd`, `pwd`, `mkdir`, `del`, `mv`, `cp`, `type`, `edit`, `df`, `eject`.
+In Commands: `dir`, `cd`, `pwd`, `mkdir`, `del`, `mv`, `cp`, `type`, `edit`, `df`, `eject`, `usb`.
 
 ## USB drives
 
@@ -117,6 +114,19 @@ Open them from the Programs overview (F2) or the Programs menu. Esc closes a gam
 | Invaders | Stop the alien waves | Arrows move, Space fires, P pauses |
 | Chomp | Eat all dots and avoid the ghosts | Arrows or WASD move, P pauses |
 | Mines | Uncover every safe field | Arrows move, Space opens, F flags, 1 to 3 size, N new game |
+
+## Installing programs
+
+Programs are single `.vpk` files that you can share, for example on a FAT32 stick. Open one in
+Files and confirm to install it. It then appears in the Programs overview (F2). Select it
+there and press Del to uninstall it together with its data. Commands offers `install`, `run`
+and `uninstall`. The live ISO can start a package directly, without installing it.
+
+Each program runs in its own protected memory, so a crash closes only that program. A program
+can use its private data folder, `/home`, `/downloads` and `/drives`, but not `/system` or other
+programs. It can still read and change your files in `/home`, so only install programs you trust.
+
+To write your own program in C, see [sdk/README.md](sdk/README.md).
 
 ## Language and keyboard layout
 
@@ -153,19 +163,22 @@ The results are in `build/`: `violyx.img`, `violyx.iso` and `violyx.vdi`.
 | `kernel/html.c` | HTML layout, also testable on a host system |
 | `kernel/kbd.c`, `xhci.c` | Keyboard layouts, USB |
 | `kernel/viofs.c` | VioFS 2 file system, also testable on a host system |
+| `kernel/prog.c` | Program packages, ELF loader, address spaces, system calls |
 | `kernel/fat.c`, `drives.c` | FAT32 driver and the `/drives` layer with its access prompt |
 | `kernel/disk.c`, `ahci.c`, `nvme.c` | Block layer, IDE, storage drivers |
 | `kernel/net.c`, `tls.c`, `http.c` | Network driver, TLS, HTTP |
 | `kernel/install.c`, `acpi.c` | Installer, power off |
+| `sdk/` | SDK and example programs |
 | `tools/` | Image builders and test tools |
 | `third_party/` | Bundled components |
 
 ## Limitations
 
-- No memory protection or separate processes: a bug can bring down the whole system.
+- Programs are protected from the system, but the built-in programs and drivers are not: a bug there can bring down the whole system.
+- Programs cannot draw graphics or use the network yet. They only run while their window is in front, otherwise about once per second.
 - Browser: no JavaScript, images, cookies or password fields. Many modern sites will not work.
 - Network: Intel E1000 cards only, no Wi-Fi.
-- USB: xHCI (USB 3 controllers) only, no hubs. A stick on an external hub is not detected.
+- USB: xHCI (USB 3 controllers) only.
 - FAT32: one partition per stick, 512-byte sectors, files up to 4 GB. Writing is slow because data is sent sector by sector. Pulling a stick while writing can lose that file and leave unused space behind, but the tested write order keeps other files intact.
 - File system: no journal. A power failure can lose free space, but the tested write order keeps existing data intact. There is no repair tool yet.
 - Files in Write are limited to 1 MB.
@@ -191,6 +204,9 @@ gespeichert.
 FAT32-USB-Sticks erscheinen im Ordner `/drives`. Beim ersten Öffnen fragt Violyx nach,
 erst nach `J` oder `Y` kannst du dort lesen und speichern.
 
-Violyx ist ein experimentelles Hobbyprojekt und bisher nur in QEMU und VirtualBox
-getestet. Es hat keinen Speicherschutz, gib daher keine Passwörter ein. Der Installer
+Programme sind `.vpk`-Dateien: In Dateien öffnen, bestätigen, und sie stehen unter F2 bereit.
+Jedes läuft in geschütztem Speicher. Eigene Programme schreibst du mit dem SDK in `sdk/`.
+
+Violyx ist ein experimentelles Hobbyprojekt, getestet in QEMU und VirtualBox und auf einem
+echten PC gestartet. Gib keine Passwörter ein. Der Installer
 löscht die gesamte gewählte Platte.

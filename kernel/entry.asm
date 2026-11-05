@@ -1,7 +1,7 @@
 ; Violyx 64-Bit-Einstieg und Interrupt-Stubs. Limine uebergibt im Long Mode.
 default rel
 section .text
-global _start, gdt_load
+global _start, gdt_load, proc_enter, proc_back
 extern kmain, isr_handler
 _start:
     lea rsp, [stack_top]
@@ -34,7 +34,7 @@ isr%1:
     jmp isr_common
 %endmacro
 %assign i 0
-%rep 48
+%rep 49
 ISR i
 %assign i i+1
 %endrep
@@ -60,6 +60,7 @@ isr_common:
     cld
     call isr_handler
     mov rsp, rbp
+isr_pop:
     pop r15
     pop r14
     pop r13
@@ -78,11 +79,31 @@ isr_common:
     add rsp, 16
     iretq
 
+proc_enter:                 ; rdi = Rueckkehr-Rahmen, rsi = Ablage fuer den Kernel-Stack
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    mov [rsi], rsp
+    mov rsp, rdi
+    jmp isr_pop
+proc_back:                  ; rdi = gemerkter Kernel-Stack
+    mov rsp, rdi
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+
 section .rodata
 global isr_table
 isr_table:
 %assign i 0
-%rep 48
+%rep 49
     dq isr %+ i
 %assign i i+1
 %endrep

@@ -49,7 +49,7 @@ static void fm_key(win_t*w,key_t k){ fm_t*f=w->st; char p[VFS_PATH+260],q[VFS_PA
   if(k.key==K_UP){ if(f->s)f->s--; return; } if(k.key==K_DOWN){ if(f->s<f->n-1)f->s++; return; } if(k.key==K_BS){ if(strcmp(f->cwd,"/")){ ksnprintf(p,sizeof p,"%s/..",f->cwd); vfs_norm("/",p,f->cwd,VFS_PATH); f->s=f->top=0; fm_load(f); } return; }
   if(k.key=='n'||k.key=='N'){ app_write(0); return; }
   if(k.key=='o'||k.key=='O'){ n[0]=0; if(dlg_input(TR("Neuer Ordner","New folder"),TR("Name:","Name:"),n,VFS_NAME)){ fm_path(f,n,p,sizeof p); r=fsx_mkdir(p,fs_now()); fm_load(f); } }
-  else if(f->n&&k.key==K_ENTER){ fm_path(f,f->it[f->s].name,p,sizeof p); if(f->it[f->s].dir){ vfs_ent e; r=fsx_stat(p,&e); if(r==VE_DENIED)return; if(!r){ strlcpy_(f->cwd,p,VFS_PATH); f->s=f->top=0; fm_load(f); } } else { app_write(p); return; } }
+  else if(f->n&&k.key==K_ENTER){ fm_path(f,f->it[f->s].name,p,sizeof p); if(f->it[f->s].dir){ vfs_ent e; r=fsx_stat(p,&e); if(r==VE_DENIED)return; if(!r){ strlcpy_(f->cwd,p,VFS_PATH); f->s=f->top=0; fm_load(f); } } else { size_t L=strlen(p); if(L>4&&!strcmp(p+L-4,".vpk")){ r=fs_ok()?prog_install(p):dlg_confirm(TR("Programm","Program"),TR("Dieses Programm jetzt starten?","Start this program now?"))?prog_run_file(p,0):VE_DENIED; if(r==VE_DENIED)return; if(!r&&fs_ok()){ dlg_msg(TR("Programm","Program"),TR("Installiert. Du findest es unter F2.","Installed. Find it under F2.")); return; } } else { app_write(p); return; } } }
   else if(!strcmp(f->cwd,"/drives")){ if(f->n&&(k.key=='e'||k.key=='E')){ r=fsx_eject(f->it[f->s].name); if(!r){ ksnprintf(p,sizeof p,TR("%s kann jetzt abgezogen werden.","%s can be removed now."),f->it[f->s].name); dlg_msg(TR("Auswerfen","Eject"),p); } } }
   else if(f->n&&(k.key=='c'||k.key=='C')){ char d[VFS_PATH]; const char*nm=f->it[f->s].name; char t[VFS_PATH]; d[0]=0; if(!memcmp(f->cwd,"/drives/",8)){ if(fs_ok())ksnprintf(d,VFS_PATH,"/home/%s",nm); else ksnprintf(d,VFS_PATH,"%s",nm); } else if(fsx_first(t,VFS_PATH))ksnprintf(d,VFS_PATH,"%s/%s",t,nm); else ksnprintf(d,VFS_PATH,"%s",nm); if(dlg_input(TR("Kopieren","Copy"),TR("Ziel:","Target:"),d,VFS_PATH-1)){ fm_path(f,nm,p,sizeof p); if(vfs_norm(f->cwd,d,q,VFS_PATH))r=VE_INVAL; else { vfs_ent e; int ex=fsx_stat(q,&e); if(ex==VE_DENIED)return; if(!ex&&e.dir){ ksnprintf(t,VFS_PATH,"%s/%s",strcmp(q,"/")?q:"",nm); strlcpy_(q,t,VFS_PATH); ex=fsx_stat(q,&e); } if(!ex&&!dlg_confirm(TR("Kopieren","Copy"),TR("Ziel ersetzen?","Replace target?")))return; r=fsx_copy(p,q); } fm_load(f); } }
   else if(f->n&&(k.key=='r'||k.key=='R')){ strlcpy_(n,f->it[f->s].name,VFS_NAME+1); if(dlg_input(TR("Umbenennen","Rename"),TR("Neuer Name oder Pfad:","New name or path:"),n,VFS_NAME)){ fm_path(f,f->it[f->s].name,p,sizeof p); if(vfs_norm(f->cwd,n,q,VFS_PATH))r=VE_INVAL; else r=fsx_rename(p,q); fm_load(f); } }
@@ -71,8 +71,9 @@ typedef struct { sh_t*s; int n; } shl;
 static int sh_ls(const vfs_ent*e,void*x){ shl*l=x; char b[100],z[16]; sizes(e->size,z,16); if(e->dir)ksnprintf(b,100,"[%s]",e->name); else ksnprintf(b,100,"%24s %s",e->name,z); sh_put(l->s,b); l->n++; return 0; }
 static void sh_err(sh_t*s,int r){ if(r)sh_put(s,vfs_errstr(r,cfg_lang)); }
 static int sh_path(sh_t*s,const char*a,char*o){ if(vfs_norm(s->cwd,a,o,VFS_PATH)){ sh_err(s,VE_INVAL); return -1; } return 0; }
+static void sh_line(const char*l,void*a){ sh_put(a,l); }
 static void sh_exec(sh_t*s){ if(!fsx_quiet(s->cwd))strlcpy_(s->cwd,"/drives",VFS_PATH); char line[SW+4]; ksnprintf(line,SW+4,"> %s",s->in); sh_put(s,line); char*c=s->in; char*a=c; while(*a&&*a!=' ')a++; if(*a){*a++=0; while(*a==' ')a++;} char b[80]; static char p[VFS_PATH],q[VFS_PATH];
-  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  mem  zeit  ver  cls","dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS")); sh_put(s,TR("neustart","restart")); }
+  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  install  run  uninstall  mem  zeit  ver  cls","dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  install  run  uninstall  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS")); sh_put(s,TR("neustart","restart")); }
   else if(!strcmp(c,"cls")||!strcmp(c,"clear")) s->n=0;
   else if(!strcmp(c,"ver")) sh_put(s,"Violyx " VERSION);
   else if(!strcmp(c,"echo")) sh_put(s,a);
@@ -85,6 +86,10 @@ static void sh_exec(sh_t*s){ if(!fsx_quiet(s->cwd))strlcpy_(s->cwd,"/drives",VFS
   else if((!strcmp(c,"neustart")||!strcmp(c,"restart")||!strcmp(c,"reboot"))){ outb(0xE9,'S'); reboot(); }
   else if(!strcmp(c,"mem")){ ksnprintf(b,80,TR("RAM %ld KB, Heap frei %ld KB","RAM %ld KB, heap free %ld KB"),mem_total_kb,heap_free()/1024); sh_put(s,b); }
   else if((!strcmp(c,"zeit")||!strcmp(c,"time"))){ rtc_t r; rtc_read(&r); if(cfg_lang)ksnprintf(b,80,"%d-%02d-%02d %02d:%02d:%02d",r.year,r.mon,r.day,r.h,r.m,r.s); else ksnprintf(b,80,"%02d.%02d.%d %02d:%02d:%02d",r.day,r.mon,r.year,r.h,r.m,r.s); sh_put(s,b); }
+  else if(!strcmp(c,"usb"))usb_report(sh_line,s);
+  else if(!strcmp(c,"install")){ if(vfs_norm(s->cwd,a,p,VFS_PATH))sh_err(s,VE_INVAL); else { int r=prog_install(p); if(r)sh_err(s,r); else sh_put(s,TR("Installiert.","Installed.")); } }
+  else if(!strcmp(c,"run")){ size_t L=strlen(a); int r; if(L>4&&!strcmp(a+L-4,".vpk")){ if(vfs_norm(s->cwd,a,p,VFS_PATH))r=VE_INVAL; else r=prog_run_file(p,0); } else r=prog_run(a); if(r)sh_err(s,r); }
+  else if(!strcmp(c,"uninstall")){ int r=prog_uninstall(a); if(r)sh_err(s,r); else sh_put(s,TR("Entfernt.","Removed.")); }
   else if(!strcmp(c,"eject")){ if(!*a&&!memcmp(s->cwd,"/drives/",8))a=s->cwd+8; char dn[8]; int k=0; while(a[k]&&a[k]!='/'&&k<7){ dn[k]=a[k]; k++; } dn[k]=0; if(!k)sh_put(s,TR("Aufruf: eject usb1","Usage: eject usb1")); else { int r=fsx_eject(dn); if(r)sh_err(s,r); else { ksnprintf(b,80,TR("%s kann jetzt abgezogen werden.","%s can be removed now."),dn); sh_put(s,b); } } }
   else if(!strcmp(c,"pwd")) sh_put(s,s->cwd);
   else if(!strcmp(c,"df")&&!fs_ok())sh_put(s,fs_status());
@@ -199,15 +204,18 @@ static const struct { const char*n,*en; void(*fn)(void); const char*ic[3]; u8 c;
 #define NP ((int)(sizeof progs/sizeof progs[0]))
 #define PC 4
 #define PV 2                                  /* sichtbare Reihen */
-void app_launcher(void){ static int s,top; for(;;){ int x,y,rows=(NP+PC-1)/PC; dlg_box(TR("Programme","Programs"),66,17,&x,&y);
+#define MAXIP 48
+static prog_info ipr[MAXIP];
+void app_launcher(void){ static int s,top; int ni=prog_scan(ipr,MAXIP); for(;;){ int all=NP+ni; if(s>=all)s=all-1; int x,y,rows=(all+PC-1)/PC; dlg_box(TR("Programme","Programs"),66,17,&x,&y);
     if(s/PC<top)top=s/PC; if(s/PC>=top+PV)top=s/PC-PV+1;     /* Ansicht folgt der Auswahl */
-    for(int i=top*PC;i<NP&&i<(top+PV)*PC;i++){ int tx=x+3+(i%PC)*15,ty=y+2+(i/PC-top)*7,sel=i==s; u8 bg=sel?C_SEL:C_RAISE; fill(tx,ty,15,6,' ',AT(bg,C_LAV));
-      for(int r=0;r<3;r++) for(int c=0;c<6;c++) put(tx+4+c,ty+1+r,(u8)progs[i].ic[r][c],AT(bg,sel?C_GLOW:progs[i].c));
-      const char*pn=TR(progs[i].n,progs[i].en); int l=strlen(pn); text(tx+(15-l)/2,ty+4,AT(bg,sel?C_GLOW:C_LAV),pn); }
-    if(top>0)put(x+33,y+1,0x1E,AT(C_RAISE,C_HOT)); if(top+PV<rows)put(x+33,y+15,0x1F,AT(C_RAISE,C_HOT));
+    for(int i=top*PC;i<all&&i<(top+PV)*PC;i++){ int tx=x+3+(i%PC)*15,ty=y+2+(i/PC-top)*7,sel=i==s; u8 bg=sel?C_SEL:C_RAISE; fill(tx,ty,15,6,' ',AT(bg,C_LAV)); int inst=i>=NP;
+      for(int r=0;r<3;r++){ const char*ic=inst?ipr[i-NP].icon[r]:progs[i].ic[r]; for(int c=0;c<6&&ic[c];c++) put(tx+4+c,ty+1+r,(u8)ic[c],AT(bg,sel?C_GLOW:inst?C_NEON:progs[i].c)); }
+      const char*pn=inst?ipr[i-NP].title:TR(progs[i].n,progs[i].en); int l=strlen(pn); if(l>14)l=14; for(int c=0;c<l;c++)put(tx+(15-l)/2+c,ty+4,(u8)pn[c],AT(bg,sel?C_GLOW:C_LAV)); if(!inst)text(tx+(15-l)/2,ty+4,AT(bg,sel?C_GLOW:C_LAV),pn); }
+    if(top>0)put(x+33,y+1,0x1E,AT(C_RAISE,C_HOT)); if(top+PV<rows)put(x+33,y+15,0x1F,AT(C_RAISE,C_HOT)); if(s>=NP)text(x+3,y+15,AT(C_RAISE,C_MID),TR("Entf deinstalliert","Del uninstalls"));
     ui_show(); key_t k=key_wait();
-    if(k.key==K_ESC||k.key==K_F2)return; if(k.key==K_ENTER){ progs[s].fn(); return; }
-    if(k.key==K_RIGHT){ if(s<NP-1)s++; } else if(k.key==K_LEFT){ if(s)s--; } else if(k.key==K_DOWN){ if(s/PC<rows-1){ s+=PC; if(s>=NP)s=NP-1; } } else if(k.key==K_UP){ if(s>=PC)s-=PC; } } }
+    if(k.key==K_ESC||k.key==K_F2)return; if(k.key==K_ENTER){ if(s<NP)progs[s].fn(); else { int r=prog_run(ipr[s-NP].name); if(r)dlg_msg(ipr[s-NP].title,vfs_errstr(r,cfg_lang)); } return; }
+    if(k.key==K_DEL&&s>=NP){ char q[72]; ksnprintf(q,72,TR("%s und seine Daten löschen?","Delete %s and its data?"),ipr[s-NP].title); if(dlg_confirm(TR("Deinstallieren","Uninstall"),q)){ int r=prog_uninstall(ipr[s-NP].name); if(r)dlg_msg(TR("Deinstallieren","Uninstall"),vfs_errstr(r,cfg_lang)); ni=prog_scan(ipr,MAXIP); } continue; }
+    if(k.key==K_RIGHT){ if(s<all-1)s++; } else if(k.key==K_LEFT){ if(s)s--; } else if(k.key==K_DOWN){ if(s/PC<rows-1){ s+=PC; if(s>=all)s=all-1; } } else if(k.key==K_UP){ if(s>=PC)s-=PC; } } }
 /* ---------- Systeminfo ---------- */
 static void in_draw(win_t*w){ char b[60]; rtc_t r; rtc_read(&r); u64 s=ticks/100; cfill(w,T); ctext(w,1,0,HI,"Violyx " VERSION); ksnprintf(b,60,TR("RAM:      %ld MB","RAM:      %ld MB"),mem_total_kb/1024); ctext(w,1,2,T,b); ksnprintf(b,60,TR("Heap:     %ld KB frei","Heap:     %ld KB free"),heap_free()/1024); ctext(w,1,3,T,b); ksnprintf(b,60,TR("Laufzeit: %d:%02d:%02d","Uptime:   %d:%02d:%02d"),(u32)(s/3600),(u32)((s/60)%60),(u32)(s%60)); ctext(w,1,4,T,b); { u64 t_,f_; u32 n_; vfs_usage(&t_,&f_,&n_); ksnprintf(b,60,TR("Platte:   %ld MB frei von %ld MB","Disk:     %ld MB free of %ld MB"),f_>>20,t_>>20); ctext(w,1,5,T,b); } ksnprintf(b,60,TR("Status:   %s","Status:   %s"),fs_status()); ctext(w,1,6,T,b); ksnprintf(b,60,TR("USB-Tastaturen: %d","USB keyboards: %d"),usb_keyboards); ctext(w,1,7,T,b); ksnprintf(b,60,TR("Netzwerk: %s","Network:  %s"),net_status()); ctext(w,1,8,T,b); }
 static const app_t in_app={in_draw,0,0,0,0};
