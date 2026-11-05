@@ -24,6 +24,8 @@ u32_t sys_now(void){ return (u32_t)(ticks*10); }
 static int use_rge; int rge_attach(const pci_t*,u8*); int rge_link(void); int rge_send(const void*,int); int rge_recv(void**); void rge_recv_done(void);
 static err_t tx(struct netif*n,struct pbuf*p){ if(p->tot_len>BSZ)return ERR_BUF; if(use_rge){ static u8 b[BSZ]; pbuf_copy_partial(p,b,p->tot_len,0); return rge_send(b,p->tot_len)?ERR_TIMEOUT:ERR_OK; } txd*d=&td[ti]; for(int i=0;i<200000&&!(d->st&1);i++)udelay(1); if(!(d->st&1))return ERR_TIMEOUT; pbuf_copy_partial(p,tb+ti*BSZ,p->tot_len,0); d->len=p->tot_len; d->st=0; d->cmd=1|2|8; ti=(ti+1)%NT; R(0x3818)=ti; return ERR_OK; }
 static err_t nif_init(struct netif*n){ n->name[0]='e';n->name[1]='0'; n->output=etharp_output; n->linkoutput=tx; n->mtu=1500; n->hwaddr_len=6; memcpy(n->hwaddr,mac,6); n->flags=NETIF_FLAG_BROADCAST|NETIF_FLAG_ETHARP|NETIF_FLAG_ETHERNET; return ERR_OK; }
+#include "lwip/dhcp.h"
+void net_diag(void(*cb)(const char*,void*),void*a){ char l[72]; rge_diag(cb,a); if(!started)return; struct dhcp*d=netif_dhcp_data(&nif); ksnprintf(l,72,"lwip state %d tries %d link %d up %d ip %d",d?d->state:-1,d?d->tries:-1,netif_is_link_up(&nif)?1:0,netif_is_up(&nif)?1:0,dhcp_supplied_address(&nif)?1:0); cb(l,a); }
 void rge_probe(const pci_t*c){ if(present)return; if(!rge_attach(c,mac)){ use_rge=1; present=1; } }
 void e1000_init(const pci_t*c){ if(present)return; pci_enable(c); base=pci_bar(c,0); if(!base)return; mmio_map(base,0x20000);
   R(0xD8)=~0u; R(0)|=1u<<26; for(int i=0;i<200000&&(R(0)&(1u<<26));i++)udelay(1); udelay(2000); R(0xD8)=~0u; R(0)|=(1<<6)|(1<<5);

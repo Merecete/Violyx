@@ -87,7 +87,7 @@ static void sh_exec(sh_t*s){ if(!fsx_quiet(s->cwd))strlcpy_(s->cwd,"/drives",VFS
   else if(!strcmp(c,"mem")){ ksnprintf(b,80,TR("RAM %ld KB, Heap frei %ld KB","RAM %ld KB, heap free %ld KB"),mem_total_kb,heap_free()/1024); sh_put(s,b); }
   else if((!strcmp(c,"zeit")||!strcmp(c,"time"))){ rtc_t r; rtc_read(&r); if(cfg_lang)ksnprintf(b,80,"%d-%02d-%02d %02d:%02d:%02d",r.year,r.mon,r.day,r.h,r.m,r.s); else ksnprintf(b,80,"%02d.%02d.%d %02d:%02d:%02d",r.day,r.mon,r.year,r.h,r.m,r.s); sh_put(s,b); }
   else if(!strcmp(c,"usb"))usb_report(sh_line,s);
-  else if(!strcmp(c,"netdiag"))rge_diag(sh_line,s);
+  else if(!strcmp(c,"netdiag"))net_diag(sh_line,s);
   else if(!strcmp(c,"install")){ if(vfs_norm(s->cwd,a,p,VFS_PATH))sh_err(s,VE_INVAL); else { int r=prog_install(p); if(r)sh_err(s,r); else sh_put(s,TR("Installiert.","Installed.")); } }
   else if(!strcmp(c,"run")){ size_t L=strlen(a); int r; if(L>4&&!strcmp(a+L-4,".vpk")){ if(vfs_norm(s->cwd,a,p,VFS_PATH))r=VE_INVAL; else r=prog_run_file(p,0); } else r=prog_run(a); if(r)sh_err(s,r); }
   else if(!strcmp(c,"uninstall")){ int r=prog_uninstall(a); if(r)sh_err(s,r); else sh_put(s,TR("Entfernt.","Removed.")); }
@@ -195,6 +195,9 @@ static const struct { const char*n,*en; void(*fn)(void); const char*ic[3]; u8 c;
  {"Invaders","Invaders",app_invaders,{" /@\\  ","  \xB3   "," \xDC\xDB\xDC  "},C_HOT},
  {"Chomp","Chomp",app_chomp,{"\xDB\xDB\xDB\xDB\xDB\xDB","<( \xF9 \xEA","\xDB\xDB\xDB\xDB\xDB\xDB"},C_ORCH},
  {"Mines","Mines",app_mines,{"\xFA\xFA 1 \xFA","\xFA \x0F 2\xFA","\xFA\xFA \x10 \xFA"},C_VIOLET},
+ {"Snake","Snake",app_snake,{" ~~~~ ","  ~~@ ","      "},C_NEON},
+ {"Bricks","Bricks",app_bricks,{"##  ##","  ##  ","  O   "},C_HOT},
+ {"Novastrike","Novastrike",app_novastrike,{"  V   ","  :   "," /A\\ "},C_ORCH},
  {"Einstellungen","Settings",app_settings,{"\xC4\xFE\xC4\xC4\xC4\xC4","\xC4\xC4\xC4\xC4\xFE\xC4","\xC4\xC4\xFE\xC4\xC4\xC4"},C_VIOLET},
  {"Systeminfo","System info",app_info,{" \xDA\xC4\xC4\xBF ",  " \xB3i \xB3 "," \xC0\xC4\xC4\xD9 "},C_ORCH},
  {"Hilfe","Help",app_help,{" \xDA\xC4\xC4\xBF "," \xB3? \xB3 "," \xC0\xC4\xC4\xD9 "},C_HOT}

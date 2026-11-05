@@ -54,7 +54,7 @@ typedef struct { u8 bus,dev,fn,cls,sub,pif; u16 ven,did; } pci_t;
 int pci_scan(pci_t*,int max); u32 pci_rd(const pci_t*,u8 off); void pci_wr(const pci_t*,u8 off,u32 v);
 u64 pci_bar(const pci_t*,int n); void pci_enable(const pci_t*);
 void usb_report(void(*)(const char*,void*),void*); extern int usb_hold; void usb_hotplug(void); void ahci_init(const pci_t*); void nvme_init(const pci_t*); void xhci_init(const pci_t*); void xhci_poll(void);
-void e1000_init(const pci_t*); void rge_probe(const pci_t*); void rge_diag(void(*)(const char*,void*),void*); void net_init(void); void net_poll(void); int net_present(void); int net_ready(void); const char *net_status(void); void net_info(char*,int,int);
+void e1000_init(const pci_t*); void rge_probe(const pci_t*); void rge_diag(void(*)(const char*,void*),void*); void net_diag(void(*)(const char*,void*),void*); void net_init(void); void net_poll(void); int net_present(void); int net_ready(void); const char *net_status(void); void net_info(char*,int,int);
 extern int net_aborted; int tcp_open(u32 ip,u16 port); int tcp_tx(const void*,size_t); int tcp_tx_all(const void*,int); int tcp_rx(void*,size_t); void tcp_end(void);
 extern char tls_err[80]; int tls_open(const char*host); int tls_write(const void*,int); int tls_read(void*,int); void tls_close(void); int tls_weak(void);
 typedef struct { int status,length,tls,redirects,truncated,cert_bad; char type[60],err[80],final_host[120],final_url[1200]; } http_res;
@@ -114,4 +114,4 @@ int fs_load(const char*path,fs_item**out);
 /* apps.c */
 void app_write(const char*file); void app_files(void); void app_shell(void);
 void app_calc(void); void app_info(void); void app_help(void);
-void app_launcher(void); void app_pong(void); void app_invaders(void); void app_chomp(void); void app_mines(void); void app_calendar(void); void app_settings(void); void app_web(void); void web_app_open(const char*);
+void app_launcher(void); void app_pong(void); void app_invaders(void); void app_chomp(void); void app_mines(void); void app_calendar(void); void app_snake(void); void app_bricks(void); void app_novastrike(void); void app_settings(void); void app_web(void); void web_app_open(const char*);

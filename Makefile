@@ -26,6 +26,11 @@ build/cp437.h: tools/mkcp437.py
 	@mkdir -p build
 	python3 tools/mkcp437.py $@
 build/html.o: build/cp437.h kernel/html.h
+APPSRC=$(wildcard sdk/examples/*.c) sdk/violyx.c sdk/violyx.h sdk/link.ld sdk/mkvpk.py sdk/Makefile
+build/apps.h: $(APPSRC) tools/mkapps.py
+	$(MAKE) -C sdk apps OUT=../build/apps
+	python3 tools/mkapps.py $@ snake=build/apps/snake.vpk bricks=build/apps/bricks.vpk novastrike=build/apps/novastrike.vpk
+build/prog.o: build/apps.h
 build/fat.o: build/cp437.h kernel/fat.h kernel/viofs.h
 build/drives.o: kernel/fat.h kernel/viofs.h
 build/browser.o: kernel/html.h

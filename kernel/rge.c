@@ -1042,7 +1042,7 @@ static void rge_ephy_config(struct rge_softc *sc) {
 }
 
 /* ---------- Violyx: Rings, Start, Senden und Empfangen ---------- */
-#define NRX 64
+#define NRX 128
 #define NTX 32
 #define BUFSZ 2048
 static struct rge_softc S;
@@ -1174,6 +1174,21 @@ static int chip_start(const u8 *mac) {
 	return 0;
 }
 
+static u32 isrseen; static u64 resync, kicks, lastrx; static int dhtype, dhlen; static u8 dhip[4]; static int macsrc; static u8 mymac[6]; static u64 rxme, rxbc, rxdhcp, rxarp, *tally;
+static int mac_ok(const u8 *m) { int z = 1, f = 1; for (int i = 0; i < 6; i++) { if (m[i]) z = 0; if (m[i] != 0xFF) f = 0; } return !z && !f && !(m[0] & 1); }
+static void rx_count(const u8 *b, int n) {
+	if (n < 14) return;
+	if (!memcmp(b, mymac, 6)) rxme++;
+	if (b[0] == 0xFF) rxbc++;
+	if (b[12] == 8 && b[13] == 6) rxarp++;
+	if (n >= 42 && b[12] == 8 && b[13] == 0 && b[23] == 17 && b[36] == 0 && b[37] == 68) {
+		rxdhcp++; dhlen = n;
+		if (n > 282) {
+			memcpy(dhip, b + 58, 4);
+			for (int o = 282; o + 2 < n && b[o] != 255;) { if (b[o] == 0) { o++; continue; } if (b[o] == 53) { dhtype = b[o + 2]; break; } o += 2 + b[o + 1]; }
+		}
+	}
+}
 int rge_attach(const pci_t *c, u8 *mac) {
 	struct rge_softc *sc = &S;
 	stage = 1;
@@ -1194,7 +1209,14 @@ int rge_attach(const pci_t *c, u8 *mac) {
 	memset(rl, 0, 4096); memset(tl, 0, 4096);
 	for (int i = 0; i < NRX; i++) rx_arm(i);
 	tl[NTX - 1].rge_cmdsts = RGE_TDCMDSTS_EOR;
+	/* Ohne Firmware kann das Ersatzregister leer sein: dann die aktive Adresse nehmen, zuletzt eine eigene */
+	u8 m0[6];
+	for (int i = 0; i < 6; i++) m0[i] = RGE_READ_1(sc, RGE_MAC0 + i);
 	rge_get_macaddr(sc, mac);
+	macsrc = 1;
+	if (!mac_ok(mac)) { memcpy(mac, m0, 6); macsrc = 2; }
+	if (!mac_ok(mac)) { static const u8 own[6] = { 0x02, 0x56, 0x49, 0x4F, 0x4C, 0x59 }; memcpy(mac, own, 6); macsrc = 3; }
+	memcpy(mymac, mac, 6);
 	return chip_start(mac);
 }
 
@@ -1221,10 +1243,30 @@ int rge_send(const void *b, int len) {
 }
 
 /* Liefert die Laenge des naechsten Rahmens (0 = keiner). Danach rge_recv_done aufrufen. */
+static int gone(void) { return RGE_READ_1(&S, RGE_CMD) == 0xFF; }
 int rge_recv(void **out) {
+	/* Ohne Interrupts quittiert niemand sonst den Status. Ein offenes "keine Empfangsplaetze" haelt den Chip an. */
+	u32 isr = RGE_READ_4(&S, RGE_ISR);
+	if (isr && isr != 0xFFFFFFFF) { RGE_WRITE_4(&S, RGE_ISR, isr); isrseen |= isr; }
 	for (int n = 0; n < NRX; n++) {
 		u32 st = rl[rxi].hi_qword1.rx_qword4.rge_cmdsts;
-		if (st & RGE_RDCMDSTS_OWN) return 0;
+		if (st & RGE_RDCMDSTS_OWN) {
+			/* Chip und Treiber sind auseinandergelaufen? Dann beim naechsten vollen Platz weitermachen. */
+			int found = -1;
+			for (int k = 1; k < NRX; k++) { int q = (rxi + k) % NRX; if (!(rl[q].hi_qword1.rx_qword4.rge_cmdsts & RGE_RDCMDSTS_OWN)) { found = q; break; } }
+			if (found >= 0) { resync++; rxi = found; continue; }
+			/* Ring ist frei, der Chip meldet aber "keine Plaetze": Empfang neu anstossen */
+			if ((isr & RGE_ISR_RX_DESC_UNAVAIL) && !gone()) {
+				kicks++;
+				RGE_WRITE_1(&S, RGE_CMD, RGE_CMD_TXENB);
+				udelay(50);
+				RGE_WRITE_4(&S, RGE_RXDESC_ADDR_LO, RGE_ADDR_LO(phys(rl)));
+				RGE_WRITE_4(&S, RGE_RXDESC_ADDR_HI, RGE_ADDR_HI(phys(rl)));
+				rxi = 0;
+				RGE_WRITE_1(&S, RGE_CMD, RGE_CMD_TXENB | RGE_CMD_RXENB);
+			}
+			return 0;
+		}
 		int len = (int)(mask_rd(st) & RGE_RDCMDSTS_FRAGLEN);
 		if ((st & RGE_RDCMDSTS_RXERRSUM) || !(st & RGE_RDCMDSTS_SOF) || !(st & RGE_RDCMDSTS_EOF) || len <= 4 || len > BUFSZ) {
 			rxerr++;
@@ -1233,6 +1275,7 @@ int rge_recv(void **out) {
 			continue;
 		}
 		rxok++;
+		rx_count(rb + rxi * BUFSZ, len);
 		*out = rb + rxi * BUFSZ;
 		return len - 4;                              /* ohne CRC */
 	}
@@ -1249,4 +1292,21 @@ void rge_diag(void (*cb)(const char *, void *), void *a) {
 	ksnprintf(l, 72, "phystat %x link %d phy %x rcode %x", st, (st & RGE_PHYSTAT_LINK) ? 1 : 0, rge_read_phy_ocp(sc, 0xa420), sc->rge_rcodever); cb(l, a);
 	ksnprintf(l, 72, "cmd %x rxcfg %x txcfg %x", RGE_READ_1(sc, RGE_CMD), RGE_READ_4(sc, RGE_RXCFG), RGE_READ_4(sc, RGE_TXCFG)); cb(l, a);
 	ksnprintf(l, 72, "tx %d rx %d err %d busy %d txi %d rxi %d", (int)txok, (int)rxok, (int)rxerr, (int)txbusy, txi, rxi); cb(l, a);
+	ksnprintf(l, 72, "mac %02x:%02x:%02x:%02x:%02x:%02x src %d", mymac[0], mymac[1], mymac[2], mymac[3], mymac[4], mymac[5], macsrc); cb(l, a);
+	ksnprintf(l, 72, "rx me %d bcast %d arp %d dhcp %d", (int)rxme, (int)rxbc, (int)rxarp, (int)rxdhcp); cb(l, a);
+	int last = (txi + NTX - 1) % NTX;
+	ksnprintf(l, 72, "isr %x seen %x txd0 %x last %x", RGE_READ_4(sc, RGE_ISR), isrseen, tl[0].rge_cmdsts, tl[last].rge_cmdsts); cb(l, a);
+	ksnprintf(l, 72, "ring resync %d kick %d dhcp type %d len %d ip %d.%d.%d.%d", (int)resync, (int)kicks, dhtype, dhlen, dhip[0], dhip[1], dhip[2], dhip[3]); cb(l, a);
+	/* Zaehler des Chips: was wirklich aufs Kabel ging */
+	if (!tally) tally = dma_alloc(4096);
+	u32 lo = 0;
+	if (tally) {
+		u64 pa = phys(tally);
+		RGE_WRITE_4(sc, 0x14, RGE_ADDR_HI(pa));
+		RGE_READ_1(sc, RGE_CMD);
+		RGE_WRITE_4(sc, 0x10, RGE_ADDR_LO(pa));
+		RGE_WRITE_4(sc, 0x10, RGE_ADDR_LO(pa) | 0x08);
+		for (int i = 0; i < 1000; i++) { lo = RGE_READ_4(sc, 0x10); if (!(lo & 0x08)) break; udelay(10); }
+		ksnprintf(l, 72, "chip tx %d rx %d txerr %d rxerr %d miss %d %s", (int)tally[0], (int)tally[1], (int)tally[2], (int)(u32)tally[3], (int)(tally[3] >> 32 & 0xFFFF), (lo & 0x08) ? "timeout" : "ok"); cb(l, a);
+	}
 }
