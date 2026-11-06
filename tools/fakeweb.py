@@ -8,6 +8,45 @@ sys.argv=['x',port,logf]; exec(src)
 HOSTS={'good.test':(1,9441,'good'),'rsa.test':(2,9442,'rsa'),'wrong.test':(3,9443,'wrong'),'old.test':(4,9444,'old'),'evil.test':(5,9445,'evil'),'tls12.test':(6,9446,'good12'),'redir.test':(7,9447,'redir'),'plain.test':(8,9448,None)}
 LAST=b''
 PAGE=b'<html><head><title>Violyx Test</title></head><body>Hallo vom Testserver</body></html>\n'
+def resp(body,typ='text/html; charset=utf-8',extra=b'',status=b'200 OK'):
+    return b'HTTP/1.1 '+status+b'\r\nContent-Type: '+typ.encode()+b'\r\n'+extra+b'Content-Length: %d\r\n\r\n'%len(body)+body
+def picture(fmt):
+    import io
+    from PIL import Image
+    im=Image.new('RGB',(320,200))
+    px=im.load()
+    for y in range(200):
+        for x in range(320):
+            d=((x-160)**2+(y-100)**2)**.5
+            px[x,y]=(255,220,60) if d<50 else (x*255//319,60,y*255//199)
+    b=io.BytesIO(); im.save(b,fmt); return b.getvalue()
+def browser_paths(path,req):
+    import gzip,random
+    path=path.split('?')[0]
+    if path=='/gz':
+        return resp(gzip.compress(b'<title>Gepackt</title><h1>Gzip klappt</h1><p>'+b'Viel Text. '*2000+b'</p>'),extra=b'Content-Encoding: gzip\r\n')
+    if path=='/gzkaputt':
+        return resp(b'\x1f\x8b\x08\0\0\0\0\0\0\0'+bytes(random.randrange(256) for i in range(500)),extra=b'Content-Encoding: gzip\r\n')
+    if path=='/gzbombe':
+        return resp(gzip.compress(b'A'*60000000),extra=b'Content-Encoding: gzip\r\n')
+    if path=='/b.png': return resp(picture('PNG'),'image/png')
+    if path=='/b.jpg': return resp(picture('JPEG'),'image/jpeg')
+    if path=='/b.gif': return resp(picture('GIF'),'image/gif')
+    if path=='/k.png':
+        d=bytearray(picture('PNG'))
+        for i in range(60): d[random.randrange(8,len(d))]=random.randrange(256)
+        return resp(bytes(d),'image/png')
+    if path=='/m.png': return resp(bytes(random.randrange(256) for i in range(4000)),'image/png')
+    if path=='/ckset': return resp(b'<title>Keks</title><p>Cookie gesetzt</p><p><a href="/ckget">weiter</a></p>',extra=b'Set-Cookie: sitzung=abc123; Path=/\r\nSet-Cookie: bleibt=xyz789; Max-Age=86400; Path=/\r\nSet-Cookie: fremd=1; Domain=evil.test\r\nSet-Cookie: endung=1; Domain=test\r\n')
+    if path=='/ckget':
+        c=[l for l in req.split(b'\r\n') if l.lower().startswith(b'cookie:')]
+        return resp(b'<title>Keks</title><h1>Cookies</h1><p>ERHALTEN '+(c[0][7:] if c else b'NICHTS')+b' ENDE</p>')
+    if path=='/hallo.vpk': return resp(open('/tmp/ft/web_hello.vpk','rb').read(),'application/octet-stream')
+    if path=='/daten.bin': return resp(b'BINARYDATA'*5000,'application/octet-stream',extra=b'Content-Disposition: attachment; filename="../../boese name.bin"\r\n')
+    if path=='/gross.bin': return resp(b'Z'*(6<<20),'application/zip')
+    if path=='/test':
+        return resp('''<title>Testseite</title><h1>Hauptuberschrift</h1><p>Text mit <span style="color:#ff4040">roter Schrift</span>, <font color="lime">grun</font>, <span style="color:black">schwarz bleibt lesbar</span> und normal.</p><h2>Tabelle</h2><table><tr><th>Name</th><th>Wert</th><th>Ort</th></tr><tr><td>Alpha</td><td>1</td><td>Berlin</td></tr><tr><td>Beta lang</td><td>22222</td><td>Rom</td></tr><tr><td colspan=2>Summe</td><td>X</td></tr></table><p>Vor dem Bild.</p><img src="/b.png" alt="Sonne PNG"><p>Zwischen den Bildern.</p><a href="/seite"><img src="/b.jpg" alt="Link JPEG"></a><p>Kaputt:</p><img src="/k.png" alt="Bild kaputt"><img src="/m.png" alt="Bild Muell"><img src="/fehlt.png" alt="Bild fehlt"><p>GIF:</p><img src="/b.gif" alt="GIF"><img src="/b.png" width=10 height=10 alt="winzig"><p>Ende der Testseite Suchwort hier.</p>'''.encode())
+    return None
 def app(req,host):
     path=req.split(b' ')[1].decode(); P('HTTP',req.split(b'\r\n')[0].decode(),[l for l in req.split(b'\r\n') if l.lower().startswith(b'host')])
     if host=='redir': return b'HTTP/1.1 302 Found\r\nLocation: https://good.test/ziel\r\nContent-Length: 0\r\n\r\n'
@@ -19,6 +58,8 @@ def app(req,host):
         return b'HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: 30\r\n\r\n<h1>404 Nicht gefunden</h1>   '
     if path.startswith('/suche'):
         b=b'<title>Ergebnis</title><h1>Suchergebnis</h1><p>Anfrage: '+LAST.replace(b'<',b' ')+b'</p>'; return b'HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\n\r\n'%len(b)+b
+    r=browser_paths(path,req)
+    if r: return r
     if path=='/chunk': return b'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nHallo \r\n7\r\nchunked\r\n0\r\n\r\n'
     if path=='/gross':
         b=b''.join(b'Zeile %06d mit etwas Inhalt zum Testen des Empfangs\n'%i for i in range(8000)); return b'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n'%len(b)+b

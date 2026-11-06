@@ -5,11 +5,12 @@ enum { A_DESK=AT(C_WALL,C_DESK),A_BAR=AT(C_RAISE,C_LAV),A_BARK=AT(C_RAISE,C_HOT)
 #define MAXW 240
 #define MAXH 100
 int scr_w=80,scr_h=25;
-static u16 sb[MAXH][MAXW],pv[MAXH][MAXW];
+static u32 sb[MAXH][MAXW],pv[MAXH][MAXW];
 static win_t wins[MAXWIN]; static win_t*z[MAXWIN]; static int nw;
 static int cx=-1,cy=-1;
 
-void put(int x,int y,u8 c,u8 a){ if(x>=0&&y>=0&&x<W&&y<H) sb[y][x]=c|(a<<8); }
+void put(int x,int y,u8 c,u8 a){ if(x>=0&&y>=0&&x<W&&y<H) sb[y][x]=(u32)c|(u32)(a&15)<<8|(u32)(a>>4)<<16; }
+void put8(int x,int y,u8 c,u8 fg,u8 bg){ if(x>=0&&y>=0&&x<W&&y<H) sb[y][x]=(u32)c|(u32)fg<<8|(u32)bg<<16; }
 static int u8dec(const char**s){ const u8*p=(const u8*)*s; u8 c=*p++; int r=c;
   if(c==0xC3){ u8 d=*p++; switch(d){case 0xA4:r=0x84;break;case 0xB6:r=0x94;break;case 0xBC:r=0x81;break;case 0x84:r=0x8E;break;case 0x96:r=0x99;break;case 0x9C:r=0x9A;break;case 0x9F:r=0xE1;break;default:r='?';} }
   else if(c==0xC2){ u8 d=*p++; r=d==0xA7?0x15:d==0xB0?0xF8:'?'; }
@@ -18,10 +19,19 @@ void text(int x,int y,u8 a,const char*s){ while(*s){ put(x++,y,u8dec(&s),a); } }
 void fill(int x,int y,int w,int h,u8 c,u8 a){ for(int j=0;j<h;j++)for(int i=0;i<w;i++)put(x+i,y+j,c,a); }
 /* Grafikausgabe: Zeichenraster auf dem Framebuffer, nur geaenderte Zellen */
 #include "font.h"
-static u8*fb; static u32 fbw,fbh,fbp,fbb,fbr,fbg,fbl; static int sc=1,ox,oy,force=1,pcx=-1,pcy=-1; static u32 col[16];
+static u8*fb; static u32 fbw,fbh,fbp,fbb,fbr,fbg,fbl; static int sc=1,ox,oy,force=1,pcx=-1,pcy=-1; static u32 col[256];
 static u8 pal[16][3]; static int plevel=16;
 static inline void px(u8*d,u32 c){ if(fbb==4)*(u32*)d=c; else memcpy(d,&c,fbb); }
-static void cell(int x,int y,u16 v,int ul){ const u8*g=font[v&0xFF]; u32 fg=col[(v>>8)&15],bg=col[(v>>12)&15];
+/* Bildzellen: Bit 31 gesetzt, dann liegt in der Zelle kein Zeichen, sondern ein Ausschnitt von 4x8 Bildpunkten.
+   So bleiben Fenster, Dialoge und Schatten wie gewohnt, nur die Zeichnung der Zelle unterscheidet sich. */
+#define GN 32
+static struct { u8 id; const u8*px; int stride; } gt[GN]; static int gn,gnext; static u8 gid;
+u8 gfx_newid(void){ if(++gid==0||gid>=250)gid=1; return gid; }
+static int gslot(u8 id,const u8*px,int stride){ for(int i=0;i<gn;i++) if(gt[i].id==id){ gt[i].px=px; gt[i].stride=stride; return 1; } int i; if(gn<GN)i=gn++; else { i=gnext; gnext=(gnext+1)%GN; } gt[i].id=id; gt[i].px=px; gt[i].stride=stride; return 1; }
+static void gcell(int x,int y,u32 v){ u8 id=(u8)(v>>23); int ix=(v>>8)&255,iy=(v>>16)&127; const u8*p=0; int st=0; for(int i=0;i<gn;i++) if(gt[i].id==id){ p=gt[i].px; st=gt[i].stride; } int cw_=8*sc,ch_=16*sc,bs=2*sc; u32 c0=col[2]; for(int r=0;r<ch_;r++){ u8*q=fb+(oy+y*ch_+r)*fbp+(ox+x*cw_)*fbb; const u8*row=p?p+(u64)iy*8*st+(u64)(r/bs)*st+ix*4:0; for(int k=0;k<cw_;k++){ u32 c=row?col[row[k/bs]]:c0; px(q,c); q+=fbb; } } }
+void gput(int x,int y,u8 id,const u8*px,int stride,int ix,int iy){ if(x>=0&&y>=0&&x<W&&y<H){ gslot(id,px,stride); sb[y][x]=0x80000020u|(u32)(ix&255)<<8|(u32)(iy&127)<<16|(u32)id<<23; } }
+void cputg(win_t*w,int x,int y,u8 id,const u8*px,int stride,int ix,int iy){ if(x>=0&&y>=0&&x<cw(w)&&y<ch(w))gput(w->x+1+x,w->y+1+y,id,px,stride,ix,iy); }
+static void cell(int x,int y,u32 v,int ul){ if(v>>31){ gcell(x,y,v); return; } const u8*g=font[v&0xFF]; u32 fg=col[(v>>8)&255],bg=col[(v>>16)&255];
   for(int r=0;r<16;r++){ u8 bits=(ul&&r>=14)?0xFF:g[r]; for(int s=0;s<sc;s++){ u8*d=fb+(oy+(y*16+r)*sc+s)*fbp+(ox+x*8*sc)*fbb;
       for(int c=0;c<8;c++){ u32 k=(bits&(0x80>>c))?fg:bg; for(int t=0;t<sc;t++){ px(d,k); d+=fbb; } } } } }
 static void present(void){ for(int y=0;y<H;y++)for(int x=0;x<W;x++){ int cur=x==cx&&y==cy,was=x==pcx&&y==pcy; if(force||sb[y][x]!=pv[y][x]||cur!=was){ pv[y][x]=sb[y][x]; cell(x,y,sb[y][x],cur); } }
@@ -31,14 +41,15 @@ void fb_init(void*a,u32 w,u32 h,u32 p,u32 bpp,u32 rs,u32 gs,u32 bs){ fb=a;fbw=w;
 static void frame(int x,int y,int w,int h,int dbl,u8 a){ u8 tl=dbl?0xC9:0xDA,tr=dbl?0xBB:0xBF,bl=dbl?0xC8:0xC0,br=dbl?0xBC:0xD9,hz=dbl?0xCD:0xC4,vt=dbl?0xBA:0xB3;
   put(x,y,tl,a);put(x+w-1,y,tr,a);put(x,y+h-1,bl,a);put(x+w-1,y+h-1,br,a);
   for(int i=1;i<w-1;i++){put(x+i,y,hz,a);put(x+i,y+h-1,hz,a);} for(int i=1;i<h-1;i++){put(x,y+i,vt,a);put(x+w-1,y+i,vt,a);} }
-static void shadow(int x,int y,int w,int h){ for(int i=0;i<h;i++)for(int k=0;k<2;k++){int X=x+w+k,Y=y+1+i; if(X<W&&Y<H)sb[Y][X]=(sb[Y][X]&0xFF)|(A_SHD<<8);}
-  for(int i=2;i<w+2;i++){int X=x+i,Y=y+h; if(X<W&&Y<H)sb[Y][X]=(sb[Y][X]&0xFF)|(A_SHD<<8);} }
+static void shadow(int x,int y,int w,int h){ for(int i=0;i<h;i++)for(int k=0;k<2;k++){int X=x+w+k,Y=y+1+i; if(X<W&&Y<H)sb[Y][X]=(sb[Y][X]&0xFF)|(u32)(A_SHD&15)<<8|(u32)(A_SHD>>4)<<16;}
+  for(int i=2;i<w+2;i++){int X=x+i,Y=y+h; if(X<W&&Y<H)sb[Y][X]=(sb[Y][X]&0xFF)|(u32)(A_SHD&15)<<8|(u32)(A_SHD>>4)<<16;} }
 
 /* Zeichnen im Fensterinneren */
 static win_t*clip;
 int cw(win_t*w){return w->w-2;} int ch(win_t*w){return w->h-2;}
 void cput(win_t*w,int x,int y,u8 c,u8 a){ if(x>=0&&y>=0&&x<cw(w)&&y<ch(w)) put(w->x+1+x,w->y+1+y,c,a); }
 void ctext(win_t*w,int x,int y,u8 a,const char*s){ while(*s){ cput(w,x++,y,u8dec(&s),a);} }
+void cput8(win_t*w,int x,int y,u8 c,u8 fg,u8 bg){ if(x>=0&&y>=0&&x<cw(w)&&y<ch(w)) put8(w->x+1+x,w->y+1+y,c,fg,bg); }
 void cfill(win_t*w,u8 a){ fill(w->x+1,w->y+1,cw(w),ch(w),' ',a); }
 
 /* Fenster */
@@ -46,7 +57,7 @@ win_t*win_top(void){ return nw?z[nw-1]:0; }
 win_t*win_open(const char*t,int x,int y,int w,int h,const app_t*a,void*st){
   if(nw==MAXWIN){ dlg_msg(TR("Hinweis","Notice"),TR("Zu viele offene Fenster.","Too many open windows.")); return 0; }
   win_t*p=0; for(int i=0;i<MAXWIN;i++) if(!wins[i].app){p=&wins[i];break;}
-  memset(p,0,sizeof*p); int o=nw*2%10; p->x=x+o+(W-80)/2;p->y=y+o/2+(H-25)/2;p->w=w;p->h=h;p->app=a;p->st=st; strlcpy_(p->title,t,40);
+  memset(p,0,sizeof*p); (void)x; (void)y; if(w>W)w=W; if(h>H-2)h=H-2; p->x=(W-w)/2;p->y=1+(H-2-h)/2;p->w=w;p->h=h;p->app=a;p->st=st; strlcpy_(p->title,t,40);
   if(p->x+w>W)p->x=W-w; if(p->y+h>H-1)p->y=H-1-h; z[nw++]=p; return p; }
 void win_close(win_t*w){ if(w->app->can_close&&!w->app->can_close(w))return; if(w->app->destroy)w->app->destroy(w);
   int i=0; for(;i<nw;i++)if(z[i]==w)break; for(;i<nw-1;i++)z[i]=z[i+1]; nw--; w->app=0; }
@@ -68,8 +79,10 @@ typedef struct { const char*de,*en; void(*fn)(void); const char*hkde,*hken; } mi
 #define MT(m) TR((m).de,(m).en)
 #define MK(m) TR((m).hkde,(m).hken)
 static void a_close(void){ if(win_top())win_close(win_top()); }
+void win_place(win_t*w,int x,int y,int cols,int rows){ if(cols<0){ if(!w->zoomed)win_zoom(w); return; } if(w->zoomed)win_zoom(w); if(cols+2>W)cols=W-2; if(rows+2>H-2)rows=H-4; w->w=cols+2; w->h=rows+2; w->x=x<0?(W-w->w)/2:x; w->y=y<0?H-2-w->h:y; }
 static void a_zoom(void){ if(win_top())win_zoom(win_top()); }
-int ui_can_quit(void){ for(int i=nw-1;i>=0;i--) if(z[i]->app->can_close&&!z[i]->app->can_close(z[i]))return 0; return 1; }
+int ui_quitting; int ui_can_quit(void){ ui_quitting=1; for(int i=nw-1;i>=0;i--) if(z[i]->app->can_close&&!z[i]->app->can_close(z[i])){ ui_quitting=0; return 0; } ui_quitting=0; return 1; }
+u32 ui_rgb(int i){ return (u32)pal[i][0]<<16|(u32)pal[i][1]<<8|pal[i][2]; }
 static void a_reboot(void){ if(ui_can_quit()&&dlg_confirm(TR("Neustart","Restart"),TR("Violyx jetzt neu starten?","Restart Violyx now?")))reboot(); }
 static void a_off(void){ if(ui_can_quit()&&dlg_confirm(TR("Ausschalten","Shut down"),TR("Violyx jetzt beenden?","Shut down Violyx now?")))poweroff(); }
 static const mi m_sys[]={{"Über Violyx","About Violyx",dlg_about,0,0},{"Einstellungen","Settings",app_settings,0,0},{"Systeminfo","System info",app_info,0,0},{"Installieren","Install",app_install,0,0},{"Neustart","Restart",a_reboot,"Strg+Alt+Entf","Ctrl+Alt+Del"},{"Ausschalten","Shut down",a_off,0,0},{0,0,0,0,0}};
@@ -78,17 +91,20 @@ static const mi m_app[]={{"Übersicht","Overview",app_launcher,"F2","F2"},{0,0,0
 static mi dyn[MAXWIN+2]; static win_t*dynw[MAXWIN+1];
 static const mi*app_items(void){ dyn[0]=m_app[0]; int n=1; for(int i=nw-1;i>=0;i--){ win_t*w=z[i]; dyn[n].de=dyn[n].en=w->title; dyn[n].fn=0; dyn[n].hkde=i==nw-1?"aktiv":0; dyn[n].hken=i==nw-1?"active":0; dynw[n]=w; n++; } memset(&dyn[n],0,sizeof dyn[n]); return dyn; }
 static void menu_run(const mi*it,int i){ if(it[i].fn)it[i].fn(); else if(it==dyn)win_raise(dynw[i]); }
-static const mi m_win[]={{"Zoomen","Zoom",a_zoom,"F5","F5"},{"Nächstes","Next",win_next,"F6","F6"},{"Schließen","Close",a_close,"Strg+W","Ctrl+W"},{0,0,0,0,0}};
+/* Schiebt das oberste Fenster an eine Ecke oder in die Mitte: 0 Mitte, 1 links oben, 2 rechts oben, 3 links unten, 4 rechts unten */
+static void place(int c){ win_t*w=win_top(); if(!w)return; if(w->zoomed)win_zoom(w); int l=0,r=W-w->w,t=1,b=H-2-w->h;   /* eine Zeile frei fuer den Schatten, sonst verdeckt er die Leiste */ if(r<0)r=0; if(b<1)b=1; w->x=c==0?r/2:(c==1||c==3)?l:r; w->y=c==0?1+(H-2-w->h)/2:(c==1||c==2)?t:b; if(w->y<1)w->y=1; }
+static void p_mid(void){ place(0); } static void p_lo(void){ place(1); } static void p_ro(void){ place(2); } static void p_lu(void){ place(3); } static void p_ru(void){ place(4); }
+static const mi m_win[]={{"Zoomen","Zoom",a_zoom,"F5","F5"},{"Mittig","Centre",p_mid,0,0},{"Links oben","Top left",p_lo,0,0},{"Rechts oben","Top right",p_ro,0,0},{"Links unten","Bottom left",p_lu,0,0},{"Rechts unten","Bottom right",p_ru,0,0},{"Nächstes","Next",win_next,"F6","F6"},{"Schließen","Close",a_close,"Strg+W","Ctrl+W"},{0,0,0,0,0}};
 static const mi m_hlp[]={{"Tastenübersicht","Keyboard help",app_help,"F1","F1"},{0,0,0,0,0}};
 static const struct { const char*de,*en; const mi*it; } menus[]={{"System","System",m_sys},{"Programme","Programs",m_app},{"Fenster","Windows",m_win},{"Hilfe","Help",m_hlp}};
 #define NM 4
 static int mx(int i){ int x=2; for(int k=0;k<i;k++)x+=strlen(MT(menus[k]))+3; return x; }
 static int mkey(int i){ char c=MT(menus[i])[0]; return c+32; }
 static void bar(int open){ fill(0,0,W,1,' ',A_BAR); for(int i=0;i<NM;i++){ u8 n=i==open?A_SEL:A_BAR,k=i==open?A_SELK:A_BARK; int x=mx(i); const char*t=MT(menus[i]); put(x-1,0,' ',n); text(x,0,n,t); put(x,0,t[0],k); put(x+strlen(t),0,' ',n);} 
-  rtc_t r; rtc_read(&r); char c[24]; if(cfg_lang)ksnprintf(c,24,"%d-%02d-%02d  %02d:%02d",r.year,r.mon,r.day,r.h,r.m); else ksnprintf(c,24,"%02d.%02d.%d  %02d:%02d",r.day,r.mon,r.year,r.h,r.m); text(W-19,0,A_BAR,c); text(46,0,AT(C_RAISE,C_NEON),"VIOLYX"); }
-static void status(void){ fill(0,H-1,W,1,' ',A_BAR); static const char*k[][3]={{"F1","Hilfe","Help"},{"F2","Programme","Programs"},{"F3","Dateien","Files"},{"F4","Befehle","Commands"},{"F6","Wechsel","Switch"},{"F10","Menü","Menu"},{"Esc","Zu","Close"}}; int x=1;
-  for(unsigned i=0;i<7;i++){ text(x,H-1,A_BARK,k[i][0]); x+=strlen(k[i][0])+1; const char*t=k[i][cfg_lang?2:1]; text(x,H-1,A_BAR,t); int l=0; for(const char*p=t;*p;p++) if((*p&0xC0)!=0x80)l++; x+=l+2; } }
-void ui_render(void){ cx=-1; fill(0,1,W,H-2,0xB1,A_DESK); bar(-1); status(); for(int i=0;i<nw;i++)draw_win(z[i],i==nw-1); }
+  rtc_t r; rtc_read(&r); char c[24]; if(cfg_lang)ksnprintf(c,24,"%d-%02d-%02d  %02d:%02d",r.year,r.mon,r.day,r.h,r.m); else ksnprintf(c,24,"%02d.%02d.%d  %02d:%02d",r.day,r.mon,r.year,r.h,r.m); text(W-19,0,A_BAR,c); }
+static void status(void){ fill(0,H-1,W,1,' ',A_BAR); static const char*k[][3]={{"F1","Hilfe","Help"},{"F2","Programme","Programs"},{"F3","Dateien","Files"},{"F4","Befehle","Commands"},{"F10","Menü","Menu"},{"Esc","Zu","Close"}}; int x=1;
+  for(unsigned i=0;i<6;i++){ text(x,H-1,A_BARK,k[i][0]); x+=strlen(k[i][0])+1; const char*t=k[i][cfg_lang?2:1]; text(x,H-1,A_BAR,t); int l=0; for(const char*p=t;*p;p++) if((*p&0xC0)!=0x80)l++; x+=l+2; } char v[24]; ksnprintf(v,24,"VIOLYX %s",VERSION); text(W-(int)strlen(v)-1,H-1,AT(C_RAISE,C_NEON),v); }
+void ui_render(void){ cx=-1; if(cfg_wall>=6)wall_paint(); else fill(0,1,W,H-2,0xB1,A_DESK); bar(-1); status(); for(int i=0;i<nw;i++)draw_win(z[i],i==nw-1); }
 key_t key_wait(void){ key_t k; while(!key_poll(&k)) idle(); return k; }
 static void menu(int m){ int s=0;
   for(;;){ ui_render(); bar(m); const mi*it=m==1?app_items():menus[m].it; int n=0,wd=0; for(;it[n].de;n++){ int l=0; for(const char*p=MT(it[n]);*p;l++)u8dec(&p); if(it[n].hkde)l+=strlen(MK(it[n]))+2; if(l>wd)wd=l; }
@@ -117,15 +133,15 @@ int dlg_pick(const char*t,char*o,int max){ static char cwd[VFS_PATH]; if(!cwd[0]
     kfree(it); } }
 static const u8 pal0[16][3]={{0x08,0x06,0x0F},{0x1C,0x12,0x30},{0x16,0x0F,0x28},{0x2A,0x1C,0x4A},{0x4A,0x2C,0x8A},{0x6B,0x5B,0x95},{0x9A,0x7A,0xE0},{0xB8,0xA2,0xF0},
   {0x04,0x03,0x08},{0xA9,0x70,0xFF},{0xE0,0x40,0xFF},{0xDC,0xCC,0xFF},{0xFF,0x5C,0xC8},{0x08,0x06,0x0F},{0xC9,0xA0,0xFF},{0xF4,0xEC,0xFF}};
-static void pal_set(int level){ plevel=level; for(int i=0;i<16;i++){ u32 r=pal[i][0]*level/16,g=pal[i][1]*level/16,b=pal[i][2]*level/16; col[i]=(r<<fbr)|(g<<fbg)|(b<<fbl); } force=1; }
-static const struct { const char*n,*en; u8 bg[3],ha[3]; } walls[WALLS]={
+static void pal_set(int level){ plevel=level; for(int i=0;i<16;i++){ u32 r=pal[i][0]*level/16,g=pal[i][1]*level/16,b=pal[i][2]*level/16; col[i]=(r<<fbr)|(g<<fbg)|(b<<fbl); } static const u8 L[6]={0,95,135,175,215,255}; for(int i=16;i<256;i++){ u32 r,g,b; if(i<232){ int v=i-16; r=L[v/36]; g=L[(v/6)%6]; b=L[v%6]; } else r=g=b=8+10*(i-232); r=r*level/16; g=g*level/16; b=b*level/16; col[i]=(r<<fbr)|(g<<fbg)|(b<<fbl); } force=1; }
+static const struct { const char*n,*en; u8 bg[3],ha[3]; } walls[6]={
   {"Nacht","Night",{0x08,0x06,0x0F},{0x1C,0x12,0x30}},{"Violett","Violet",{0x1E,0x0C,0x3C},{0x30,0x18,0x5C}},{"Mitternacht","Midnight",{0x06,0x0E,0x2C},{0x10,0x20,0x48}},
   {"Beere","Berry",{0x2A,0x08,0x24},{0x44,0x12,0x3A}},{"Petrol","Petrol",{0x04,0x20,0x28},{0x0A,0x34,0x3E}},{"Graphit","Graphite",{0x16,0x16,0x1A},{0x28,0x28,0x2E}}};
-const char*wall_name(int i){ return TR(walls[i].n,walls[i].en); }
-void wall_set(int i){ cfg_wall=i; memcpy(pal[C_WALL],walls[i].bg,3); memcpy(pal[C_DESK],walls[i].ha,3); pal_set(16); }
-void dlg_about(void){ int x,y; dlg_box("Info",36,9,&x,&y); text(x+15,y+2,AT(C_RAISE,C_NEON),"Violyx"); char v[20]; ksnprintf(v,20,"Version %s",VERSION); text(x+(36-(int)strlen(v))/2,y+3,A_DLG,v); text(x+9,y+5,A_DLG,"(c) 2026 Merecete"); ui_show(); for(;;){ key_t k=key_wait(); if(k.key==K_ENTER||k.key==K_ESC)return; } }
-int dlg_savechoice(void){ int x,y; dlg_box(TR("Nicht gespeichert","Not saved"),50,7,&x,&y); text(x+5,y+2,A_DLG,TR("Änderungen vor dem Schließen speichern?","Save changes before closing?")); text(x+3,y+4,A_SEL,TR(" S Speichern "," S Save ")); text(x+18,y+4,A_SEL,TR(" V Verwerfen "," D Discard ")); text(x+34,y+4,A_SEL,TR(" Esc Zurück "," Esc Back ")); ui_show();
-  for(;;){ key_t k=key_wait(); if(k.key=='s'||k.key=='S')return 1; if(k.key==(u16)(cfg_lang?'d':'v')||k.key==(u16)(cfg_lang?'D':'V'))return 2; if(k.key==K_ESC)return 0; } }
+const char*wall_name(int i){ if(i==6)return "Logo"; if(i==7)return TR("Eigenes Bild","Own image"); return TR(walls[i].n,walls[i].en); }
+void wall_set(int i){ cfg_wall=i; int k=i<6?i:0; memcpy(pal[C_WALL],walls[k].bg,3); memcpy(pal[C_DESK],walls[k].ha,3); pal_set(16); if(i>=6)wall_image(i); }
+void dlg_about(void){ int x,y; dlg_box("Info",58,11,&x,&y); text(x+26,y+2,AT(C_RAISE,C_NEON),"Violyx"); char v[20]; ksnprintf(v,20,"Version %s",VERSION); text(x+(58-(int)strlen(v))/2,y+3,A_DLG,v); const char*a=TR("Ein 64-Bit-Betriebssystem für x86-PCs, nur per Tastatur,","A keyboard-only 64-bit operating system for x86 PCs,"),*b=TR("mit einem Retro-Textdesktop in leuchtendem Violett.","with a retro text desktop in glowing violet."); text(x+2,y+5,A_DLG,a); text(x+2,y+6,A_DLG,b); text(x+20,y+8,A_DLG,"(c) 2026 Merecete"); ui_show(); for(;;){ key_t k=key_wait(); if(k.key==K_ENTER||k.key==K_ESC)return; } }
+int dlg_savechoice(void){ int x,y; dlg_box(TR("Nicht gespeichert","Not saved"),50,7,&x,&y); text(x+5,y+2,A_DLG,TR("Änderungen vor dem Schließen speichern?","Save changes before closing?")); text(x+3,y+4,A_SEL,TR(" J Speichern "," Y Save ")); text(x+18,y+4,A_SEL,TR(" N Verwerfen "," N Discard ")); text(x+34,y+4,A_SEL,TR(" Esc Zurück "," Esc Back ")); ui_show();
+  for(;;){ key_t k=key_wait(); if(k.key=='s'||k.key=='S'||k.key=='j'||k.key=='J'||k.key=='y'||k.key=='Y')return 1; if(k.key=='n'||k.key=='N'||k.key==(u16)(cfg_lang?'d':'v')||k.key==(u16)(cfg_lang?'D':'V'))return 2; if(k.key==K_ESC)return 0; } }
 void ui_init(void){ memcpy(pal,pal0,sizeof pal); wall_set(cfg_wall); }
 void ui_goodbye(const char*a,const char*b){ memcpy(pal,pal0,sizeof pal); pal_set(16); fill(0,0,W,H,' ',AT(C_VOID,C_LAV)); text((W-(int)strlen(a))/2,H/2-1,AT(C_VOID,C_NEON),a); text((W-(int)strlen(b))/2,H/2+1,AT(C_VOID,C_LAV),b); cx=-1; present(); }
 void ui_panic(const char*a,const char*b){ memcpy(pal,pal0,sizeof pal); pal_set(16); fill(0,0,W,H,' ',AT(C_HOT,C_VOID)); text(4,2,AT(C_HOT,C_VOID),a); if(b)text(4,4,AT(C_HOT,C_VOID),b); cx=-1; present(); }
@@ -147,7 +163,7 @@ void ui_run(void){ u64 last=0,nf=0; for(;;){ ui_render(); present(); key_t k;
     if(k.key==K_F10){menu(0);continue;}
     if(k.key==K_ESC){a_close();continue;}
     if(k.mods&M_ALT){ int done=0; for(int i=0;i<NM;i++) if(k.key==(u16)mkey(i)){menu(i);done=1;break;} if(done)continue; if(k.key==K_F3){a_close();continue;} }
-    switch(k.key){ case K_F1:app_help();continue; case K_F2:app_launcher();continue; case K_F3:app_files();continue; case K_F4:app_shell();continue; case K_F5:a_zoom();continue; case K_F6:win_next();continue; case K_F7:app_web();continue; case K_F9:app_calc();continue; }
+    switch(k.key){ case K_F1:{ win_t*tw=win_top(); if(tw&&prog_wants(tw,K_F1))break; app_help(); continue; } case K_F2:app_launcher();continue; case K_F3:app_files();continue; case K_F4:app_shell();continue; case K_F5:a_zoom();continue; case K_F6:win_next();continue; case K_F7:app_web();continue; case K_F9:app_calc();continue; }
     if((k.mods&M_CTRL)&&k.key=='w'){a_close();continue;}
     if(win_key(k))continue;
     win_t*w=win_top(); if(w&&w->app->key)w->app->key(w,k); } }

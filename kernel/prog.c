@@ -17,7 +17,7 @@ typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t
 #define USTKSZ 0x100000ull
 #define UEND  (USTACK+USTKSZ)
 #define MAXCODE (64ull<<20)
-#define MAXHEAP (64ull<<20)
+#define MAXHEAP (256ull<<20)
 #define VPK_MAX (32ull<<20)
 #define VPK_HDR 256
 typedef struct __attribute__((packed)) { char magic[4]; u32 elf; u16 cols,rows; char name[24],title[24],version[12],author[32],icon[3][7]; } vpk_h;
@@ -31,6 +31,8 @@ static u32 r16(const u8*p){ return (u32)p[0]|(u32)p[1]<<8; }
 static int elf_check(const u8*b,u64 n,u64*entry,seg_t*s,int*ns){ if(n<64||memcmp(b,"\x7f" "ELF\x02\x01\x01",7)||r16(b+16)!=2||r16(b+18)!=62)return 0; u64 ph=r64(b+32); u32 pes=r16(b+54),pn=r16(b+56); if(pes!=56||!pn||pn>16||ph>n||(u64)pn*56>n-ph)return 0; u64 e=r64(b+24); int c=0,xok=0; u64 last=0,total=0; for(u32 i=0;i<pn;i++){ const u8*p=b+ph+(u64)i*56; if(r32(p)!=1)continue; u32 fl=r32(p+4); u64 of=r64(p+8),va=r64(p+16),fs=r64(p+32),ms=r64(p+40); if(!ms)continue; if(c>=8||fs>ms||ms>MAXCODE||va<ULOAD||va>=UHEAP||va+ms>UHEAP||(va&4095)||of>n||fs>n-of||(fl&3)==3||(fl&~7u))return 0; if(va<last)return 0; last=(va+ms+4095)&~4095ull; total+=(ms+4095)&~4095ull; if(total>MAXCODE)return 0; if((fl&1)&&e>=va&&e<va+ms)xok=1; s[c].off=of; s[c].vaddr=va; s[c].filesz=fs; s[c].memsz=ms; s[c].flags=fl; c++; } if(!c||!xok)return 0; *entry=e; *ns=c; return 1; }
 #ifndef HOST
 /* ---------- Seiten ---------- */
+#define CMAX 240
+#define RMAX 100
 #define PTE_P 1ull
 #define PTE_W 2ull
 #define PTE_U 4ull
@@ -46,7 +48,11 @@ static void*map_page(u64 root,u64 va,u64 fl){ u64*e=walk(root,va,1); if(!e)retur
 static void as_free(u64 root){ u64*a=V(root); for(int i=0;i<512;i++) if(a[i]&PTE_P){ u64*b=V(a[i]); for(int j=0;j<512;j++) if(b[j]&PTE_P){ u64*c=V(b[j]); for(int k=0;k<512;k++) if(c[k]&PTE_P)pg_put(V(c[k])); pg_put(c); } pg_put(b); } pg_put(a); }
 /* ---------- Programmzustand ---------- */
 enum { P_RUN,P_WAIT,P_DONE,P_DEAD };
-typedef struct { u64 root,brk,wake; regs r; u8 fxraw[528]; u8*fx; int state,kh,kt,dirty; u32 keys[32]; u16*cells; int cols,rows; char name[24],base[VFS_PATH],msg[70]; win_t*w; } proc_t;
+typedef struct { u64 root,brk,wake; regs r; u8 fxraw[528]; u8*fx; int state,kh,kt,dirty; u32 keys[32]; u32*cells; int cols,rows,sc,sr; char name[24],base[VFS_PATH],msg[70]; win_t*w; struct dec_s*dec; int bg,esc,f1; u8*img; int iw,ih; u8 gid; } proc_t;
+#define NBG 4
+static proc_t*bgp[NBG];
+/* Auftrag an den Entpack-Helfer: der Kernel gibt nur diese Daten heraus und nimmt nur diese Ausgabe an */
+typedef struct dec_s { const u8*in; u64 n; u8*out; u64 max,got; long arg[5]; int flag; } dec_t;
 static proc_t*cur; static u64 kctx,slice_end; static u8 ustack[262144] __attribute__((aligned(16)));
 u64 proc_stack_top(void){ return ((u64)ustack+sizeof ustack)&~15ull; }
 void proc_enter(regs*,u64*); void proc_back(u64);
@@ -64,13 +70,20 @@ static int upath(proc_t*p,u64 a,char*o){ static char t[VFS_PATH]; if(!ustr(p,a,t
 typedef struct { u8*o; u64 n,max; } lc_t;
 static int lcb(const vfs_ent*e,void*x){ lc_t*c=x; u64 l=strlen(e->name); if(c->n+l+2>c->max)return 1; memcpy(c->o+c->n,e->name,l); c->n+=l; if(e->dir)c->o[c->n++]='/'; c->o[c->n++]=0; return 0; }
 static void pkey_add(proc_t*p,u32 v){ int n=(p->kt+1)%32; if(n!=p->kh){ p->keys[p->kt]=v; p->kt=n; } }
-void proc_syscall(regs*r){ proc_t*p=cur; if(!p)return; u64 a=r->rdi,b=r->rsi,c=r->rdx; static char pa[VFS_PATH],pb[VFS_PATH]; long v=VE_DENIED; switch(r->rax){
+void proc_syscall(regs*r){ proc_t*p=cur; if(!p)return; u64 a=r->rdi,b=r->rsi,c=r->rdx; static char pa[VFS_PATH],pb[VFS_PATH]; long v=VE_DENIED; if(p->dec&&r->rax!=0&&r->rax!=7&&r->rax!=8&&r->rax!=19&&r->rax!=20){ r->rax=(u64)(long)VE_DENIED; return; } switch(r->rax){
+ case 19: if(!p->dec)break; if(a==0){ v=b==0?(long)p->dec->n:b<5?p->dec->arg[b]:0; break; } if(b>p->dec->n||!uok(p,a,b,1)){ v=VE_INVAL; break; } memcpy((void*)a,p->dec->in,b); v=0; break;
+ case 20: if(!p->dec)break; if(b>p->dec->max-p->dec->got||!uok(p,a,b,0)){ v=VE_INVAL; break; } memcpy(p->dec->out+p->dec->got,(void*)a,b); p->dec->got+=b; p->dec->flag=(int)c; v=0; break;
  case 0: p->state=P_DONE; leave_(r); break;
- case 1: { u64 n=(u64)p->cols*p->rows*2; if(!uok(p,a,n,0)){ v=VE_INVAL; break; } memcpy(p->cells,(void*)a,n); v=0; break; }
+ case 1: { int cw_=b?(int)b:p->cols,ch_=b?(int)c:p->rows; if(cw_<1||cw_>CMAX||ch_<1||ch_>RMAX){ v=VE_INVAL; break; } u64 n=(u64)cw_*ch_*2; if(!uok(p,a,n,0)){ v=VE_INVAL; break; } for(int y=0;y<ch_;y++) for(int x=0;x<cw_;x++){ u16 q=((u16*)a)[y*cw_+x]; p->cells[y*CMAX+x]=(u32)(q&255)|(u32)((q>>8)&15)<<8|(u32)(q>>12)<<16; } p->sc=cw_; p->sr=ch_; v=0; break; }
+ case 18: { int cw_=(int)b,ch_=(int)c; if(cw_<1||cw_>CMAX||ch_<1||ch_>RMAX){ v=VE_INVAL; break; } u64 n=(u64)cw_*ch_*4; if(!uok(p,a,n,0)){ v=VE_INVAL; break; } for(int y=0;y<ch_;y++)memcpy(p->cells+y*CMAX,(u32*)a+y*cw_,(u64)cw_*4); p->sc=cw_; p->sr=ch_; v=0; break; }
  case 2: if(p->kh!=p->kt){ v=0; break; } r->rax=0; p->state=P_WAIT; p->wake=(long)a<0?~0ull:ticks+(a+9)/10; leave_(r); break;
  case 3: if(p->kh==p->kt)v=-1; else { v=p->keys[p->kh]; p->kh=(p->kh+1)%32; } break;
- case 4: v=(long)p->cols<<16|p->rows; break;
+ case 4: { int cw_=cw(p->w),ch_=ch(p->w); if(cw_>CMAX)cw_=CMAX; if(ch_>RMAX)ch_=RMAX; v=(long)cw_<<16|ch_; break; }
  case 5: { static char t[40]; if(ustr(p,a,t,40)){ win_title(p->w,t); v=0; } else v=VE_INVAL; break; }
+ case 22: if(!p->w)break; if(!a){ v=snd_stream(0,0); break; } if(b>65536||!uok(p,a,b*4,0)){ v=VE_INVAL; break; } v=snd_stream((const short*)a,(u32)b); break;
+ case 23: if(!p->w)break; v=0; switch(a){ case 0: snd_stream_flush(); break; case 1: v=(long)snd_stream_pos(); break; case 2: for(int i=0;i<NBG;i++) if(!bgp[i]||bgp[i]==p){ bgp[i]=p; p->bg=1; break; } break; case 3: p->esc=(int)b; break; case 8: p->f1=(int)b; break; case 4: win_place(p->w,-1,-1,(int)b,(int)c); break; case 5: win_place(p->w,0,0,-1,0); break; case 6: snd_stream_gain((int)b,(int)c); break; case 7: snd_stream_pause((int)b); break; default: v=VE_INVAL; } break;
+ case 24: { /* Bild fuer Bildpunkt-Zellen: Breite durch 4, Hoehe durch 8 teilbar, 256 Farben je Punkt */ int iw=(int)b,ih=(int)c; if(!p->w||iw<4||ih<8||iw>960||ih>800||(iw&3)||(ih&7)||!uok(p,a,(u64)iw*ih,0)){ v=VE_INVAL; break; } if(!p->img||p->iw*p->ih<iw*ih){ kfree(p->img); p->img=kmalloc((u64)iw*ih); if(!p->img){ v=VE_NOSPC; break; } } memcpy(p->img,(void*)a,(u64)iw*ih); p->iw=iw; p->ih=ih; p->gid=gfx_newid(); p->dirty=1; v=0; break; }
+ case 21: snd_tone((int)a,(int)b,(int)(c&255),(int)((c>>8)&15),(int)((c>>16)&0xFFFF)); v=0; break;
  case 6: v=fs_now(); break;
  case 7: v=(long)(ticks*10); break;
  case 8: { u64 inc=(a+4095)&~4095ull; if(inc>MAXHEAP||p->brk-UHEAP+inc>MAXHEAP){ v=-1; break; } v=(long)p->brk; u64 e=p->brk+inc,o=p->brk; for(;o<e;o+=4096) if(!map_page(p->root,o,PTE_W|PTE_NX)){ v=-1; break; } p->brk=o; break; }
@@ -86,28 +99,33 @@ void proc_syscall(regs*r){ proc_t*p=cur; if(!p)return; u64 a=r->rdi,b=r->rsi,c=r
  default: v=VE_INVAL; }
  r->rax=(u64)v; }
 /* ---------- Fenster ---------- */
-static void pw_draw(win_t*w){ proc_t*p=w->st; cfill(w,AT(C_VOID,C_LAV)); for(int y=0;y<p->rows&&y<ch(w);y++) for(int x=0;x<p->cols&&x<cw(w);x++){ u16 c=p->cells[y*p->cols+x]; cput(w,x,y,(u8)c,(u8)(c>>8)); } if(p->state==P_DEAD){ ctext(w,1,0,AT(C_VOID,C_HOT),p->msg); ctext(w,1,1,AT(C_VOID,C_LAV),TR("Esc schließt das Fenster.","Esc closes the window.")); } }
+static void pw_draw(win_t*w){ proc_t*p=w->st; cfill(w,AT(C_VOID,C_LAV)); int ox=(cw(w)-p->sc)/2,oy=(ch(w)-p->sr)/2; if(ox<0)ox=0; if(oy<0)oy=0; for(int y=0;y<p->sr&&y<ch(w);y++) for(int x=0;x<p->sc&&x<cw(w);x++){ u32 c=p->cells[y*CMAX+x]; if(c>>31){ int ix=(c>>8)&255,iy=(c>>16)&127; if(p->img&&ix<p->iw/4&&iy<p->ih/8)cputg(w,ox+x,oy+y,p->gid,p->img,p->iw,ix,iy); else cput8(w,ox+x,oy+y,' ',0,0); continue; } cput8(w,ox+x,oy+y,(u8)c,(u8)(c>>8),(u8)(c>>16)); } if(p->state==P_DEAD){ ctext(w,1,0,AT(C_VOID,C_HOT),p->msg); ctext(w,1,1,AT(C_VOID,C_LAV),TR("Esc schließt das Fenster.","Esc closes the window.")); } }
 static void pw_step(win_t*w){ proc_t*p=w->st; if(p->state==P_RUN||(p->state==P_WAIT&&(p->kh!=p->kt||ticks>=p->wake))){ p->state=P_RUN; proc_run(p); } if(p->state==P_DONE)win_close(w); }
 static void pw_key(win_t*w,key_t k){ pkey_add(w->st,(u32)k.key|(u32)k.mods<<16); }
-static void pw_free(win_t*w){ proc_t*p=w->st; as_free(p->root); kfree(p->cells); kfree(p); }
-static const app_t pw_app={pw_draw,pw_key,pw_step,0,pw_free,pw_step};
-static int load(const u8*b,u64 n,const char*base){ const vpk_h*h=(const vpk_h*)b; const u8*el=b+VPK_HDR; u64 en=h->elf,entry; seg_t s[8]; int ns; if(!elf_check(el,en,&entry,s,&ns))return VE_FORMAT; (void)n; proc_t*p=kmalloc(sizeof*p); if(!p)return VE_NOSPC; memset(p,0,sizeof*p); p->cells=kmalloc((u64)h->cols*h->rows*2); void*rt=pg_alloc(); if(!p->cells||!rt){ if(rt)pg_put(rt); kfree(p->cells); kfree(p); return VE_NOSPC; } p->root=phys(rt); p->cols=h->cols; p->rows=h->rows; for(int i=0;i<h->cols*h->rows;i++)p->cells[i]=(u16)(' '|AT(C_VOID,C_LAV)<<8);
+static int pw_close(win_t*w){ proc_t*p=w->st; if(p->esc&&p->state<=P_WAIT&&!ui_quitting){ pkey_add(p,K_ESC); return 0; } return 1; }
+void prog_bg(void){ if(cur)return; for(int i=0;i<NBG;i++){ proc_t*p=bgp[i]; if(p&&(p->state==P_RUN||(p->state==P_WAIT&&(p->kh!=p->kt||ticks>=p->wake)))){ p->state=P_RUN; proc_run(p); } } }
+static void pw_free(win_t*w){ proc_t*p=w->st; kfree(p->img); if(p->bg){ snd_stream_flush(); snd_stream_pause(0); snd_stream_gain(256,256); for(int i=0;i<NBG;i++) if(bgp[i]==p)bgp[i]=0; } as_free(p->root); kfree(p->cells); kfree(p); }
+static const app_t pw_app={pw_draw,pw_key,pw_step,pw_close,pw_free,pw_step};
+int prog_wants(win_t*w,int key){ if(w->app!=&pw_app)return 0; proc_t*p=w->st; return key==K_F1&&p->f1&&p->state<=P_WAIT; }
+static proc_t*lastp; static int load(const u8*b,u64 n,const char*base,dec_t*dec){ const vpk_h*h=(const vpk_h*)b; const u8*el=b+VPK_HDR; u64 en=h->elf,entry; seg_t s[8]; int ns; if(!elf_check(el,en,&entry,s,&ns))return VE_FORMAT; (void)n; proc_t*p=kmalloc(sizeof*p); if(!p)return VE_NOSPC; memset(p,0,sizeof*p); p->cells=kmalloc(CMAX*RMAX*4); void*rt=pg_alloc(); if(!p->cells||!rt){ if(rt)pg_put(rt); kfree(p->cells); kfree(p); return VE_NOSPC; } p->root=phys(rt); p->cols=h->cols; p->rows=h->rows; for(int i=0;i<CMAX*RMAX;i++)p->cells[i]=(u32)' '|(u32)C_LAV<<8|(u32)C_VOID<<16; p->sc=h->cols; p->sr=h->rows;
   for(int i=0;i<ns;i++){ seg_t*q=&s[i]; u64 fl=((q->flags&2)?PTE_W:0)|((q->flags&1)?0:PTE_NX); for(u64 o=0;o<q->memsz;o+=4096){ u8*pg=map_page(p->root,q->vaddr+o,fl); if(!pg)goto oom; if(o<q->filesz){ u64 k=q->filesz-o; if(k>4096)k=4096; memcpy(pg,el+q->off+o,k); } } }
   for(u64 o=0;o<USTKSZ;o+=4096) if(!map_page(p->root,USTACK+o,PTE_W|PTE_NX))goto oom;
-  p->brk=UHEAP; p->fx=(u8*)(((u64)p->fxraw+15)&~15ull); memset(p->fx,0,512); p->fx[0]=0x7F; p->fx[1]=3; p->fx[24]=0x80; p->fx[25]=0x1F; p->r.rip=entry; p->r.rsp=UEND-16; p->r.cs=0x23; p->r.ss=0x1B; p->r.rflags=0x202; strlcpy_(p->name,h->name,24); strlcpy_(p->base,base,VFS_PATH); p->state=P_RUN;
+  p->brk=UHEAP; p->fx=(u8*)(((u64)p->fxraw+15)&~15ull); memset(p->fx,0,512); p->fx[0]=0x7F; p->fx[1]=3; p->fx[24]=0x80; p->fx[25]=0x1F; p->r.rip=entry; p->r.rsp=UEND-16; p->r.cs=0x23; p->r.ss=0x1B; p->r.rflags=0x202; strlcpy_(p->name,h->name,24); strlcpy_(p->base,base,VFS_PATH); p->state=P_RUN; p->dec=dec; lastp=p; if(dec)return 0;
   p->w=win_open(h->title,(80-h->cols-2)/2,1+(21-h->rows)/2,h->cols+2,h->rows+2,&pw_app,p); if(!p->w)goto oom; return 0;
  oom: as_free(p->root); kfree(p->cells); kfree(p); return VE_NOSPC; }
 /* Liest und prueft ein Paket */
 static u8*pkg_read(const char*path,u64*n,int*err){ vfs_ent e; int r=fsx_stat(path,&e); if(r){ *err=r; return 0; } if(e.dir||e.size>VPK_MAX||e.size<VPK_HDR+64){ *err=VE_FORMAT; return 0; } u8*b=kmalloc(e.size+1); if(!b){ *err=VE_NOSPC; return 0; } int64_t l=fsx_read(path,b,e.size); if(l<0){ *err=(int)l; kfree(b); return 0; } u64 en; seg_t s[8]; int ns; if(!vpk_check(b,(u64)l)||!elf_check(b+VPK_HDR,(u64)l-VPK_HDR,&en,s,&ns)){ kfree(b); *err=VE_FORMAT; return 0; } *n=(u64)l; return b; }
-int prog_run_file(const char*path,const char*base){ u64 n; int e=0; u8*b=pkg_read(path,&n,&e); if(!b)return e; e=load(b,n,base?base:fsx_home()); kfree(b); return e; }
+int prog_run_file(const char*path,const char*base){ u64 n; int e=0; u8*b=pkg_read(path,&n,&e); if(!b)return e; e=load(b,n,base?base:fsx_home(),0); kfree(b); return e; }
 static int safe_name(const char*s){ if(!*s||strlen(s)>23)return 0; for(;*s;s++) if(!((*s>='a'&&*s<='z')||(*s>='0'&&*s<='9')||*s=='-'||*s=='_'))return 0; return 1; }
 /* Fest eingebaute Spiele: dieselben Pakete wie im SDK, nur schon im Kernel enthalten */
 #include "apps.h"
-static const struct { const char*name; const u8*d; u64 n; } builtin[]={{"snake",pkg_snake,sizeof pkg_snake},{"bricks",pkg_bricks,sizeof pkg_bricks},{"novastrike",pkg_novastrike,sizeof pkg_novastrike}};
+static const struct { const char*name; const u8*d; u64 n; } builtin[]={{"snake",pkg_snake,sizeof pkg_snake},{"bricks",pkg_bricks,sizeof pkg_bricks},{"novastrike",pkg_novastrike,sizeof pkg_novastrike},{"xzn",pkg_xzn,sizeof pkg_xzn}};
 static int is_builtin(const char*n){ for(unsigned i=0;i<sizeof builtin/sizeof builtin[0];i++) if(!strcmp(builtin[i].name,n))return 1; return 0; }
-static void run_builtin(int i,const char*t){ char d[VFS_PATH]; ksnprintf(d,VFS_PATH,"/programs/%s/data",builtin[i].name); if(fs_ok()){ char a[VFS_PATH]; ksnprintf(a,VFS_PATH,"/programs/%s",builtin[i].name); fsx_mkdir("/programs",fs_now()); fsx_mkdir(a,fs_now()); fsx_mkdir(d,fs_now()); } int r=vpk_check(builtin[i].d,builtin[i].n)?load(builtin[i].d,builtin[i].n,d):VE_FORMAT; if(r)dlg_msg(t,vfs_errstr(r,cfg_lang)); }
-void app_snake(void){ run_builtin(0,"Snake"); } void app_bricks(void){ run_builtin(1,"Bricks"); } void app_novastrike(void){ run_builtin(2,"Novastrike"); }
+static void run_builtin(int i,const char*t){ char d[VFS_PATH]; ksnprintf(d,VFS_PATH,"/programs/%s/data",builtin[i].name); if(fs_ok()){ char a[VFS_PATH]; ksnprintf(a,VFS_PATH,"/programs/%s",builtin[i].name); fsx_mkdir("/programs",fs_now()); fsx_mkdir(a,fs_now()); fsx_mkdir(d,fs_now()); } int r=vpk_check(builtin[i].d,builtin[i].n)?load(builtin[i].d,builtin[i].n,d,0):VE_FORMAT; if(r)dlg_msg(t,vfs_errstr(r,cfg_lang)); }
+void app_snake(void){ run_builtin(0,"Snake"); } void app_bricks(void){ run_builtin(1,"Bricks"); } void app_novastrike(void){ run_builtin(2,"Novastrike"); } void app_xzn(void){ run_builtin(3,"XZN"); }
 int prog_run(const char*name){ if(!safe_name(name))return VE_INVAL; char a[VFS_PATH],d[VFS_PATH]; ksnprintf(a,VFS_PATH,"/programs/%s/app.vpk",name); ksnprintf(d,VFS_PATH,"/programs/%s/data",name); fsx_mkdir(d,fs_now()); return prog_run_file(a,d); }
+/* Laesst den Helfer in Ring 3 arbeiten. Rueckgabe: Laenge der Ausgabe oder <0. Absturz oder Zeitablauf treffen nur ihn. */
+long prog_decode(int mode,const u8*in,u64 n,u8*out,u64 max,long a1,long a2,long a3,int ms,int*flag){ if(cur)return VE_INVAL; static dec_t d; memset(&d,0,sizeof d); d.in=in; d.n=n; d.out=out; d.max=max; d.arg[1]=mode; d.arg[2]=a1; d.arg[3]=a2; d.arg[4]=a3; if(!vpk_check(pkg_vxdec,sizeof pkg_vxdec)||load(pkg_vxdec,sizeof pkg_vxdec,"/",&d))return VE_NOSPC; proc_t*p=lastp; u64 end=ticks+(u64)ms/10+1; while(p->state==P_RUN&&ticks<end)proc_run(p); int ok=p->state==P_DONE&&d.got; as_free(p->root); kfree(p->cells); kfree(p); if(flag)*flag=d.flag; return ok?(long)d.got:VE_FORMAT; }
 int prog_install(const char*path){ if(!fs_ok())return VE_NOFS; u64 n; int e=0; u8*b=pkg_read(path,&n,&e); if(!b)return e; const vpk_h*h=(const vpk_h*)b; char q[72],t[VFS_PATH],a[VFS_PATH]; ksnprintf(q,72,TR("%s %s installieren?","Install %s %s?"),h->title,h->version); ksnprintf(t,VFS_PATH,"/programs/%s",h->name); ksnprintf(a,VFS_PATH,"%s/app.vpk",t); vfs_ent v; const char*ti=fsx_stat(t,&v)?TR("Programm installieren","Install program"):TR("Programm ersetzen","Replace program"); if(!dlg_confirm(ti,q)){ kfree(b); return VE_DENIED; } fsx_mkdir("/programs",fs_now()); fsx_mkdir(t,fs_now()); e=fsx_write(a,b,n,fs_now()); kfree(b); return e; }
 int prog_uninstall(const char*name){ if(!safe_name(name))return VE_INVAL; char t[VFS_PATH]; ksnprintf(t,VFS_PATH,"/programs/%s",name); return fsx_rmtree(t); }
 int prog_scan(prog_info*o,int max){ if(!fs_ok())return 0; fs_item*it; int n=fs_load("/programs",&it),c=0; if(n<0){ kfree(it); return 0; } static u8 h[VPK_HDR]; for(int i=0;i<n&&c<max;i++){ if(!it[i].dir)continue; char a[VFS_PATH]; ksnprintf(a,VFS_PATH,"/programs/%s/app.vpk",it[i].name); if(fsx_read(a,h,VPK_HDR)!=VPK_HDR)continue; vpk_h*v=(vpk_h*)h; if(memcmp(v->magic,"VPK1",4)||!nulstr(v->name,24,1)||!nulstr(v->title,24,1)||strcmp(v->name,it[i].name)||is_builtin(v->name))continue; int ok=1; for(int k=0;k<3;k++)ok&=nulstr(v->icon[k],7,0); if(!ok)continue; memcpy(o[c].name,v->name,24); memcpy(o[c].title,v->title,24); memcpy(o[c].icon,v->icon,21); c++; } kfree(it); return c; }

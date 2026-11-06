@@ -9,14 +9,18 @@ typedef struct { uint32_t h; int line; } hanchor;
 typedef struct { uint32_t off; int line; int field; } hlink;
 typedef struct { uint32_t name,value; int form; int type; int link; int cols; } hfield;
 typedef struct { uint32_t action; int post; } hform;
+/* Bild: src zeigt in den Pool. state, cols, rows, px setzt der Browser, der Layouter behaelt sie bei */
+enum { IM_WAIT,IM_OK,IM_FAIL };
+typedef struct { uint32_t src; int line,x,cols,rows,state; uint8_t *px; uint8_t id; } himg;
 typedef struct {
   hline *l; int nl,maxl;
-  uint8_t *ch,*st; uint16_t *lk; uint32_t used,cap;
+  uint8_t *ch,*st,*fg; uint16_t *lk; uint32_t used,cap;
   char *pool; uint32_t pu,pc;
   hlink *links; int nlk,maxlk;
   hanchor *anch; int nan,maxan;
   hfield *fld; int nf,maxf;
   hform *frm; int nfrm,maxfrm;
+  himg *im; int nim,maxim,noimg;
   int nums;
   char title[80]; int full;
 } hpage;

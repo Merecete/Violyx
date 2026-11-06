@@ -49,7 +49,7 @@ static void fm_key(win_t*w,key_t k){ fm_t*f=w->st; char p[VFS_PATH+260],q[VFS_PA
   if(k.key==K_UP){ if(f->s)f->s--; return; } if(k.key==K_DOWN){ if(f->s<f->n-1)f->s++; return; } if(k.key==K_BS){ if(strcmp(f->cwd,"/")){ ksnprintf(p,sizeof p,"%s/..",f->cwd); vfs_norm("/",p,f->cwd,VFS_PATH); f->s=f->top=0; fm_load(f); } return; }
   if(k.key=='n'||k.key=='N'){ app_write(0); return; }
   if(k.key=='o'||k.key=='O'){ n[0]=0; if(dlg_input(TR("Neuer Ordner","New folder"),TR("Name:","Name:"),n,VFS_NAME)){ fm_path(f,n,p,sizeof p); r=fsx_mkdir(p,fs_now()); fm_load(f); } }
-  else if(f->n&&k.key==K_ENTER){ fm_path(f,f->it[f->s].name,p,sizeof p); if(f->it[f->s].dir){ vfs_ent e; r=fsx_stat(p,&e); if(r==VE_DENIED)return; if(!r){ strlcpy_(f->cwd,p,VFS_PATH); f->s=f->top=0; fm_load(f); } } else { size_t L=strlen(p); if(L>4&&!strcmp(p+L-4,".vpk")){ r=fs_ok()?prog_install(p):dlg_confirm(TR("Programm","Program"),TR("Dieses Programm jetzt starten?","Start this program now?"))?prog_run_file(p,0):VE_DENIED; if(r==VE_DENIED)return; if(!r&&fs_ok()){ dlg_msg(TR("Programm","Program"),TR("Installiert. Du findest es unter F2.","Installed. Find it under F2.")); return; } } else { app_write(p); return; } } }
+  else if(f->n&&k.key==K_ENTER){ fm_path(f,f->it[f->s].name,p,sizeof p); if(f->it[f->s].dir){ vfs_ent e; r=fsx_stat(p,&e); if(r==VE_DENIED)return; if(!r){ strlcpy_(f->cwd,p,VFS_PATH); f->s=f->top=0; fm_load(f); } } else { size_t L=strlen(p); if(L>4&&!strcmp(p+L-4,".vpk")){ r=fs_ok()?prog_install(p):dlg_confirm(TR("Programm","Program"),TR("Dieses Programm jetzt starten?","Start this program now?"))?prog_run_file(p,0):VE_DENIED; if(r==VE_DENIED)return; if(!r&&fs_ok()){ dlg_msg(TR("Programm","Program"),TR("Installiert. Du findest es unter F2.","Installed. Find it under F2.")); return; } } else if(L>4&&!strcmp(p+L-4,".vwp")){ r=wall_open_file(p); if(r==VE_DENIED)return; } else { app_write(p); return; } } }
   else if(!strcmp(f->cwd,"/drives")){ if(f->n&&(k.key=='e'||k.key=='E')){ r=fsx_eject(f->it[f->s].name); if(!r){ ksnprintf(p,sizeof p,TR("%s kann jetzt abgezogen werden.","%s can be removed now."),f->it[f->s].name); dlg_msg(TR("Auswerfen","Eject"),p); } } }
   else if(f->n&&(k.key=='c'||k.key=='C')){ char d[VFS_PATH]; const char*nm=f->it[f->s].name; char t[VFS_PATH]; d[0]=0; if(!memcmp(f->cwd,"/drives/",8)){ if(fs_ok())ksnprintf(d,VFS_PATH,"/home/%s",nm); else ksnprintf(d,VFS_PATH,"%s",nm); } else if(fsx_first(t,VFS_PATH))ksnprintf(d,VFS_PATH,"%s/%s",t,nm); else ksnprintf(d,VFS_PATH,"%s",nm); if(dlg_input(TR("Kopieren","Copy"),TR("Ziel:","Target:"),d,VFS_PATH-1)){ fm_path(f,nm,p,sizeof p); if(vfs_norm(f->cwd,d,q,VFS_PATH))r=VE_INVAL; else { vfs_ent e; int ex=fsx_stat(q,&e); if(ex==VE_DENIED)return; if(!ex&&e.dir){ ksnprintf(t,VFS_PATH,"%s/%s",strcmp(q,"/")?q:"",nm); strlcpy_(q,t,VFS_PATH); ex=fsx_stat(q,&e); } if(!ex&&!dlg_confirm(TR("Kopieren","Copy"),TR("Ziel ersetzen?","Replace target?")))return; r=fsx_copy(p,q); } fm_load(f); } }
   else if(f->n&&(k.key=='r'||k.key=='R')){ strlcpy_(n,f->it[f->s].name,VFS_NAME+1); if(dlg_input(TR("Umbenennen","Rename"),TR("Neuer Name oder Pfad:","New name or path:"),n,VFS_NAME)){ fm_path(f,f->it[f->s].name,p,sizeof p); if(vfs_norm(f->cwd,n,q,VFS_PATH))r=VE_INVAL; else r=fsx_rename(p,q); fm_load(f); } }
@@ -73,7 +73,7 @@ static void sh_err(sh_t*s,int r){ if(r)sh_put(s,vfs_errstr(r,cfg_lang)); }
 static int sh_path(sh_t*s,const char*a,char*o){ if(vfs_norm(s->cwd,a,o,VFS_PATH)){ sh_err(s,VE_INVAL); return -1; } return 0; }
 static void sh_line(const char*l,void*a){ sh_put(a,l); }
 static void sh_exec(sh_t*s){ if(!fsx_quiet(s->cwd))strlcpy_(s->cwd,"/drives",VFS_PATH); char line[SW+4]; ksnprintf(line,SW+4,"> %s",s->in); sh_put(s,line); char*c=s->in; char*a=c; while(*a&&*a!=' ')a++; if(*a){*a++=0; while(*a==' ')a++;} char b[80]; static char p[VFS_PATH],q[VFS_PATH];
-  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  netdiag  install  run  uninstall  mem  zeit  ver  cls","dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  install  run  uninstall  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS")); sh_put(s,TR("neustart","restart")); }
+  if(!*c){} else if(!strcmp(c,"hilfe")||!strcmp(c,"help")){ sh_put(s,TR("dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  sound  geraete  netdiag  install  run  uninstall  mem  zeit  ver  cls","dir  cd  pwd  mkdir  del  mv  cp  type  edit  df  eject  usb  sound  devices  install  run  uninstall  mem  time  ver  cls")); sh_put(s,TR("echo TEXT  netz  ping NAME  hole ADRESSE  web ADRESSE","echo TEXT  net  ping NAME  fetch ADDRESS  web ADDRESS")); sh_put(s,TR("neustart","restart")); }
   else if(!strcmp(c,"cls")||!strcmp(c,"clear")) s->n=0;
   else if(!strcmp(c,"ver")) sh_put(s,"Violyx " VERSION);
   else if(!strcmp(c,"echo")) sh_put(s,a);
@@ -87,6 +87,8 @@ static void sh_exec(sh_t*s){ if(!fsx_quiet(s->cwd))strlcpy_(s->cwd,"/drives",VFS
   else if(!strcmp(c,"mem")){ ksnprintf(b,80,TR("RAM %ld KB, Heap frei %ld KB","RAM %ld KB, heap free %ld KB"),mem_total_kb,heap_free()/1024); sh_put(s,b); }
   else if((!strcmp(c,"zeit")||!strcmp(c,"time"))){ rtc_t r; rtc_read(&r); if(cfg_lang)ksnprintf(b,80,"%d-%02d-%02d %02d:%02d:%02d",r.year,r.mon,r.day,r.h,r.m,r.s); else ksnprintf(b,80,"%02d.%02d.%d %02d:%02d:%02d",r.day,r.mon,r.year,r.h,r.m,r.s); sh_put(s,b); }
   else if(!strcmp(c,"usb"))usb_report(sh_line,s);
+  else if(!strcmp(c,"pci")||!strcmp(c,"geraete")||!strcmp(c,"devices")){ static pci_t d[256]; int n=pci_scan(d,256),all=!strcmp(a,"alle")||!strcmp(a,"all"),shown=0; for(int i=0;i<n;i++){ if(!all&&(d[i].cls==6||d[i].cls==8||d[i].cls==5||d[i].cls==0x11||d[i].cls==0x13))continue; shown++; static const char*cn[]={"?","Massenspeicher","Netzwerk","Grafik","Multimedia","Speicher","Bruecke","Schnittstelle","System","Eingabe","Dock","CPU","Seriell/USB","Funk"},*ce[]={"?","Storage","Network","Display","Multimedia","Memory","Bridge","Comm","System","Input","Dock","CPU","Serial/USB","Wireless"}; const char*mk=d[i].ven==0x10DE?"NVIDIA":d[i].ven==0x1002?"AMD":d[i].ven==0x8086?"Intel":d[i].ven==0x10EC?"Realtek":d[i].ven==0x1022?"AMD":""; char l[80]; ksnprintf(l,80,"%02x:%02x.%d  %04x:%04x  %s %s%s",d[i].bus,d[i].dev,d[i].fn,d[i].ven,d[i].did,d[i].cls<14?(cfg_lang?ce:cn)[d[i].cls]:"?",mk,d[i].cls==4&&d[i].sub==3?" (HD Audio)":""); sh_put(s,l); } { char l[80]; ksnprintf(l,80,TR("%d von %d Geräten, Brücken und Systemteile ausgeblendet (geraete alle)","%d of %d devices, bridges and system parts hidden (devices all)"),shown,n); sh_put(s,l); } }
+  else if(!strcmp(c,"sound")){ snd_report(sh_line,s); snd_tone(523,140,70,1,0); snd_tone(659,140,70,1,150); snd_tone(784,220,70,1,300); }
   else if(!strcmp(c,"netdiag"))net_diag(sh_line,s);
   else if(!strcmp(c,"install")){ if(vfs_norm(s->cwd,a,p,VFS_PATH))sh_err(s,VE_INVAL); else { int r=prog_install(p); if(r)sh_err(s,r); else sh_put(s,TR("Installiert.","Installed.")); } }
   else if(!strcmp(c,"run")){ size_t L=strlen(a); int r; if(L>4&&!strcmp(a+L-4,".vpk")){ if(vfs_norm(s->cwd,a,p,VFS_PATH))r=VE_INVAL; else r=prog_run_file(p,0); } else r=prog_run(a); if(r)sh_err(s,r); }
@@ -147,7 +149,7 @@ static int prnd(pong_t*p,int n){ p->rng=p->rng*1103515245u+12345u; return (p->rn
 static void serve(pong_t*p,int dir){ p->bx=(p->w/2)<<8; p->by=(1+prnd(p,p->h-2))<<8; p->vx=dir*0xB0; p->vy=(prnd(p,2)?1:-1)*(0x28+prnd(p,0x38)); p->err=prnd(p,5)-2; }
 static void pong_reset(pong_t*p,win_t*w){ p->w=cw(w);p->h=ch(w); p->py=p->cy=((p->h+1-PH)/2)<<8; p->sp=p->sc=0; p->state=0; serve(p,1); }
 static void bounce(pong_t*p,int pad,int dir){ int off=(p->by>>8)-(pad>>8)-PH/2; p->vy=off*0x38+prnd(p,0x18)-0x0C; int s=(p->vx<0?-p->vx:p->vx)+0x0C; if(s>0x1A0)s=0x1A0; p->vx=dir*s; }
-static void pong_frame(win_t*w){ pong_t*p=w->st; if(p->w!=cw(w)||p->h!=ch(w))pong_reset(p,w); if(p->state!=1)return;
+static void pong_step(win_t*w){ pong_t*p=w->st; if(p->w!=cw(w)||p->h!=ch(w))pong_reset(p,w); if(p->state!=1)return;
   int maxp=(p->h-PH)<<8;
   if(key_down(0x48)||key_down(0x11))p->py-=0xA0; if(key_down(0x50)||key_down(0x1F))p->py+=0xA0;
   if(p->py<0x100)p->py=0x100; if(p->py>maxp)p->py=maxp;
@@ -166,22 +168,23 @@ static void pong_draw(win_t*w){ pong_t*p=w->st; if(p->w!=cw(w)||p->h!=ch(w))pong
   const char*m=p->state==0?TR("Enter startet das Spiel","Press Enter to start"):p->state==3?TR("Pause - P geht weiter","Paused - press P"):p->state==2?(p->sp>=WIN?TR("Gewonnen! Enter = Neues Spiel","You win! Enter = New game"):TR("Violyx gewinnt. Enter = Neues Spiel","Violyx wins. Enter = New game")):0; if(m){ int l=0; for(const char*q=m;*q;q++)l++; ctext(w,(p->w-l)/2,p->h/2,AT(C_VOID,C_LAV),m); }
   strlcpy_(w->foot,TR(" Pfeile oben/unten   P Pause "," Up/Down arrows   P Pause "),64); }
 static void pong_key(win_t*w,key_t k){ pong_t*p=w->st; if(k.key==K_ENTER){ if(p->state==0)p->state=1; else if(p->state==2){ pong_reset(p,w); p->state=1; } } else if(k.key=='p'||k.key=='P'){ if(p->state==1)p->state=3; else if(p->state==3)p->state=1; } }
+static void pong_frame(win_t*w){ pong_t*p=w->st; int vx=p->vx,vy=p->vy,sc=p->sc,st=p->state; pong_step(w); if(st!=1)return; if(p->sc!=sc||p->state!=st){ snd_tone(180,250,55,2,0); } else if((vx<0)!=(p->vx<0))snd_tone(440,50,45,0,0); else if((vy<0)!=(p->vy<0))snd_tone(220,35,30,0,0); }
 static const app_t pong_app={pong_draw,pong_key,0,0,simple_free,pong_frame};
 void app_pong(void){ pong_t*p=kmalloc(sizeof*p); if(!p)return; memset(p,0,sizeof*p); p->rng=(u32)ticks*2654435761u+1; win_t*w=win_open("Pong",7,2,66,20,&pong_app,p); if(!w){kfree(p);return;} pong_reset(p,w); }
 /* ---------- Einstellungen ---------- */
 typedef struct { int sel,dirty; rtc_t t; const char*msg; } set_t;
 static int mdays(int m,int y){ static const u8 d[]={31,28,31,30,31,30,31,31,30,31,30,31}; return m==2&&y%4==0?29:d[m-1]; }
 static void se_tick(win_t*w){ set_t*s=w->st; if(!s->dirty)rtc_read(&s->t); }
-static void se_draw(win_t*w){ set_t*s=w->st; win_title(w,TR("Einstellungen","Settings")); static const char*lbd[]={"Tag","Monat","Jahr","Stunde","Minute","Hintergrund","Sprache","Tastatur"},*lbe[]={"Day","Month","Year","Hour","Minute","Background","Language","Keyboard"}; const char**lb=cfg_lang?lbe:lbd; int v[]={s->t.day,s->t.mon,s->t.year,s->t.h,s->t.m}; cfill(w,T); ctext(w,2,0,HI,TR("Datum und Uhrzeit","Date and time")); ctext(w,2,7,HI,TR("Darstellung","Appearance"));
-  for(int i=0;i<8;i++){ int y=i<5?i+1:i+3; char b[50]; if(i<5)ksnprintf(b,50,"%12s  < %02d >",lb[i],v[i]); else ksnprintf(b,50,"%12s  < %s >",lb[i],i==5?wall_name(cfg_wall):i==6?(cfg_lang?"English":"Deutsch"):(cfg_kbd?"US":TR("Deutsch","German"))); int sel=s->sel==i; if(sel)for(int x=1;x<cw(w)-1;x++)cput(w,x,y,' ',SEL); ctext(w,2,y,sel?SEL:T,b); }
-  ctext(w,2,12,s->msg?AT(C_PANEL,C_HOT):DIM,s->msg?s->msg:(s->dirty?TR("Enter übernimmt die Uhrzeit","Enter applies the time"):TR("Pfeile wählen und ändern","Arrows select and change"))); }
-static void se_key(win_t*w,key_t k){ set_t*s=w->st; if(k.key==K_UP)s->sel=(s->sel+7)%8; else if(k.key==K_DOWN)s->sel=(s->sel+1)%8;
-  else if(k.key==K_LEFT||k.key==K_RIGHT){ int d=k.key==K_RIGHT?1:-1; s->msg=0; if(s->sel>=5){ if(s->sel==5)wall_set((cfg_wall+WALLS+d)%WALLS); else if(s->sel==6)cfg_lang=!cfg_lang; else cfg_kbd=!cfg_kbd; if(cfg_save())s->msg=TR("Nur bis zum nächsten Start gültig","Valid until next restart only"); return; }
+static void se_draw(win_t*w){ set_t*s=w->st; win_title(w,TR("Einstellungen","Settings")); static const char*lbd[]={"Tag","Monat","Jahr","Stunde","Minute","Hintergrund","Sprache","Tastatur","Lautstärke","Ausgabe"},*lbe[]={"Day","Month","Year","Hour","Minute","Background","Language","Keyboard","Volume","Output"}; const char**lb=cfg_lang?lbe:lbd; int v[]={s->t.day,s->t.mon,s->t.year,s->t.h,s->t.m}; cfill(w,T); ctext(w,2,0,HI,TR("Datum und Uhrzeit","Date and time")); ctext(w,2,7,HI,TR("Darstellung","Appearance"));
+  for(int i=0;i<10;i++){ int y=i<5?i+1:i+3; char b[50]; if(i==9){ static const char*od[]={"Automatisch","Lautsprecher","HDMI"},*oe[]={"Automatic","Speakers","HDMI"}; if(snd_ok())ksnprintf(b,50,"%12s  < %s >",lb[i],(cfg_lang?oe:od)[cfg_out]); else ksnprintf(b,50,"%12s  -",lb[i]); } else if(i==8){ if(snd_ok())ksnprintf(b,50,"%12s  < %d >",lb[i],cfg_vol); else ksnprintf(b,50,"%12s  %s",lb[i],TR("keine Soundkarte","no sound card")); } else if(i<5)ksnprintf(b,50,"%12s  < %02d >",lb[i],v[i]); else ksnprintf(b,50,"%12s  < %s >",lb[i],i==5?wall_name(cfg_wall):i==6?(cfg_lang?"English":"Deutsch"):(cfg_kbd?"US":TR("Deutsch","German"))); int sel=s->sel==i; if(sel)for(int x=1;x<cw(w)-1;x++)cput(w,x,y,' ',SEL); ctext(w,2,y,sel?SEL:T,b); }
+  ctext(w,2,14,s->msg?AT(C_PANEL,C_HOT):DIM,s->msg?s->msg:(s->dirty?TR("Enter übernimmt die Uhrzeit","Enter applies the time"):TR("Pfeile wählen und ändern","Arrows select and change"))); }
+static void se_key(win_t*w,key_t k){ set_t*s=w->st; if(k.key==K_UP)s->sel=(s->sel+9)%10; else if(k.key==K_DOWN)s->sel=(s->sel+1)%10;
+  else if(k.key==K_LEFT||k.key==K_RIGHT){ int d=k.key==K_RIGHT?1:-1; s->msg=0; if(s->sel>=5){ if(s->sel==5)wall_set((cfg_wall+WALLS+d)%WALLS); else if(s->sel==6)cfg_lang=!cfg_lang; else if(s->sel==7)cfg_kbd=!cfg_kbd; else if(s->sel==9){ cfg_out=(cfg_out+3+d)%3; snd_select(); snd_tone(523,120,60,1,0); snd_tone(784,160,60,1,130); } else { cfg_vol+=d; if(cfg_vol<0)cfg_vol=0; if(cfg_vol>10)cfg_vol=10; snd_tone(660,120,60,1,0); } if(cfg_save())s->msg=TR("Nur bis zum nächsten Start gültig","Valid until next restart only"); return; }
     rtc_t*t=&s->t; s->dirty=1; t->s=0; if(s->sel==0){ int m=mdays(t->mon,t->year); t->day=(t->day-1+m+d)%m+1; } else if(s->sel==1)t->mon=(t->mon-1+12+d)%12+1; else if(s->sel==2)t->year=2000+(t->year-2000+100+d)%100; else if(s->sel==3)t->h=(t->h+24+d)%24; else t->m=(t->m+60+d)%60;
     int m=mdays(t->mon,t->year); if(t->day>m)t->day=m; }
   else if(k.key==K_ENTER&&s->dirty){ rtc_set(&s->t); s->dirty=0; s->msg=cfg_save()?TR("Nur bis zum nächsten Start gültig","Valid until next restart only"):TR("Uhrzeit gespeichert","Time saved"); } }
 static const app_t se_app={se_draw,se_key,se_tick,0,simple_free};
-void app_settings(void){ set_t*s=kmalloc(sizeof*s); if(!s)return; memset(s,0,sizeof*s); rtc_read(&s->t); if(!win_open(TR("Einstellungen","Settings"),18,4,44,16,&se_app,s))kfree(s); }
+void app_settings(void){ set_t*s=kmalloc(sizeof*s); if(!s)return; memset(s,0,sizeof*s); rtc_read(&s->t); if(!win_open(TR("Einstellungen","Settings"),18,4,44,17,&se_app,s))kfree(s); }
 /* ---------- Programmübersicht ---------- */
 static void l_write(void){app_write(0);}
 static const struct { const char*n,*en; void(*fn)(void); const char*ic[3]; u8 c; } progs[]={
@@ -191,6 +194,8 @@ static const struct { const char*n,*en; void(*fn)(void); const char*ic[3]; u8 c;
  {"Befehle","Commands",app_shell,{"\xDA\xC4\xC4\xC4\xC4\xBF","\xB3>_  \xB3","\xC0\xC4\xC4\xC4\xC4\xD9"},C_ORCH},
  {"Rechner","Calculator",app_calc,{"\xDA\xC4\xC4\xC4\xC4\xBF","\xB3+-x:\xB3","\xC0\xC4\xC4\xC4\xC4\xD9"},C_HOT},
  {"Kalender","Calendar",app_calendar,{"\xDA\xC2\xC4\xC4\xC2\xBF","\xC3\xC4\xC4\xC4\xC4\xB4","\xC0\xC4\xC4\xC4\xC4\xD9"},C_ORCH},
+ {"Malen","Paint",app_paint,{"\xDB\xDB\xB1\xB1\xB0\xB0","\xDB\xDB\xB1\xB1\xB0\xB0","  \xFE   "},C_HOT},
+ {"XZN","XZN",app_xzn,{"\xDB \xDB   ","  \xDB \x0E ","\xDB \xDB   "},C_NEON},
  {"Pong","Pong",app_pong,{"\xDB    \xDB","\xDB \xFE  \xDB","\xDB    \xDB"},C_NEON},
  {"Invaders","Invaders",app_invaders,{" /@\\  ","  \xB3   "," \xDC\xDB\xDC  "},C_HOT},
  {"Chomp","Chomp",app_chomp,{"\xDB\xDB\xDB\xDB\xDB\xDB","<( \xF9 \xEA","\xDB\xDB\xDB\xDB\xDB\xDB"},C_ORCH},
@@ -210,9 +215,11 @@ static const struct { const char*n,*en; void(*fn)(void); const char*ic[3]; u8 c;
 #define PV 2                                  /* sichtbare Reihen */
 #define MAXIP 48
 static prog_info ipr[MAXIP];
+#include "xznicon.h"
 void app_launcher(void){ static int s,top; int ni=prog_scan(ipr,MAXIP); for(;;){ int all=NP+ni; if(s>=all)s=all-1; int x,y,rows=(all+PC-1)/PC; dlg_box(TR("Programme","Programs"),66,17,&x,&y);
     if(s/PC<top)top=s/PC; if(s/PC>=top+PV)top=s/PC-PV+1;     /* Ansicht folgt der Auswahl */
     for(int i=top*PC;i<all&&i<(top+PV)*PC;i++){ int tx=x+3+(i%PC)*15,ty=y+2+(i/PC-top)*7,sel=i==s; u8 bg=sel?C_SEL:C_RAISE; fill(tx,ty,15,6,' ',AT(bg,C_LAV)); int inst=i>=NP;
+      if(!inst&&progs[i].fn==app_xzn){ for(int r=0;r<3;r++) for(int c=0;c<6;c++) gput(tx+4+c,ty+1+r,250,xzn_icon,24,c,r); } else
       for(int r=0;r<3;r++){ const char*ic=inst?ipr[i-NP].icon[r]:progs[i].ic[r]; for(int c=0;c<6&&ic[c];c++) put(tx+4+c,ty+1+r,(u8)ic[c],AT(bg,sel?C_GLOW:inst?C_NEON:progs[i].c)); }
       const char*pn=inst?ipr[i-NP].title:TR(progs[i].n,progs[i].en); int l=strlen(pn); if(l>14)l=14; for(int c=0;c<l;c++)put(tx+(15-l)/2+c,ty+4,(u8)pn[c],AT(bg,sel?C_GLOW:C_LAV)); if(!inst)text(tx+(15-l)/2,ty+4,AT(bg,sel?C_GLOW:C_LAV),pn); }
     if(top>0)put(x+33,y+1,0x1E,AT(C_RAISE,C_HOT)); if(top+PV<rows)put(x+33,y+15,0x1F,AT(C_RAISE,C_HOT)); if(s>=NP)text(x+3,y+15,AT(C_RAISE,C_MID),TR("Entf deinstalliert","Del uninstalls"));

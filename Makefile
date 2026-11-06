@@ -12,7 +12,7 @@ MBSRC   = $(wildcard $(MB)/library/*.c)
 MBOBJ   = $(patsubst $(MB)/library/%.c,build/mb/%.o,$(MBSRC))
 CACERTS ?= third_party/cacert/cacert.pem
 INC     = -Ikernel/lwip_port -Ikernel/libc -I$(LW)/include -I$(MB)/include -Ikernel/mbed_port -DMBEDTLS_CONFIG_FILE='"violyx_tls_config.h"'
-OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/tls.o build/http.o build/html.o build/browser.o build/install.o build/viofs.o build/fat.o build/drives.o build/games.o build/calendar.o build/prog.o build/rge.o $(LWOBJ) $(MBOBJ)
+OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/tls.o build/http.o build/cookies.o build/sound.o build/html.o build/browser.o build/install.o build/viofs.o build/fat.o build/drives.o build/games.o build/calendar.o build/prog.o build/rge.o build/paint.o $(LWOBJ) $(MBOBJ)
 all: build/violyx.img build/violyx.iso build/violyx.vdi
 build/font.h: tools/mkfont.py
 	@mkdir -p build
@@ -26,10 +26,10 @@ build/cp437.h: tools/mkcp437.py
 	@mkdir -p build
 	python3 tools/mkcp437.py $@
 build/html.o: build/cp437.h kernel/html.h
-APPSRC=$(wildcard sdk/examples/*.c) sdk/violyx.c sdk/violyx.h sdk/link.ld sdk/mkvpk.py sdk/Makefile
+APPSRC=$(wildcard sdk/examples/*.c sdk/helpers/*.c sdk/*.h) sdk/violyx.c sdk/violyx.h sdk/link.ld sdk/mkvpk.py sdk/Makefile
 build/apps.h: $(APPSRC) tools/mkapps.py
 	$(MAKE) -C sdk apps OUT=../build/apps
-	python3 tools/mkapps.py $@ snake=build/apps/snake.vpk bricks=build/apps/bricks.vpk novastrike=build/apps/novastrike.vpk
+	python3 tools/mkapps.py $@ snake=build/apps/snake.vpk bricks=build/apps/bricks.vpk novastrike=build/apps/novastrike.vpk vxdec=build/apps/vxdec.vpk xzn=build/apps/xzn.vpk
 build/prog.o: build/apps.h
 build/fat.o: build/cp437.h kernel/fat.h kernel/viofs.h
 build/drives.o: kernel/fat.h kernel/viofs.h

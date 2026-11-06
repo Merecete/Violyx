@@ -11,10 +11,13 @@ enum { VC_BLACK,VC_DESK,VC_PANEL,VC_RAISE,VC_SEL,VC_DIM,VC_MID,VC_SOFT,VC_SHADOW
 typedef struct { uint64_t size,dir; } vx_stat_t;
 long vx_sys(long n,long a,long b,long c);
 int  main(void);
-/* Bildschirm */
+/* Bildschirm. Das Fenster kann sich aendern (F5 zoomt): vx_cols/vx_rows liefern immer die aktuelle Groesse. */
 int  vx_cols(void); int vx_rows(void);
 void vx_clear(uint8_t attr);
 void vx_put(int x,int y,char c,uint8_t attr);
+/* Volle Farben: 0-15 Violyx, 16-231 Farbwuerfel, 232-255 Grau. vx_rgb sucht die passende Farbe aus 0-255-Anteilen. */
+void vx_paint(int x,int y,char c,uint8_t fg,uint8_t bg);
+uint8_t vx_rgb(int r,int g,int b);
 void vx_text(int x,int y,const char*s,uint8_t attr);
 void vx_number(int x,int y,long v,uint8_t attr);
 void vx_show(void);
@@ -27,8 +30,15 @@ static inline void vx_exit(void){ vx_sys(0,0,0,0); for(;;); }
 /* Zeit, Speicher, Sprache */
 static inline uint32_t vx_time(void){ return (uint32_t)vx_sys(6,0,0,0); }
 static inline long vx_ms(void){ return vx_sys(7,0,0,0); }
+/* Sound: frequency in Hz, length in ms, volume 1-100, delay in ms before the tone starts */
+enum { VX_SQUARE, VX_TRIANGLE, VX_SAW, VX_NOISE };
+static inline void vx_tone(int hz,int ms,int vol,int wave,int delay){ vx_sys(21,hz,ms,(long)(vol&255)|(long)(wave&15)<<8|(long)(delay&0xFFFF)<<16); }
+/* Pictures: upload an image (w divisible by 4, h by 8, up to 960x800, one 256-colour index per pixel),
+   then vx_pixcell(x,y,ix,iy) shows its 4x8-pixel block ix,iy in the text cell x,y. */
+static inline long vx_image(const uint8_t*px,int w,int h){ return vx_sys(24,(long)px,w,h); }
+void vx_pixcell(int x,int y,int ix,int iy);
 static inline int  vx_english(void){ return (int)vx_sys(10,0,0,0); }
-void *vx_alloc(size_t n);   /* bis 64 MB, Speicher ist genullt */
+void *vx_alloc(size_t n);   /* bis 256 MB, Speicher ist genullt */
 int  vx_random(int n);
 /* Dateien. Relative Pfade liegen im eigenen Datenordner. Erlaubt sind ausserdem /home, /downloads und /drives. */
 static inline long vx_read(const char*p,void*b,size_t n){ return vx_sys(11,(long)p,(long)b,(long)n); }

@@ -25,14 +25,14 @@ void isr_handler(regs*r){
   int user=r->cs&3; if(r->no==48){ if(user)proc_syscall(r); return; }
   if(r->no<32&&user)proc_fault(r);
   if(r->no<32){ outb(0xE9,'P'); char d[100]; ksnprintf(d,100,TR("Ausnahme %d  Fehler %lx  RIP %lx","Exception %d  error %lx  RIP %lx"),(int)r->no,r->err,r->rip); ui_panic(TR("Violyx angehalten: CPU-Ausnahme","Violyx stopped: CPU exception"),d); halt(); }
-  if(r->no==32){ ticks++; xhci_poll(); }
+  if(r->no==32){ ticks++; xhci_poll(); snd_tick(); }
   else if(r->no==33) kbd_irq();
   if(r->no>=40) outb(0xA0,0x20);
   outb(0x20,0x20);
   if(user)proc_tick(r);
 }
 /* Wartet auf das naechste Ereignis. Ohne PIT (manche neuen Intel-Systeme) laeuft die Zeit ueber den TSC. */
-void idle(void){ usb_hotplug(); if(pit_ok){ __asm__("sti;hlt"); net_poll(); return; } __asm__("pause"); ticks=(rdtsc()-tsc0)/tsc_tick; __asm__("cli"); xhci_poll(); __asm__("sti"); net_poll(); }
+void idle(void){ usb_hotplug(); prog_bg(); if(pit_ok){ __asm__("sti;hlt"); net_poll(); return; } __asm__("pause"); ticks=(rdtsc()-tsc0)/tsc_tick; __asm__("cli"); xhci_poll(); __asm__("sti"); net_poll(); }
 static void cpu_init(void){
   u64 ts=(u64)&tss; tss.iomap=sizeof tss; tss.rsp0=proc_stack_top(); gdt[5]=(sizeof tss-1)|(ts&0xFFFFFF)<<16|0x89ull<<40|((ts>>24)&255)<<56; gdt[6]=ts>>32;
   gdtr.lim=sizeof gdt-1; gdtr.base=(u64)gdt; gdt_load(&gdtr); __asm__ volatile("ltr %%ax"::"a"(0x28));
@@ -67,7 +67,7 @@ static void pit_check(void){
 /* Die Hardware-Uhr bleibt unberuehrt. Violyx speichert die Abweichung zur
    gewuenschten Zeit, so bleibt sie auch in QEMU ueber Neustarts erhalten. */
 static int time_off; int cfg_wall,cfg_lang=1;
-typedef struct { u32 magic; int off,wall,lang,kbd; } cfg_t;
+typedef struct { u32 magic; int off,wall,lang,kbd,vol,out; } cfg_t;
 #define CFG_NAME "/system/config"
 static u32 to_secs(const rtc_t*t){ int y=t->year,m=t->mon; y-=m<=2; int era=y/400,yoe=y-era*400,doy=(153*(m+(m>2?-3:9))+2)/5+t->day-1,doe=yoe*365+yoe/4-yoe/100+doy;
   return (u32)(era*146097+doe-719468)*86400u+t->h*3600u+t->m*60u+t->s; }
@@ -85,8 +85,8 @@ static void rtc_raw(rtc_t*t){
   t->h=h;t->m=m;t->s=s;t->day=d;t->mon=mo;t->year=2000+y; }
 void rtc_read(rtc_t*t){ rtc_t r; rtc_raw(&r); from_secs(to_secs(&r)+(u32)time_off,t); }
 void rtc_set(const rtc_t*t){ rtc_t r; rtc_raw(&r); time_off=(int)(to_secs(t)-to_secs(&r)); }
-int cfg_save(void){ cfg_t c={0x32464356,time_off,cfg_wall,cfg_lang,cfg_kbd}; return fs_ok()?vfs_write(CFG_NAME,&c,sizeof c,fs_now()):-1; }
-void cfg_load(void){ cfg_t c; if(fs_ok()&&vfs_read(CFG_NAME,&c,sizeof c)==sizeof c&&c.magic==0x32464356){ time_off=c.off; if(c.wall>=0&&c.wall<WALLS)cfg_wall=c.wall; cfg_lang=c.lang==1; cfg_kbd=c.kbd==1; } }
+int cfg_save(void){ cfg_t c={0x32464356,time_off,cfg_wall,cfg_lang,cfg_kbd,cfg_vol+1,cfg_out+1}; return fs_ok()?vfs_write(CFG_NAME,&c,sizeof c,fs_now()):-1; }
+void cfg_load(void){ cfg_t c; memset(&c,0,sizeof c); int64_t n_=fs_ok()?vfs_read(CFG_NAME,&c,sizeof c):-1; if(n_>=20&&c.magic==0x32464356){ if(c.vol>=1&&c.vol<=11)cfg_vol=c.vol-1; if(c.out>=1&&c.out<=3)cfg_out=c.out-1; time_off=c.off; if(c.wall>=0&&c.wall<WALLS)cfg_wall=c.wall; cfg_lang=c.lang==1; cfg_kbd=c.kbd==1; } }
 void reboot(void){ __asm__("cli"); outb(0xE9,'R'); for(int i=0;i<100000&&(inb(0x64)&2);i++); outb(0x64,0xFE); udelay(50000);
   outb(0xCF9,6); udelay(50000); struct __attribute__((packed)) { u16 l; u64 b; } z={0,0}; __asm__("lidt %0; int3"::"m"(z)); halt(); }
 void poweroff(void){ outb(0xE9,'O'); u64 r=rsreq.response?(u64)rsreq.response->address:0; if(r>=hhdm)r-=hhdm; acpi_poweroff(r);
@@ -100,9 +100,11 @@ void kmain(void){
   ui_init();
   cpu_init(); mem_init(); paging_init();
   kbd_init(); pit_check();
-  pci_t d[64]; int n=pci_scan(d,64);
+  { u64 r=rsreq.response?(u64)rsreq.response->address:0; if(r>=hhdm)r-=hhdm; pci_ecam=acpi_mcfg(r); }
+  static pci_t d[256]; int n=pci_scan(d,256);   /* AMD-Bretter haben viele Funktionen, 64 reichten nicht immer */
+  for(int i=0;i<n;i++)snd_probe(&d[i]);
   for(int i=0;i<n;i++){ if(d[i].ven==0x10EC&&(d[i].did==0x8126||d[i].did==0x8125))rge_probe(&d[i]); else if(d[i].cls==1&&d[i].sub==6&&d[i].pif==1) ahci_init(&d[i]); else if(d[i].cls==1&&d[i].sub==8&&d[i].pif==2) nvme_init(&d[i]); else if(d[i].cls==0xC&&d[i].sub==3&&d[i].pif==0x30) xhci_init(&d[i]); else if(d[i].cls==2&&d[i].sub==0&&d[i].ven==0x8086&&(d[i].did==0x100E||d[i].did==0x100F||d[i].did==0x1004||d[i].did==0x10D3)) e1000_init(&d[i]); }
-  ide_probe(); if(modreq.response&&modreq.response->module_count) install_set_image(modreq.response->modules[0]->address,modreq.response->modules[0]->size); fs_init(); cfg_load(); drives_sync(); ui_init(); net_init(); ui_splash();
+  ide_probe(); if(modreq.response&&modreq.response->module_count) install_set_image(modreq.response->modules[0]->address,modreq.response->modules[0]->size); fs_init(); cfg_load(); snd_select(); drives_sync(); ui_init(); net_init(); ui_splash();
   app_help();
   ui_run();
 }

@@ -2,6 +2,9 @@
 /* ACPI-Abschaltung: Register aus der FADT, Schlafwerte aus dem \_S5-Objekt der DSDT */
 static void *ph(u64 a,u64 n){ mmio_map(a,n); return (void*)a; }
 static u8 *table(u64 a){ u8*h=ph(a,36); u32 l=*(u32*)(h+4); return ph(a,l); }
+/* Adresse des erweiterten PCI-Konfigurationsraums (MCFG), fuer Register ab 0x100 */
+u64 acpi_mcfg(u64 rsdp){ if(!rsdp)return 0; u8*r=ph(rsdp,36); u64 sdt=r[15]>=2?*(u64*)(r+24):0; int w=8; if(!sdt){ sdt=*(u32*)(r+16); w=4; } u8*t=table(sdt); int n=(*(u32*)(t+4)-36)/w;
+  for(int i=0;i<n;i++){ u64 e=w==8?*(u64*)(t+36+i*8):*(u32*)(t+36+i*4); u8*h=table(e); if(memcmp(h,"MCFG",4))continue; u32 l=*(u32*)(h+4); if(l>=44+16&&*(u16*)(h+44+8)==0&&h[44+10]==0)return *(u64*)(h+44); } return 0; }
 void acpi_poweroff(u64 rsdp){
   if(rsdp){ u8*r=ph(rsdp,36); u8*fadt=0; u64 sdt=r[15]>=2?*(u64*)(r+24):0; int w=8; if(!sdt){ sdt=*(u32*)(r+16); w=4; }
     u8*t=table(sdt); int n=(*(u32*)(t+4)-36)/w;

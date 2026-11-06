@@ -46,7 +46,7 @@ const char*net_status(void){ static char b[48]; if(!present)return TR("keine Net
 void net_info(char*o,int n,int line){ o[0]=0; char a[16]; switch(line){ case 0: ksnprintf(o,n,"Status:  %s",net_status()); break; case 1: if(present)ksnprintf(o,n,"MAC:     %02x:%02x:%02x:%02x:%02x:%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]); break;
     case 2: if(net_ready()){ ipstr(netif_ip4_addr(&nif),a); ksnprintf(o,n,TR("Adresse: %s","Address: %s"),a); } break; case 3: if(net_ready()){ ipstr(netif_ip4_netmask(&nif),a); ksnprintf(o,n,TR("Maske:   %s","Mask:    %s"),a); } break; case 4: if(net_ready()){ ipstr(netif_ip4_gw(&nif),a); ksnprintf(o,n,"Router:  %s",a); } break; case 5: if(net_ready()){ const ip_addr_t*d=dns_getserver(0); ipstr(d,a); ksnprintf(o,n,"DNS:     %s",a); } break; } }
 /* Warten mit Abbruch per Esc */
-int net_aborted; static int esc(void){ key_t k; while(key_poll(&k)) if(k.key==K_ESC){ net_aborted=1; return 1; } return 0; }
+int net_aborted,net_bg; static int esc(void){ key_t k; if(net_bg){ if(key_down(1)){ net_aborted=1; return 1; } return 0; } while(key_poll(&k)) if(k.key==K_ESC){ net_aborted=1; return 1; } return 0; }
 static volatile int dns_st; static ip_addr_t dns_ip;
 static void dns_cb(const char*n,const ip_addr_t*a,void*x){ if(a){dns_ip=*a;dns_st=1;} else dns_st=-1; }
 int net_resolve(const char*name,u32*ip,char*txt){ if(!net_ready())return -3; dns_st=0; err_t e=dns_gethostbyname(name,&dns_ip,dns_cb,0); if(e==ERR_OK)dns_st=1; else if(e!=ERR_INPROGRESS)return -1; u64 end=ticks+600; while(!dns_st&&ticks<end){ idle(); if(esc())return -2; } if(dns_st!=1)return -1; *ip=ip4_addr_get_u32(&dns_ip); ipstr(&dns_ip,txt); return 0; }

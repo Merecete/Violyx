@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include "viofs.h"
-#define VERSION "0.1.3"
+#define VERSION "0.1.4"
 extern int cfg_lang,cfg_kbd;
 #define TR(de,en) (cfg_lang?(en):(de))
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
@@ -51,14 +51,16 @@ int blk_count(void); blkdev *blk_get(int); void ide_probe(void); void blk_gone(b
 void install_set_image(const void*,u64); int install_available(void); void app_install(void);
 /* pci.c und Treiber */
 typedef struct { u8 bus,dev,fn,cls,sub,pif; u16 ven,did; } pci_t;
-int pci_scan(pci_t*,int max); u32 pci_rd(const pci_t*,u8 off); void pci_wr(const pci_t*,u8 off,u32 v);
+extern u64 pci_ecam; u64 acpi_mcfg(u64); int pci_scan(pci_t*,int max); u32 pci_rd(const pci_t*,u8 off); void pci_wr(const pci_t*,u8 off,u32 v);
 u64 pci_bar(const pci_t*,int n); void pci_enable(const pci_t*);
 void usb_report(void(*)(const char*,void*),void*); extern int usb_hold; void usb_hotplug(void); void ahci_init(const pci_t*); void nvme_init(const pci_t*); void xhci_init(const pci_t*); void xhci_poll(void);
 void e1000_init(const pci_t*); void rge_probe(const pci_t*); void rge_diag(void(*)(const char*,void*),void*); void net_diag(void(*)(const char*,void*),void*); void net_init(void); void net_poll(void); int net_present(void); int net_ready(void); const char *net_status(void); void net_info(char*,int,int);
 extern int net_aborted; int tcp_open(u32 ip,u16 port); int tcp_tx(const void*,size_t); int tcp_tx_all(const void*,int); int tcp_rx(void*,size_t); void tcp_end(void);
 extern char tls_err[80]; int tls_open(const char*host); int tls_write(const void*,int); int tls_read(void*,int); void tls_close(void); int tls_weak(void);
-typedef struct { int status,length,tls,redirects,truncated,cert_bad; char type[60],err[80],final_host[120],final_url[1200]; } http_res;
+typedef struct { int status,length,tls,redirects,truncated,cert_bad; char type[60],err[80],final_host[120],final_url[1200],fname[64]; } http_res;
 int http_get(const char*url,const char*post,char*buf,int max,http_res*r,void(*progress)(const char*));
+enum { HTTP_NOCOOKIE=1,HTTP_NOGZIP=2 }; int http_fetch(const char*url,const char*post,char*buf,int max,http_res*r,void(*progress)(const char*),int flags);
+void cookie_set(const char*host,const char*path,const char*line,int len,int tls); int cookie_get(const char*host,const char*path,int tls,char*out,int max); void cookie_clear(void); void cookie_save(void); int cookie_count(void); extern int net_bg;
 int atoi(const char*); int strncmp(const char*,const char*,size_t); char *strstr(const char*,const char*); char *strchr(const char*,int);
 int net_resolve(const char*,u32*ip,char*txt); int net_ping(u32 ip,u16 seq,int*ms,int*ttl);
 extern int usb_keyboards; const char *usb_status(void);
@@ -68,7 +70,7 @@ int fs_init(void); int fs_ok(void); const char *fs_status(void); u32 fs_now(void
 typedef struct { u64 r15,r14,r13,r12,r11,r10,r9,r8,rdi,rsi,rbp,rbx,rdx,rcx,rax,no,err,rip,cs,rflags,rsp,ss; } regs;
 typedef struct { char name[24],title[24],icon[3][7]; } prog_info;
 void proc_syscall(regs*); void proc_fault(regs*); void proc_tick(regs*); u64 proc_stack_top(void); u64 hhdm_off(void);
-int prog_run(const char*); int prog_run_file(const char*,const char*); int prog_install(const char*); int prog_uninstall(const char*); int prog_scan(prog_info*,int);
+long prog_decode(int mode,const u8*in,u64 n,u8*out,u64 max,long a1,long a2,long a3,int ms,int*flag); void snd_probe(const pci_t*); void snd_tick(void); void snd_tone(int freq,int ms,int vol,int wave,int delay); long snd_stream(const short*,u32); void snd_stream_flush(void); u64 snd_stream_pos(void); void snd_stream_gain(int,int); void snd_stream_pause(int); void prog_bg(void); void snd_select(void); int snd_has_hdmi(void); void snd_report(void(*)(const char*,void*),void*); extern int cfg_out; int snd_ok(void); extern int cfg_vol; int prog_run(const char*); int prog_run_file(const char*,const char*); int prog_install(const char*); int prog_uninstall(const char*); int prog_scan(prog_info*,int);
 
 /* drives.c: VioFS und USB-Laufwerke unter /drives */
 extern u32 fsx_gen; void drives_sync(void); void drives_reset(void);
@@ -101,8 +103,8 @@ void win_close(win_t*); void win_raise(win_t*); void win_next(void); void win_zo
 void win_title(win_t*,const char*);
 void fb_init(void*addr,u32 w,u32 h,u32 pitch,u32 bpp,u32 rs,u32 gs,u32 bs); void ui_panic(const char*a,const char*b);
 void ui_goodbye(const char*,const char*); void ui_init(void); void ui_splash(void); void ui_show(void); key_t key_wait(void);
-#define WALLS 6
-void wall_set(int); const char *wall_name(int);
+#define WALLS 8
+void win_place(struct win*,int,int,int,int); void gput(int,int,u8,const u8*,int,int,int); int prog_wants(struct win*,int); u8 gfx_newid(void); void cputg(struct win*,int,int,u8,const u8*,int,int,int); extern int ui_quitting; u32 ui_rgb(int); void put8(int,int,u8,u8,u8); void cput8(struct win*,int,int,u8,u8,u8); void wall_set(int); const char *wall_name(int); void wall_image(int); void wall_paint(void); int wall_open_file(const char*); void app_paint(void);
 void dlg_box(const char*,int w,int h,int*x,int*y); void dlg_about(void); int dlg_savechoice(void); void ui_run(void); void ui_render(void);
 void dlg_msg(const char*title,const char*text);
 int  dlg_confirm(const char*title,const char*text);
@@ -114,4 +116,4 @@ int fs_load(const char*path,fs_item**out);
 /* apps.c */
 void app_write(const char*file); void app_files(void); void app_shell(void);
 void app_calc(void); void app_info(void); void app_help(void);
-void app_launcher(void); void app_pong(void); void app_invaders(void); void app_chomp(void); void app_mines(void); void app_calendar(void); void app_snake(void); void app_bricks(void); void app_novastrike(void); void app_settings(void); void app_web(void); void web_app_open(const char*);
+void app_xzn(void); void app_launcher(void); void app_pong(void); void app_invaders(void); void app_chomp(void); void app_mines(void); void app_calendar(void); void app_snake(void); void app_bricks(void); void app_novastrike(void); void app_settings(void); void app_web(void); void web_app_open(const char*);

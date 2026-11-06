@@ -22,6 +22,13 @@ License, so you can read, change and share it:
 | Bricks | `examples/bricks.c` |
 | Novastrike | `examples/novastrike.c` |
 
+The window can change size at any time (F5 zooms it). `vx_cols` and `vx_rows` always return the
+current size, so read them once per frame as Bricks and Novastrike do.
+
+`vx_paint` and `vx_rgb` give programs all 256 colours, not only the Violyx palette.
+
+`png2vwp.py` converts a picture on your PC into a Violyx background.
+
 ## What a program can do
 
 - It runs in its own protected memory. A crash closes only that program.
@@ -32,3 +39,9 @@ License, so you can read, change and share it:
 
 The whole API is in `violyx.h`. Installed programs are not sandboxed from your personal files in
 `/home`, so only install programs you trust.
+
+## Sound
+
+`vx_tone(hz, ms, volume, wave, delay)` plays a tone without blocking. The volume runs from 1 to 100, the wave is `VX_SQUARE`, `VX_TRIANGLE`, `VX_SAW` or `VX_NOISE`, and the delay in milliseconds lets you queue short melodies. Without a sound card the call does nothing.
+
+`chip.h` adds a small chiptune player: write up to three parts as text, call `chip_play()` once and `chip_tick()` in your game loop. Novastrike and Bricks show how it works.
