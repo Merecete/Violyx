@@ -14,7 +14,7 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 |---|---|
 | ![Programs](docs/programs.png) | ![Text browser](docs/browser.png) |
 | ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
-| ![Mines](docs/mines.png) | ![Pong](docs/pong.png) |
+| ![XZN](docs/XZN-Violyx.png) | ![Pong](docs/pong.png) |
 
 > **Status: Experimental hobby project (version 0.1.3).** Tested in QEMU, VirtualBox, and on actual hardware (via USB flash drive), including wired internet.
 > Installed programs run in protected memory, but the system itself does not, so please do not enter
