@@ -25,7 +25,7 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 - **Keyboard-only desktop** with overlapping windows, menus and dialogs, in 256 colours
 - **Web browser** with HTTPS, certificate checks, images, tabs, bookmarks, history, search on the page, cookies, gzip, downloads and search forms
 - **Programs:** Write, Files, Commands, Calculator, Calendar, Paint, XZN, Settings
-- **XZN:** the Violyx edition of the Xenon-Zones music player, for MP3, OGG, FLAC and WAV
+- **XZN:** the Violyx edition of the Xenon-Zones (XZN) music player, for MP3, OGG, FLAC and WAV
 - **Games:** Pong, Invaders, Chomp, Mines, Snake, Bricks and Novastrike, with sound and music
 - **Sound:** Intel HD Audio, AC'97 and USB audio, including mainboard chips such as the Realtek ALC4080
 - **Backgrounds:** patterns, the Violyx logo and your own images, drawn in Paint
