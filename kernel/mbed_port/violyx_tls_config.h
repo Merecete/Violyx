@@ -1,5 +1,5 @@
 #pragma once
-/* Mbed-TLS-Konfiguration fuer Violyx: nur TLS-Client, TLS 1.2 und 1.3 */
+/* Mbed TLS configuration for Violyx: TLS client only, TLS 1.2 and 1.3 */
 #define MBEDTLS_HAVE_ASM
 #define MBEDTLS_NO_UDBL_DIVISION
 #define MBEDTLS_HAVE_TIME
@@ -7,14 +7,14 @@
 #define MBEDTLS_PLATFORM_C
 #define MBEDTLS_PLATFORM_MEMORY
 #define MBEDTLS_PLATFORM_NO_STD_FUNCTIONS
-#define MBEDTLS_PLATFORM_CALLOC_MACRO k_calloc
-#define MBEDTLS_PLATFORM_FREE_MACRO kfree
-#define MBEDTLS_PLATFORM_SNPRINTF_MACRO ksnprintf
-#define MBEDTLS_PLATFORM_PRINTF_MACRO k_noprintf
-#define MBEDTLS_PLATFORM_FPRINTF_MACRO k_nofprintf
-#define MBEDTLS_PLATFORM_EXIT_MACRO k_exit
-#define MBEDTLS_PLATFORM_TIME_MACRO k_time
-#define MBEDTLS_PLATFORM_TIME_TYPE_MACRO long long
+#define MBEDTLS_PLATFORM_CALLOC_MACRO       k_calloc
+#define MBEDTLS_PLATFORM_FREE_MACRO         kfree
+#define MBEDTLS_PLATFORM_SNPRINTF_MACRO     ksnprintf
+#define MBEDTLS_PLATFORM_PRINTF_MACRO       k_noprintf
+#define MBEDTLS_PLATFORM_FPRINTF_MACRO      k_nofprintf
+#define MBEDTLS_PLATFORM_EXIT_MACRO         k_exit
+#define MBEDTLS_PLATFORM_TIME_MACRO         k_time
+#define MBEDTLS_PLATFORM_TIME_TYPE_MACRO    long long
 #define MBEDTLS_PLATFORM_MS_TIME_TYPE_MACRO long long
 #define MBEDTLS_PLATFORM_GMTIME_R_ALT
 #define MBEDTLS_PLATFORM_MS_TIME_ALT
@@ -73,5 +73,10 @@
 #define MBEDTLS_SSL_KEEP_PEER_CERTIFICATE
 #define MBEDTLS_SSL_MAX_CONTENT_LEN 16384
 #include <stddef.h>
-void *k_calloc(size_t,size_t); void kfree(void*); int ksnprintf(char*,size_t,const char*,...);
-int k_noprintf(const char*,...); int k_nofprintf(void*,const char*,...); void k_exit(int); long long k_time(long long*);
+void *k_calloc(size_t, size_t);
+void kfree(void *);
+int ksnprintf(char *, size_t, const char *, ...);
+int k_noprintf(const char *, ...);
+int k_nofprintf(void *, const char *, ...);
+void k_exit(int);
+long long k_time(long long *);
