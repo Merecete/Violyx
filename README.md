@@ -16,7 +16,7 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 | ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
 | ![XZN](docs/XZN-Violyx.png) | ![Games](docs/games.png) |
 
-
+| | | |
 |---|---|---|
 | ![Violet](docs/violyx-violet.png) | ![Ruby](docs/violyx-ruby.png) | ![Ocean](docs/violyx-oceant.png) |
 | ![Graphite](docs/violyx-graphite.png) | ![Emerald](docs/violyx-emerald.png) | ![Amber](docs/violyx-amber.png) |
