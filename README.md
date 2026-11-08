@@ -21,8 +21,6 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 | ![Violet](docs/violyx-violet.png) | ![Ruby](docs/violyx-ruby.png) | ![Ocean](docs/violyx-ocean.png) |
 | ![Graphite](docs/violyx-graphite.png) | ![Emerald](docs/violyx-emerald.png) | ![Amber](docs/violyx-amber.png) |
 
-![Violyx scheme](docs/violyx-scheme.png)
-
 > **Status: Experimental hobby project (version 0.1.5).** Tested in QEMU, VirtualBox, and on actual hardware (via USB flash drive), including wired internet and USB sound.
 > Installed programs run in protected memory, but the system itself does not, so please do not enter
 > passwords or use it for anything sensitive. See [Limitations](#limitations).
