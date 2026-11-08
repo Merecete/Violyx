@@ -8,7 +8,7 @@ to the internet, browses the web, plays music and games, all without ever touchi
 
 This project was created with the help of AI. It is written in C and x86-64 assembly (NASM), with Python used for the build and test tools.
 
-![Violyx boot logo](docs/logo.png)
+![Violyx boot logo](docs/logo1.png)
 
 | | |
 |---|---|
