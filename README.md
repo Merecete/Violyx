@@ -350,3 +350,7 @@ black -l 100 tools/*.py sdk/*.py
 
 Violyx is released under the [MIT License](LICENSE). Bundled components keep their own
 licenses, listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+## How it is built
+
+![How Violyx is built](docs/architecture.png)
