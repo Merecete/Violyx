@@ -63,6 +63,10 @@ static int a_wr(blkdev *d, u64 l, const void *b) {
 static int a_fl(blkdev *d) {
     return issue(d->p, 0xEA, 0, 0, 0);
 }
+/* STANDBY IMMEDIATE */
+static int a_off(blkdev *d) {
+    return issue(d->p, 0xE0, 0, 0, 0);
+}
 void ahci_init(const pci_t *c) {
     pci_enable(c);
     u64 base = pci_bar(c, 5);
@@ -109,8 +113,11 @@ void ahci_init(const pci_t *c) {
         if (issue(p, 0xEC, 0, 1, 0) == 0) {
             u16 *w = (u16 *)p->buf;
             u64 s = *(u64 *)(w + 100);
-            blk_register("AHCI", s, p, a_rd, a_wr, a_fl);
-            blk_model_ata(blk_get(blk_count() - 1), w);
+            blkdev *b = blk_register("AHCI", s, p, a_rd, a_wr, a_fl);
+            if (b) {
+                b->off = a_off;
+                blk_model_ata(b, w);
+            }
         }
     }
 }

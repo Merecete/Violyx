@@ -173,6 +173,16 @@ static void check(void) {
                 printf("Inhalt %s\n", M[i].p);
                 abort();
             }
+            for (int t = 0; t < 3; t++) { /* parts from random offsets */
+                uint64_t o = M[i].l ? (uint64_t)rand() % (M[i].l + 2) : rand() % 3,
+                         m = (uint64_t)rand() % 70000;
+                int64_t k = vfs_read_at(M[i].p, b, o, m);
+                uint64_t want = o >= M[i].l ? 0 : (M[i].l - o < m ? M[i].l - o : m);
+                if (k != (int64_t)want || (k && memcmp(b, M[i].d + o, k))) {
+                    printf("Teil %s\n", M[i].p);
+                    abort();
+                }
+            }
         }
     }
 }

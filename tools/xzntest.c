@@ -36,6 +36,16 @@ long vx_sys(long n, long a, long b, long c) {
         fclose(f);
         return r;
     }
+    if (n == 26) { /* part of a file: b points to {buffer, offset, length} */
+        unsigned long *q = (unsigned long *)b;
+        FILE *f = fopen((char *)a, "rb");
+        if (!f)
+            return -1;
+        fseek(f, (long)q[1], 0);
+        long r = fread((void *)q[0], 1, q[2] > (512u << 10) ? (512u << 10) : q[2], f);
+        fclose(f);
+        return r;
+    }
     if (n == 22)
         return a ? b : 100000;
     return 0;

@@ -36,6 +36,9 @@ current size, so read them once per frame as Bricks and Novastrike do.
 - Relative file names live in its private data folder. It can also use `/home`, `/downloads`
   and `/drives`, but never `/system` or other programs. Violyx asks before a drive is opened.
 - Esc and function keys belong to Violyx. Esc always closes the program window.
+- Large files: `vx_read_at(name, buffer, offset, size)` reads up to 512 KB from any offset.
+  Reading a big file in such parts keeps the rest of the system running smoothly, as XZN does
+  when it loads a track.
 
 The whole API is in `violyx.h`. Installed programs are not sandboxed from your personal files in
 `/home`, so only install programs you trust.
@@ -45,3 +48,7 @@ The whole API is in `violyx.h`. Installed programs are not sandboxed from your p
 `vx_tone(hz, ms, volume, wave, delay)` plays a tone without blocking. The volume runs from 1 to 100, the wave is `VX_SQUARE`, `VX_TRIANGLE`, `VX_SAW` or `VX_NOISE`, and the delay in milliseconds lets you queue short melodies. Without a sound card the call does nothing.
 
 `chip.h` adds a small chiptune player: write up to three parts as text, call `chip_play()` once and `chip_tick()` in your game loop. Novastrike and Bricks show how it works.
+
+## Program menu
+
+`vx_menu("Info|Music on/off")` adds a menu after **Help** in the menu bar, named after your window title. Choosing item n sends the key `VK_MENU + n` to your program. An item that starts with `*`, such as `*Info`, is handled by Violyx: `*Info` shows an Info window with the window title, the system version and the copyright. Call it again to change the items.

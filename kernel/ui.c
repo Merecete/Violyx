@@ -27,11 +27,11 @@ static int cx = -1, cy = -1;
 
 void put(int x, int y, u8 c, u8 a) {
     if (x >= 0 && y >= 0 && x < W && y < H)
-        sb[y][x] = (u32)c | (u32)(a & 15) << 8 | (u32)(a >> 4) << 16;
+        sb[y][x] = (u32)c | (u32)(a & 15) << 8 | (u32)(a >> 4) << 16 | (u32)ui_fixed << 24;
 }
 void put8(int x, int y, u8 c, u8 fg, u8 bg) {
     if (x >= 0 && y >= 0 && x < W && y < H)
-        sb[y][x] = (u32)c | (u32)fg << 8 | (u32)bg << 16;
+        sb[y][x] = (u32)c | (u32)fg << 8 | (u32)bg << 16 | (u32)ui_fixed << 24;
 }
 static int u8dec(const char **s) {
     const u8 *p = (const u8 *)*s;
@@ -86,7 +86,8 @@ void fill(int x, int y, int w, int h, u8 c, u8 a) {
 static u8 *fb;
 static u32 fbw, fbh, fbp, fbb, fbr, fbg, fbl;
 static int sc = 1, ox, oy, force = 1, pcx = -1, pcy = -1;
-static u32 col[256];
+static u32 col[256], colv[16]; /* colv: the violet colours 0-15 for programs and pictures */
+int ui_fixed; /* cells drawn while set keep the violet colours whatever the colour scheme */
 static u8 pal[16][3];
 static int plevel = 16;
 static inline void px(u8 *d, u32 c) {
@@ -140,12 +141,13 @@ static void gcell(int x, int y, u32 v) {
             st = gt[i].stride;
         }
     int cw_ = 8 * sc, ch_ = 16 * sc, bs = 2 * sc;
-    u32 c0 = col[2];
+    const u32 *lo = (v & 1) ? colv : col; /* bit 0: fixed violet colours */
     for (int r = 0; r < ch_; r++) {
         u8 *q = fb + (oy + y * ch_ + r) * fbp + (ox + x * cw_) * fbb;
         const u8 *row = p ? p + (u64)iy * 8 * st + (u64)(r / bs) * st + ix * 4 : 0;
         for (int k = 0; k < cw_; k++) {
-            u32 c = row ? col[row[k / bs]] : c0;
+            u8 i = row ? row[k / bs] : 2;
+            u32 c = i < 16 ? lo[i] : col[i];
             px(q, c);
             q += fbb;
         }
@@ -154,7 +156,8 @@ static void gcell(int x, int y, u32 v) {
 void gput(int x, int y, u8 id, const u8 *px, int stride, int ix, int iy) {
     if (x >= 0 && y >= 0 && x < W && y < H) {
         gslot(id, px, stride);
-        sb[y][x] = 0x80000020u | (u32)(ix & 255) << 8 | (u32)(iy & 127) << 16 | (u32)id << 23;
+        sb[y][x] = 0x80000020u | (u32)(ui_fixed & 1) | (u32)(ix & 255) << 8 |
+                   (u32)(iy & 127) << 16 | (u32)id << 23;
     }
 }
 void cputg(win_t *w, int x, int y, u8 id, const u8 *px, int stride, int ix, int iy) {
@@ -167,7 +170,9 @@ static void cell(int x, int y, u32 v, int ul) {
         return;
     }
     const u8 *g = font[v & 0xFF];
-    u32 fg = col[(v >> 8) & 255], bg = col[(v >> 16) & 255];
+    const u32 *lo = (v >> 24) & 1 ? colv : col; /* bit 24: fixed violet colours */
+    u8 fi = (v >> 8) & 255, bi = (v >> 16) & 255;
+    u32 fg = fi < 16 ? lo[fi] : col[fi], bg = bi < 16 ? lo[bi] : col[bi];
     for (int r = 0; r < 16; r++) {
         u8 bits = (ul && r >= 14) ? 0xFF : g[r];
         for (int s = 0; s < sc; s++) {
@@ -301,6 +306,8 @@ win_t *win_open(const char *t, int x, int y, int w, int h, const app_t *a, void 
     p->app = a;
     p->st = st;
     strlcpy_(p->title, t, 40);
+    p->amenu[0] = 0;
+    p->aname[0] = 0;
     if (p->x + w > W)
         p->x = W - w;
     if (p->y + h > H - 1)
@@ -365,6 +372,8 @@ void win_title(win_t *w, const char *t) {
 }
 static void draw_win(win_t *w, int active) {
     u8 a = active ? A_FR : A_FRI;
+    int of = ui_fixed;
+    ui_fixed = w->fixed;
     fill(w->x, w->y, w->w, w->h, ' ', AT(C_PANEL, C_LAV));
     w->cur = 0;
     clip = w;
@@ -380,6 +389,7 @@ static void draw_win(win_t *w, int active) {
     text(w->x + (w->w - l) / 2, w->y, active ? A_TIT : a, t);
     if (active && w->foot[0])
         text(w->x + 2, w->y + w->h - 1, a, w->foot);
+    ui_fixed = of;
     if (!w->zoomed)
         shadow(w->x, w->y, w->w, w->h);
     if (active && w->cur) {
@@ -529,23 +539,104 @@ static const struct {
              {"Programme", "Programs", m_app},
              {"Fenster", "Windows", m_win},
              {"Hilfe", "Help", m_hlp}};
-#define NM 4
+/* The fifth menu belongs to the active program: its name, and the items it set in amenu */
+static int has_amenu(void) {
+    win_t *w = win_top();
+    return w && w->amenu[0];
+}
+#define NM (4 + has_amenu())
+static const char *mname(int i) {
+    if (i < 4)
+        return MT(menus[i]);
+    static char t[20];
+    win_t *w = win_top();
+    strlcpy_(t, w->aname[0] ? w->aname : w->title, 20);
+    return t;
+}
+/* Gives a window its own menu. Items starting with * are handled here, for example "*Info" */
+void win_menu(win_t *w, const char *name, const char *items) {
+    if (!w)
+        return;
+    strlcpy_(w->aname, name, 20);
+    strlcpy_(w->amenu, items, sizeof w->amenu);
+}
+/* Info window for a program: name, version of the system, copyright */
+static void about_prog(const char *name) {
+    int x, y;
+    char t[40], v[24];
+    ksnprintf(t, 40, "Info - %s", name);
+redraw:
+    dlg_box(t, 40, 9, &x, &y);
+    text(x + 20 - (int)strlen(name) / 2, y + 2, AT(C_RAISE, C_NEON), name);
+    ksnprintf(v, 24, "Version %s", VERSION);
+    text(x + 20 - (int)strlen(v) / 2, y + 4, A_DLG, v);
+    text(x + 11, y + 5, A_DLG, "(c) 2026 Merecete");
+    text(x + 14, y + 7, A_SEL, " [ Enter ] ");
+    cx = -1;
+    present();
+    for (;;) {
+        key_t k;
+        if (!ui_wait(&k))
+            goto redraw;
+        if (k.key == K_ENTER || k.key == K_ESC)
+            return;
+    }
+}
 static int mx(int i) {
     int x = 2;
     for (int k = 0; k < i; k++)
-        x += strlen(MT(menus[k])) + 3;
+        x += strlen(mname(k)) + 3;
     return x;
 }
 static int mkey(int i) {
-    char c = MT(menus[i])[0];
-    return c + 32;
+    char c = mname(i)[0];
+    return c >= 'A' && c <= 'Z' ? c + 32 : c;
+}
+/* Builds menu items from the program's "a|b|c" string */
+static const mi *prog_items(void) {
+    static mi it[9];
+    static char buf[sizeof((win_t *)0)->amenu];
+    strlcpy_(buf, win_top()->amenu, sizeof buf);
+    int n = 0;
+    char *p = buf;
+    while (*p && n < 8) {
+        if (*p == '*')
+            p++;
+        it[n].de = it[n].en = p;
+        it[n].fn = 0;
+        it[n].hkde = it[n].hken = 0;
+        n++;
+        while (*p && *p != '|')
+            p++;
+        if (*p)
+            *p++ = 0;
+    }
+    memset(&it[n], 0, sizeof it[n]);
+    return it;
+}
+static void prog_pick(int i) {
+    win_t *w = win_top();
+    const char *q = w ? w->amenu : "";
+    for (int k = 0; k < i && *q; q++)
+        if (*q == '|')
+            k++;
+    if (*q == '*') {
+        about_prog(w->aname[0] ? w->aname : w->title);
+        return;
+    }
+    if (w && w->app->key) {
+        key_t k;
+        memset(&k, 0, sizeof k);
+        k.key = (u16)(K_MENU + i);
+        w->app->key(w, k);
+    }
 }
 static void bar(int open) {
     fill(0, 0, W, 1, ' ', A_BAR);
     for (int i = 0; i < NM; i++) {
         u8 n = i == open ? A_SEL : A_BAR, k = i == open ? A_SELK : A_BARK;
         int x = mx(i);
-        const char *t = MT(menus[i]);
+        const char *t = mname(i);
         put(x - 1, 0, ' ', n);
         text(x, 0, n, t);
         put(x, 0, t[0], k);
@@ -583,6 +674,7 @@ static void status(void) {
 }
 void ui_render(void) {
     cx = -1;
+    prog_dirty = 0;
     if (cfg_wall >= 6)
         wall_paint();
     else
@@ -591,6 +683,19 @@ void ui_render(void) {
     status();
     for (int i = 0; i < nw; i++)
         draw_win(z[i], i == nw - 1);
+}
+/* Waits for a key like key_wait, but returns 0 early when a program in the background has drawn
+ * something new (at most 25 times a second): menus and dialogs then draw themselves again, so XZN
+ * and other programs keep moving underneath. */
+int ui_wait(key_t *k) {
+    u64 t = ticks + 4;
+    for (;;) {
+        if (key_poll(k))
+            return 1;
+        if (prog_dirty && ticks >= t)
+            return 0;
+        idle();
+    }
 }
 key_t key_wait(void) {
     key_t k;
@@ -603,7 +708,9 @@ static void menu(int m) {
     for (;;) {
         ui_render();
         bar(m);
-        const mi *it = m == 1 ? app_items() : menus[m].it;
+        if (m >= NM)
+            m = 0;
+        const mi *it = m == 4 ? prog_items() : m == 1 ? app_items() : menus[m].it;
         int n = 0, wd = 0;
         for (; it[n].de; n++) {
             int l = 0;
@@ -630,7 +737,9 @@ static void menu(int m) {
         }
         cx = -1;
         present();
-        key_t k = key_wait();
+        key_t k;
+        if (!ui_wait(&k))
+            continue;
         switch (k.key) {
             case K_ESC:
             case K_F10:
@@ -651,7 +760,10 @@ static void menu(int m) {
                 break;
             case K_ENTER:
                 outb(0xE9, 'm');
-                menu_run(it, s);
+                if (m == 4)
+                    prog_pick(s);
+                else
+                    menu_run(it, s);
                 return;
             default:
                 if (k.key < 256) {
@@ -670,7 +782,10 @@ static void menu(int m) {
                     }
                     if (hits == 1) {
                         outb(0xE9, 'h');
-                        menu_run(it, first);
+                        if (m == 4)
+                            prog_pick(first);
+                        else
+                            menu_run(it, first);
                         return;
                     }
                     if (hits > 1)
@@ -699,13 +814,16 @@ void dlg_msg(const char *t, const char *s) {
         w = 30;
     if (w > 76)
         w = 76;
+redraw:
     dlg_box(t, w, 7, &x, &y);
     text(x + 3, y + 2, A_DLG, s);
     text(x + w / 2 - 6, y + 4, A_SEL, TR(" [ Enter ] ", " [ Enter ] "));
     cx = -1;
     present();
     for (;;) {
-        key_t k = key_wait();
+        key_t k;
+        if (!ui_wait(&k))
+            goto redraw;
         if (k.key == K_ENTER || k.key == K_ESC)
             return;
     }
@@ -717,6 +835,7 @@ int dlg_confirm(const char *t, const char *s) {
         w = 34;
     if (w > 76)
         w = 76;
+redraw:
     dlg_box(t, w, 7, &x, &y);
     text(x + 3, y + 2, A_DLG, s);
     text(x + w / 2 - 11, y + 4, A_SEL, TR(" J = Ja ", " Y = Yes "));
@@ -724,7 +843,9 @@ int dlg_confirm(const char *t, const char *s) {
     cx = -1;
     present();
     for (;;) {
-        key_t k = key_wait();
+        key_t k;
+        if (!ui_wait(&k))
+            goto redraw;
         if (k.key == 'y' || k.key == 'Y' || k.key == 'j' || k.key == 'J')
             return 1;
         if (k.key == 'n' || k.key == 'N' || k.key == K_ESC)
@@ -747,7 +868,9 @@ int dlg_input(const char *t, const char *p, char *b, int max) {
         cx = x + 3 + n - s;
         cy = y + 3;
         present();
-        key_t k = key_wait();
+        key_t k;
+        if (!ui_wait(&k))
+            continue;
         if (k.key == K_ENTER)
             return n > 0;
         if (k.key == K_ESC)
@@ -884,16 +1007,139 @@ int dlg_pick(const char *t, char *o, int max) {
         kfree(it);
     }
 }
-static const u8 pal0[16][3] = {
-    {0x08, 0x06, 0x0F}, {0x1C, 0x12, 0x30}, {0x16, 0x0F, 0x28}, {0x2A, 0x1C, 0x4A},
-    {0x4A, 0x2C, 0x8A}, {0x6B, 0x5B, 0x95}, {0x9A, 0x7A, 0xE0}, {0xB8, 0xA2, 0xF0},
-    {0x04, 0x03, 0x08}, {0xA9, 0x70, 0xFF}, {0xE0, 0x40, 0xFF}, {0xDC, 0xCC, 0xFF},
-    {0xFF, 0x5C, 0xC8}, {0x08, 0x06, 0x0F}, {0xC9, 0xA0, 0xFF}, {0xF4, 0xEC, 0xFF}};
+static const struct {
+    const char *n, *en;
+    u8 c[16][3];
+} schemes[6] = {
+    {"Violett",
+     "Violet",
+     {{0x08, 0x06, 0x0F},
+      {0x1C, 0x12, 0x30},
+      {0x16, 0x0F, 0x28},
+      {0x2A, 0x1C, 0x4A},
+      {0x4A, 0x2C, 0x8A},
+      {0x6B, 0x5B, 0x95},
+      {0x9A, 0x7A, 0xE0},
+      {0xB8, 0xA2, 0xF0},
+      {0x04, 0x03, 0x08},
+      {0xA9, 0x70, 0xFF},
+      {0xE0, 0x40, 0xFF},
+      {0xDC, 0xCC, 0xFF},
+      {0xFF, 0x5C, 0xC8},
+      {0x08, 0x06, 0x0F},
+      {0xC9, 0xA0, 0xFF},
+      {0xF4, 0xEC, 0xFF}}},
+    {"Ozean",
+     "Ocean",
+     {{0x06, 0x0C, 0x0F},
+      {0x12, 0x23, 0x30},
+      {0x0F, 0x1F, 0x28},
+      {0x1C, 0x38, 0x4A},
+      {0x2C, 0x64, 0x8A},
+      {0x5B, 0x80, 0x95},
+      {0x7A, 0xB7, 0xE0},
+      {0xA2, 0xD3, 0xF0},
+      {0x03, 0x07, 0x08},
+      {0x70, 0xBA, 0xFF},
+      {0x40, 0x4F, 0xFF},
+      {0xCC, 0xEB, 0xFF},
+      {0xFF, 0xAE, 0x5C},
+      {0x06, 0x0C, 0x0F},
+      {0xA0, 0xCE, 0xFF},
+      {0xEC, 0xF5, 0xFF}}},
+    {"Smaragd",
+     "Emerald",
+     {{0x07, 0x0E, 0x08},
+      {0x14, 0x2E, 0x1D},
+      {0x11, 0x26, 0x17},
+      {0x1F, 0x47, 0x2B},
+      {0x33, 0x83, 0x4D},
+      {0x5F, 0x91, 0x6D},
+      {0x82, 0xD8, 0x9D},
+      {0xA8, 0xEA, 0xBB},
+      {0x03, 0x08, 0x04},
+      {0x7B, 0xF4, 0xAB},
+      {0x4E, 0xF1, 0xD6},
+      {0xD0, 0xFB, 0xDD},
+      {0xF3, 0xC5, 0x68},
+      {0x07, 0x0E, 0x08},
+      {0xA7, 0xF8, 0xCA},
+      {0xED, 0xFE, 0xF4}}},
+    {"Bernstein",
+     "Amber",
+     {{0x0F, 0x0A, 0x06},
+      {0x2E, 0x21, 0x13},
+      {0x27, 0x1A, 0x10},
+      {0x48, 0x32, 0x1E},
+      {0x85, 0x5A, 0x31},
+      {0x92, 0x75, 0x5E},
+      {0xDB, 0xAB, 0x7F},
+      {0xEC, 0xC5, 0xA6},
+      {0x08, 0x05, 0x03},
+      {0xF8, 0xC0, 0x77},
+      {0xF5, 0xF5, 0x4A},
+      {0xFC, 0xE5, 0xCF},
+      {0x64, 0xD2, 0xF7},
+      {0x0F, 0x0A, 0x06},
+      {0xFA, 0xD8, 0xA5},
+      {0xFE, 0xF7, 0xED}}},
+    {"Rubin",
+     "Ruby",
+     {{0x0E, 0x07, 0x09},
+      {0x2E, 0x14, 0x1B},
+      {0x26, 0x11, 0x17},
+      {0x47, 0x1F, 0x2A},
+      {0x83, 0x33, 0x48},
+      {0x91, 0x5F, 0x6F},
+      {0xD8, 0x82, 0x99},
+      {0xEA, 0xA8, 0xBC},
+      {0x08, 0x03, 0x05},
+      {0xF4, 0x7B, 0x91},
+      {0xF1, 0x78, 0x4E},
+      {0xFB, 0xD0, 0xDC},
+      {0xF3, 0xC5, 0x68},
+      {0x0E, 0x07, 0x09},
+      {0xF8, 0xA7, 0xB3},
+      {0xFE, 0xED, 0xF0}}},
+    {"Graphit",
+     "Graphite",
+     {{0x0A, 0x0A, 0x0B},
+      {0x21, 0x20, 0x22},
+      {0x1B, 0x1A, 0x1C},
+      {0x32, 0x31, 0x35},
+      {0x5A, 0x57, 0x5F},
+      {0x77, 0x76, 0x7A},
+      {0xAB, 0xA9, 0xB1},
+      {0xC8, 0xC6, 0xCC},
+      {0x05, 0x05, 0x06},
+      {0xB6, 0xB2, 0xBD},
+      {0xA5, 0x98, 0xA7},
+      {0xE5, 0xE3, 0xE8},
+      {0x64, 0xC6, 0xF7},
+      {0x0A, 0x0A, 0x0B},
+      {0xCF, 0xCC, 0xD3},
+      {0xF5, 0xF5, 0xF6}}},
+};
+#define pal0 schemes[cfg_scheme < SCHEMES ? cfg_scheme : 0].c
+int cfg_scheme;
+const char *scheme_name(int i) {
+    return TR(schemes[i].n, schemes[i].en);
+}
+void scheme_set(int i) {
+    cfg_scheme = i;
+    memcpy(pal, pal0, sizeof pal);
+    wall_set(cfg_wall);
+}
 static void pal_set(int level) {
     plevel = level;
     for (int i = 0; i < 16; i++) {
         u32 r = pal[i][0] * level / 16, g = pal[i][1] * level / 16, b = pal[i][2] * level / 16;
         col[i] = (r << fbr) | (g << fbg) | (b << fbl);
+        const u8 *q = schemes[0].c[i];
+        r = q[0] * level / 16;
+        g = q[1] * level / 16;
+        b = q[2] * level / 16;
+        colv[i] = (r << fbr) | (g << fbg) | (b << fbl);
     }
     static const u8 L[6] = {0, 95, 135, 175, 215, 255};
     for (int i = 16; i < 256; i++) {
@@ -931,8 +1177,8 @@ const char *wall_name(int i) {
 void wall_set(int i) {
     cfg_wall = i;
     int k = i < 6 ? i : 0;
-    memcpy(pal[C_WALL], walls[k].bg, 3);
-    memcpy(pal[C_DESK], walls[k].ha, 3);
+    memcpy(pal[C_WALL], k ? walls[k].bg : pal0[C_WALL], 3);
+    memcpy(pal[C_DESK], k ? walls[k].ha : pal0[C_DESK], 3);
     pal_set(16);
     if (i >= 6)
         wall_image(i);
@@ -1002,6 +1248,44 @@ void ui_panic(const char *a, const char *b) {
     cx = -1;
     present();
 }
+/* Screen savers: a picture of w x h pixels in blocks of 2*sc screen pixels, like picture cells.
+ * fixed: colours 0-15 stay violet. prev: the picture shown before (or 0); rows that did not
+ * change are skipped. Every row is built in normal memory and copied to the screen in one go:
+ * the graphics memory is never read, which is very slow on real hardware. */
+void ui_blit(const u8 *img, const u8 *prev, int w, int h, int fixed) {
+    static u8 line[MAXW * 8 * 4 * 4];
+    int bs = 2 * sc;
+    u64 n = (u64)w * bs * fbb;
+    if (n > sizeof line)
+        return;
+    const u32 *lo = fixed ? colv : col;
+    for (int y = 0; y < h; y++) {
+        const u8 *row = img + (u64)y * w;
+        if (prev && !memcmp(row, prev + (u64)y * w, w))
+            continue;
+        u8 *q = line;
+        for (int x = 0; x < w; x++) {
+            u8 i = row[x];
+            u32 c = i < 16 ? lo[i] : col[i];
+            for (int b = 0; b < bs; b++) {
+                if (fbb == 4)
+                    *(u32 *)q = c;
+                else
+                    memcpy(q, &c, fbb);
+                q += fbb;
+            }
+        }
+        for (int r = 0; r < bs; r++)
+            memcpy(fb + (u64)(oy + y * bs + r) * fbp + (u64)ox * fbb, line, n);
+    }
+    force = 1; /* afterwards the desktop is drawn again in full */
+}
+/* The whole screen black, also the border around the text grid */
+void ui_blank(void) {
+    for (u32 y = 0; y < fbh; y++)
+        memset(fb + (u64)y * fbp, 0, (u64)fbw * fbb);
+    force = 1;
+}
 void ui_show(void) {
     cx = -1;
     present();
@@ -1013,6 +1297,7 @@ void ui_splash(void) {
         "  #    ###   ###   #####   #    #   #"};
     static const u8 c[] = {C_GLOW, C_LAV, C_NEON, C_VIOLET, C_SEL};
     int lx = (W - 74) / 2, ly = (H - 5) / 2;
+    ui_fixed = 1; /* the boot logo always stays violet */
     fill(0, 0, W, H, ' ', AT(C_VOID, C_VOID));
     for (int y = 0; y < 5; y++)
         for (int x = 0; l[y][x]; x++)
@@ -1020,6 +1305,7 @@ void ui_splash(void) {
                 put(lx + x * 2, ly + y, 0xDB, AT(C_VOID, c[y]));
                 put(lx + 1 + x * 2, ly + y, 0xDB, AT(C_VOID, c[y]));
             }
+    ui_fixed = 0;
     cx = -1;
     pal_set(0);
     present();
@@ -1070,16 +1356,27 @@ static int win_key(key_t k) {
     return 0;
 }
 void ui_run(void) {
-    u64 last = 0, nf = 0;
+    u64 last = 0, nf = 0, input = ticks;
     for (;;) {
         ui_render();
         present();
         key_t k;
         while (!key_poll(&k)) {
+            /* screen saver after the chosen time without a key */
+            if (cfg_saver && ticks - input >= (u64)saver_min[cfg_swait] * 6000) {
+                saver_run(cfg_saver);
+                input = ticks;
+                continue;
+            }
             win_t *tw = win_top();
             if (tw && tw->app->frame && ticks >= nf) {
                 nf = ticks + 4;
                 tw->app->frame(tw);
+                ui_render();
+                present();
+            }
+            if (prog_dirty && ticks >= nf) { /* a program in the background drew something */
+                nf = ticks + 4;
                 ui_render();
                 present();
             }
@@ -1094,6 +1391,7 @@ void ui_run(void) {
             }
             idle();
         }
+        input = ticks;
         if (k.key == K_REBOOT) {
             a_reboot();
             continue;

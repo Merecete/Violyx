@@ -12,7 +12,7 @@ MBSRC   = $(wildcard $(MB)/library/*.c)
 MBOBJ   = $(patsubst $(MB)/library/%.c,build/mb/%.o,$(MBSRC))
 CACERTS ?= third_party/cacert/cacert.pem
 INC     = -Ikernel/lwip_port -Ikernel/libc -I$(LW)/include -I$(MB)/include -Ikernel/mbed_port -DMBEDTLS_CONFIG_FILE='"violyx_tls_config.h"'
-OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/tls.o build/http.o build/cookies.o build/sound.o build/html.o build/browser.o build/install.o build/viofs.o build/fat.o build/drives.o build/games.o build/calendar.o build/prog.o build/rge.o build/paint.o $(LWOBJ) $(MBOBJ)
+OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/tls.o build/http.o build/cookies.o build/sound.o build/html.o build/browser.o build/install.o build/viofs.o build/fat.o build/exfat.o build/format.o build/drives.o build/games.o build/calendar.o build/clock.o build/saver.o build/viewer.o build/prog.o build/rge.o build/paint.o $(LWOBJ) $(MBOBJ)
 all: build/violyx.img build/violyx.iso build/violyx.vdi
 build/font.h: tools/mkfont.py
 	@mkdir -p build
@@ -31,8 +31,13 @@ build/apps.h: $(APPSRC) tools/mkapps.py
 	$(MAKE) -C sdk apps OUT=../build/apps
 	python3 tools/mkapps.py $@ snake=build/apps/snake.vpk bricks=build/apps/bricks.vpk novastrike=build/apps/novastrike.vpk vxdec=build/apps/vxdec.vpk xzn=build/apps/xzn.vpk
 build/prog.o: build/apps.h
+build/upcase.h: tools/mkupcase.py
+	@mkdir -p build
+	python3 tools/mkupcase.py $@
 build/fat.o: build/cp437.h kernel/fat.h kernel/viofs.h
-build/drives.o: kernel/fat.h kernel/viofs.h
+build/exfat.o: build/cp437.h kernel/exfat.h kernel/viofs.h
+build/format.o: build/cp437.h build/upcase.h kernel/format.h kernel/viofs.h
+build/drives.o: kernel/fat.h kernel/exfat.h kernel/format.h kernel/viofs.h
 build/browser.o: kernel/html.h
 build/http.o: kernel/html.h
 build/mb/%.o: $(MB)/library/%.c kernel/mbed_port/violyx_tls_config.h

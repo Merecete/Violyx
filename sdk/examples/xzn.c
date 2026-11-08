@@ -152,7 +152,8 @@ enum {
     O_HELP,
     O_INFO,
     O_ADD,
-    O_FIND
+    O_FIND,
+    O_ABOUT
 };
 static const char *errmsg = 0;
 static char title[140], artist[70], song[70];
@@ -616,6 +617,8 @@ static void base_name(const char *p, char *o, int n) {
     o[i] = 0;
 }
 static void save_list(void);
+static void draw(long t);
+static void numtxt(char *o, long v);
 static int load_track(int i) {
     track *t = &list[i];
     hp = hb;
@@ -642,8 +645,32 @@ static int load_track(int i) {
             errmsg = vx_english() ? "File too large" : "Datei zu gross";
             return 0;
         }
-        long n = vx_read(t->path, b, s.size);
-        if (n <= 0) {
+        /* Read in parts: the music before, the visualizer and other programs keep running */
+        static char msg[40];
+        long n = 0, last = vx_ms();
+        while (n < (long)s.size) {
+            long k = vx_read_at(t->path, b + n, (unsigned long)n, s.size - n);
+            if (k <= 0)
+                break;
+            n += k;
+            if (vx_ms() - last > 60) {
+                const char *l = vx_english() ? "Loading " : "Lade ";
+                int m = 0;
+                for (; l[m]; m++)
+                    msg[m] = l[m];
+                numtxt(msg + m, (long)((long long)n * 100 / (long long)s.size));
+                m = (int)strlen(msg);
+                msg[m++] = ' ';
+                msg[m++] = '%';
+                msg[m] = 0;
+                errmsg = msg;
+                draw(vx_ms());
+                errmsg = 0;
+                last = vx_ms();
+            }
+        }
+        if (n <= 0 || n < (long)s.size) {
+            free(b);
             errmsg = vx_english() ? "Cannot read file" : "Datei nicht lesbar";
             return 0;
         }
@@ -983,7 +1010,7 @@ static void half(int x, int y2,
 }
 
 /* The banner is a real picture: 4x8 pixels per cell, so the XZN lettering stays smooth */
-static uint8_t bimg[960 * 32];
+static uint8_t bimg[960 * 64];
 static void idx_rgb(int i, int *r, int *g, int *b) {
     static const uint8_t L6[6] = {0, 95, 135, 175, 215, 255};
     if (i >= 232) {
@@ -1052,7 +1079,14 @@ static void banner(int y, int h, long t) {
                 bimg[j * pw + pw - side - 8 + i] =
                     cover[(j * COVER / side) * COVER + i * COVER / side];
     }
-    vx_image(bimg, pw, ph);
+    if (overlay == O_ABOUT) { /* the logo for the Info window sits below the banner */
+        for (int j = 0; j < 32; j++) {
+            memset(bimg + (ph + j) * pw, 0, (size_t)pw);
+            memcpy(bimg + (ph + j) * pw, logo_icon + j * 32, 32);
+        }
+        vx_image(bimg, pw, ph + 32);
+    } else
+        vx_image(bimg, pw, ph);
     for (int j = 0; j < ph / 8; j++)
         for (int i = 0; i < pw / 4; i++)
             vx_pixcell(i, y + j, i, j);
@@ -1413,6 +1447,31 @@ static void draw_help(void) {
         tx(x, y++, t[i], head ? S->lcd : S->text, S->raised, W / 2 - 4);
     }
 }
+/* Info window like in XZN on other systems, a little slimmer */
+static int banner_rows;
+static void draw_about(void) {
+    int bw = W - 4 < 60 ? W - 4 : 60, bh = 17, x = (W - bw) / 2, y = (H - bh) / 2;
+    if (y < 0)
+        y = 0;
+    fillr(x, y, bw, bh, S->panel);
+    fillr(x, y, bw, 1, S->bar1);
+    tx(x + 2, y, "Info - XZN", 231, S->bar1, bw - 4);
+    for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 8; i++)
+            vx_pixcell(x + 2 + i, y + 2 + j, i, banner_rows + j);
+    tx(x + 12, y + 3, "XENON-ZONES (XZN)", S->lcd, S->panel, bw - 14);
+    for (int i = 2; i < bw - 2; i++) {
+        vx_paint(x + i, y + 7, (char)0xC4, S->dim, S->panel);
+        vx_paint(x + i, y + 10, (char)0xC4, S->dim, S->panel);
+    }
+    tx(x + 2, y + 8, "Classic media player vibes and cyberpunk aesthetics.", S->hi, S->panel,
+       bw - 4);
+    tx(x + 2, y + 12, "Violyx Version", S->dim, S->panel, bw - 4);
+    tx(x + 2, y + 13, "(c) 2026 Merecete", S->dim, S->panel, bw - 4);
+    tx(x + 2, y + 14, "Released under the MIT License.", S->dim, S->panel, bw - 4);
+    const char *c = vx_english() ? "Close" : "Schliessen";
+    button(x + bw - (int)strlen(c) - 5, y + 15, c, 1);
+}
 static void draw_info(void) {
     int bw = W > 64 ? 60 : W - 4, x = (W - bw) / 2, y = H / 2 - 5;
     char b[40];
@@ -1520,6 +1579,56 @@ static void draw_transport(int y, int mini) {
         button(r, y, vx_english() ? "RND" : "ZUF", st.shuf);
     }
 }
+static void draw_seek(int y);
+/* Mini player like the original: logo, state and the title running as a ticker on top, time and
+ * volume slider below, then the buttons and the seek bar. No visualizer. */
+static void draw_mini(void) {
+    char t[10], u[10];
+    fillr(0, 0, W, H, S->panel);
+    tx(1, 0, " XZN ", 231, 53, 5);
+    vx_paint(7, 0, ' ', S->lcd, S->raised);
+    vx_paint(8, 0, !playing ? (char)0xFE : paused ? (char)0xBA : (char)0x10, S->lcd, S->raised);
+    vx_paint(9, 0, ' ', S->lcd, S->raised);
+    int mx = 11, mw = W - mx - 1;
+    const char *s = errmsg ? errmsg : title;
+    int n = (int)strlen(s);
+    fillr(mx, 0, mw, 1, S->bg);
+    if (n) { /* runs from right to left all the time, one copy at a time */
+        int per = n + 6 > mw + 2 ? n + 6 : mw + 2, o = (int)(scroll_t / 5) % per;
+        for (int i = 0; i < mw; i++) {
+            int p = (o + i) % per;
+            vx_paint(mx + i, 0, p < n ? s[p] : ' ', S->hi, S->bg);
+        }
+    }
+    long ms = now_ms(), len = srate ? total / srate : 0;
+    mmss(t, ms / 1000);
+    mmss(u, len);
+    fillr(1, 1, 15, 1, S->bg);
+    int x = 2;
+    x += tx(x, 1, t, S->lcd, S->bg, 7);
+    x += tx(x, 1, " / ", S->dim, S->bg, 3);
+    tx(x, 1, fmt ? u : "--:--", S->lcd, S->bg, 7);
+    int vx = W / 2 - 2, vw = W - vx - 6;
+    tx(vx, 1, "VOL", st.mute ? S->top : S->dim, S->panel, 3);
+    int k = (st.mute ? 0 : st.vol) * (vw - 1) / 100;
+    for (int i = 0; i < vw; i++)
+        vx_paint(vx + 4 + i, 1, (char)(i == k ? 0xDB : 0xC4),
+                 i == k  ? S->hi
+                 : i < k ? S->bar2
+                         : S->raised,
+                 S->panel);
+    x = 1;
+    x += button(x, 2, "|<", 0);
+    x += button(x, 2, paused || !playing ? ">" : "||", playing && !paused);
+    x += button(x, 2, "[]", !playing && !fmt);
+    button(x, 2, ">|", 0);
+    static const char *const rp[3] = {"REP:OFF", "REP:ALL", "REP:ONE"};
+    const char *z = vx_english() ? "RND" : "ZUF";
+    int r = W - 1 - ((int)strlen(rp[st.rep]) + 3) - ((int)strlen(z) + 3);
+    r += button(r, 2, rp[st.rep], st.rep != 0);
+    button(r, 2, z, st.shuf);
+    draw_seek(3);
+}
 static void draw_seek(int y) {
     long ms = now_ms(), len = srate ? total * 1000 / srate : 0;
     int p = len ? (int)(ms * W / len) : 0;
@@ -1587,16 +1696,12 @@ static void draw(long t) {
     vx_clear(0);
     fillr(0, 0, W, H, S->panel);
     if (st.mini) {
-        tx(1, 0, "XZN", 231, 53, 3);
-        vx_paint(5, 0, playing && !paused ? (char)0x10 : (char)0xFE, S->lcd, S->bg);
-        draw_marquee(7, 0, W - 8);
-        draw_transport(1, 0);
-        draw_seek(2);
-        spectrum(3, H - 4 > 0 ? H - 4 : 1, W, W / 2);
+        draw_mini();
         vx_show();
         return;
     }
-    int bh = H >= 30 ? 4 : 2; /* small banner, twice as high on big screens like the original */
+    int bh = H >= 30 ? 4 : 2;
+    banner_rows = bh; /* small banner, twice as high on big screens like the original */
     int spec = 3, y = 0;
     int rest = H - (bh + 5 + spec + 2);
     if (rest > 14) {
@@ -1654,6 +1759,8 @@ static void draw(long t) {
         draw_eq();
     if (overlay == O_HELP)
         draw_help();
+    if (overlay == O_ABOUT)
+        draw_about();
     if (overlay == O_INFO)
         draw_info();
     if (overlay == O_ADD)
@@ -1680,13 +1787,32 @@ static void toggle_pause(void) {
 static void set_mini(int on) {
     st.mini = on;
     if (on)
-        vx_sys(23, 4, 50, 8);
+        vx_sys(23, 4, 50, 4);
     else
         vx_sys(23, 5, 0, 0);
     save_state();
 }
+static void set_overlay(int o);
+static void set_mini(int on);
 static void key(int full) {
     int k = full & 0xFFFF, sh = (full >> 16) & 1;
+    if (k >= VK_MENU && k < VK_MENU + 4) { /* the XZN menu in the menu bar */
+        if (k == VK_MENU + 3) {
+            set_overlay(O_NONE);
+            set_mini(!st.mini);
+            return;
+        }
+        if (k == VK_MENU + 2) {
+            st.scheme = (st.scheme + 1) % 5;
+            S = &schemes[st.scheme];
+            save_state();
+            return;
+        }
+        if (st.mini)
+            set_mini(0);
+        set_overlay(k == VK_MENU ? O_ABOUT : O_HELP);
+        return;
+    }
     if (overlay == O_FIND) {
         if (k == VK_ESC || k == VK_ENTER) {
             set_overlay(O_NONE);
@@ -1927,9 +2053,11 @@ int main(void) {
     load_list();
     vx_sys(23, 2, 0, 0); /* keep running while other windows are on top */
     vx_sys(23, 8, 1, 0); /* F1 shows the XZN keys, like in the original */
+    vx_menu(vx_english() ? "Info|Keys (F1)|Colour scheme (C)|Mini player (W)"
+                         : "Info|Tasten (F1)|Farbschema (C)|Mini-Player (W)");
     vx_sys(23, 5, 0, 0);
     if (st.mini)
-        vx_sys(23, 4, 50, 8);
+        vx_sys(23, 4, 50, 4);
     eq_update();
     set_gain();
     if (au_free() < 0)

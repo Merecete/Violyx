@@ -20,9 +20,10 @@ static voice vo[VOICES];
 static short *ring;
 static int kind;
 static u32 wp, silent;
+static int fading, fgain = 256; /* shutdown: the sound fades out within a quarter second */
 int cfg_vol = 7;
 void snd_tone(int freq, int ms, int vol, int wave, int delay) {
-    if (!kind || !cfg_vol || freq < 20 || freq > 16000 || ms <= 0)
+    if (!kind || fading || !cfg_vol || freq < 20 || freq > 16000 || ms <= 0)
         return;
     if (ms > 4000)
         ms = 4000;
@@ -127,6 +128,9 @@ void snd_stream_flush(void) {
     if (f & 0x200)
         __asm__ volatile("sti");
 }
+void snd_fade(void) {
+    fading = 1;
+}
 u64 snd_stream_pos(void) {
     return sdone;
 }
@@ -143,7 +147,7 @@ static void mix(u32 from, u32 n) {
     for (int i = 0; i < VOICES; i++)
         act |= vo[i].left;
     int str = sf && sh != st && !spause;
-    if (!act && !str) {
+    if ((!act && !str) || !fgain) {
         if (silent >= FRAMES)
             return;
         for (u32 i = 0; i < n * 2; i++)
@@ -173,8 +177,10 @@ static void mix(u32 from, u32 n) {
             sh = (sh + 1) % SF;
             sdone++;
         }
-        l = l * g / 10;
-        r = r * g / 10;
+        if (fading && fgain && !(i & 31))
+            fgain--;
+        l = l * g / 10 * fgain / 256;
+        r = r * g / 10 * fgain / 256;
         if (l > 32000)
             l = 32000;
         if (l < -32000)

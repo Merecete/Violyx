@@ -660,9 +660,32 @@ void app_invaders(void) {
     memset(p, 0, sizeof *p);
     p->rng = (u32)ticks * 2654435761u + 1;
     inv_reset(p);
-    if (!win_open("Invaders", 6, 1, 66, 22, &inv_app, p))
+    win_t *w = win_open("Invaders", 6, 1, 66, 22, &inv_app, p);
+    if (w)
+        w->fixed = 1;
+    if (!w)
         kfree(p);
+    win_menu(w, "Invaders", "*Info");
 }
+/* Chomp music: the same chiptune player as the SDK games, fed by the kernel sound mixer */
+#define VX_KERNEL
+enum {
+    VX_SQUARE,
+    VX_TRIANGLE,
+    VX_SAW,
+    VX_NOISE
+};
+static void vx_tone(int hz, int ms, int vol, int wave, int delay) {
+    snd_tone(hz, ms, vol, wave, delay);
+}
+static long vx_ms(void) {
+    return (long)ticks * 10;
+}
+#include "../sdk/chip.h"
+static const chip_song chomp_song = {
+    "c5 e5 g5 e5 c6 g5 e5 g5 d5 f5 a5 f5 d6 a5 f5 a5 e5 g5 b5 g5 e6 b5 g5 b5 f5 a5 c6 a5 g5 . g4 .",
+    "c3 . g2 . c3 . g2 . d3 . a2 . d3 . a2 . e3 . b2 . e3 . b2 . f3 . c3 . g2 . g2 .",
+    "k.h.s.h.k.h.s.h.", 105};
 static void ch_frame(win_t *w) {
     chomp_t *p = w->st;
     if (key_down(0x48) || key_down(0x11))
@@ -675,6 +698,11 @@ static void ch_frame(win_t *w) {
         p->want = 3;
     int s0 = p->score, l0 = p->lives, f0 = p->fright, st0 = p->state;
     ch_step(p);
+    if (p->state == G_RUN && !p->dead) {
+        chip_play(&chomp_song);
+        chip_tick();
+    } else
+        chip_play(0);
     if (p->score > s0) {
         static int m;
         int d = p->score - s0;
@@ -773,7 +801,9 @@ static void ch_key(win_t *w, key_t k) {
             ch_reset(p);
             p->state = G_RUN;
         }
-    } else if (k.key == 'p' || k.key == 'P') {
+    } else if (k.key == 'm' || k.key == 'M' || k.key == K_MENU + 1) {
+        chip_off = !chip_off;
+    } else if (k.key == 'p' || k.key == 'P' || k.key == K_MENU + 2) {
         if (p->state == G_RUN)
             p->state = G_PAUSE;
         else if (p->state == G_PAUSE)
@@ -788,8 +818,15 @@ void app_chomp(void) {
     memset(p, 0, sizeof *p);
     p->rng = (u32)ticks * 2654435761u + 1;
     ch_reset(p);
-    if (!win_open("Chomp", 17, 1, MW * 2 + 6, MH + 3, &ch_app, p))
+    win_t *w = win_open("Chomp", 17, 1, MW * 2 + 6, MH + 3, &ch_app, p);
+    if (w)
+        w->fixed = 1;
+    if (!w) {
         kfree(p);
+        return;
+    }
+    win_menu(w, "Chomp",
+             TR("*Info|Musik an/aus (M)|Pause (P)", "*Info|Music on/off (M)|Pause (P)"));
 }
 static void mi_draw(win_t *w) {
     mines_t *p = w->st;
@@ -900,7 +937,11 @@ void app_mines(void) {
     memset(p, 0, sizeof *p);
     p->rng = (u32)ticks * 2654435761u + 1;
     mi_reset(p, 1);
-    if (!win_open("Mines", 14, 2, 52, 19, &mi_app, p))
+    win_t *w = win_open("Mines", 14, 2, 52, 19, &mi_app, p);
+    if (w)
+        w->fixed = 1;
+    if (!w)
         kfree(p);
+    win_menu(w, "Mines", "*Info");
 }
 #endif

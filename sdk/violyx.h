@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 enum {
+    VK_MENU = 0x1C0, /* VK_MENU + n: item n of the menu set with vx_menu */
     VK_F1 = 0x100,
     VK_F2,
     VK_F3,
@@ -108,6 +109,11 @@ static inline long vx_image(const uint8_t *px, int w, int h) {
     return vx_sys(24, (long)px, w, h);
 }
 void vx_pixcell(int x, int y, int ix, int iy);
+/* Program menu: shown in the menu bar after Help, under the window title. Items are separated
+   by |, for example vx_menu("Info|Music on/off"). Choosing item n sends the key VK_MENU + n. */
+static inline long vx_menu(const char *items) {
+    return vx_sys(25, (long)items, 0, 0);
+}
 static inline int vx_english(void) {
     return (int)vx_sys(10, 0, 0, 0);
 }
@@ -120,6 +126,13 @@ static inline long vx_read(const char *p, void *b, size_t n) {
 }
 static inline long vx_write(const char *p, const void *b, size_t n) {
     return vx_sys(12, (long)p, (long)b, (long)n);
+}
+/* Part of a file: up to n bytes (at most 512 KB per call) from offset off on. Returns the number
+ * of bytes read, 0 at the end of the file. Large files read in parts keep everything else
+ * running smoothly. */
+static inline long vx_read_at(const char *p, void *b, unsigned long off, size_t n) {
+    unsigned long q[3] = {(unsigned long)b, off, n};
+    return vx_sys(26, (long)p, (long)q, 0);
 }
 static inline long vx_stat(const char *p, vx_stat_t *s) {
     return vx_sys(13, (long)p, (long)s, 0);

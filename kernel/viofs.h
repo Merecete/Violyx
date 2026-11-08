@@ -24,6 +24,9 @@ typedef struct {
     int (*wr)(uint64_t sec, const void *);
     int (*fl)(void);
     uint64_t start, sectors;
+    /* optional: n sectors at once; 0 = one by one */
+    int (*rdn)(uint64_t sec, uint32_t n, void *);
+    int (*wrn)(uint64_t sec, uint32_t n, const void *);
 } vfs_dev;
 typedef struct {
     char name[VFS_NAME + 1];
@@ -37,6 +40,7 @@ void vfs_unmount(void);
 int vfs_mounted(void);
 int vfs_stat(const char *path, vfs_ent *e);
 int64_t vfs_read(const char *path, void *buf, uint64_t max);
+int64_t vfs_read_at(const char *path, void *buf, uint64_t off, uint64_t max);
 int vfs_write(const char *path, const void *buf, uint64_t len, uint32_t now);
 int vfs_mkdir(const char *path, uint32_t now);
 int vfs_remove(const char *path);

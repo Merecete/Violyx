@@ -337,6 +337,7 @@ void app_calendar(void) {
             cal_parse(&c->s, io, (long)n);
     }
     cal_w = win_open(TR("Kalender", "Calendar"), 7, 2, 66, 19, &cal_app, c);
+    win_menu(cal_w, TR("Kalender", "Calendar"), "*Info");
     if (!cal_w) {
         kfree(io);
         kfree(c);

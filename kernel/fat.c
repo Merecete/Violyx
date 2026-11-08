@@ -47,6 +47,27 @@ static int rs(fatvol *v, u32 s, void *b) {
 static int ws(fatvol *v, u32 s, const void *b) {
     return s < v->d.sectors && !v->d.wr(v->d.start + s, b) ? 0 : VE_IO;
 }
+/* n whole sectors in one go when the device can (USB: one command instead of n) */
+static int rsn(fatvol *v, u64 s, u32 n, void *b) {
+    if (s + n > v->d.sectors)
+        return VE_IO;
+    if (v->d.rdn)
+        return v->d.rdn(v->d.start + s, n, b) ? VE_IO : 0;
+    for (u32 i = 0; i < n; i++)
+        if (v->d.rd(v->d.start + s + i, (u8 *)b + i * 512))
+            return VE_IO;
+    return 0;
+}
+static int wsn(fatvol *v, u64 s, u32 n, const void *b) {
+    if (s + n > v->d.sectors)
+        return VE_IO;
+    if (v->d.wrn)
+        return v->d.wrn(v->d.start + s, n, b) ? VE_IO : 0;
+    for (u32 i = 0; i < n; i++)
+        if (v->d.wr(v->d.start + s + i, (const u8 *)b + i * 512))
+            return VE_IO;
+    return 0;
+}
 static u32 c2s(fatvol *v, u32 c) {
     return v->datasec + (c - 2) * v->spc;
 }
@@ -70,6 +91,7 @@ static u32 get(fatvol *v, u32 c) {
 static int put(fatvol *v, u32 c, u32 val) {
     if (!cvalid(v, c))
         return VE_IO;
+    v->cc_first = 0;
     if (!v->fsdirty && v->fsinfo) {
         static u8 t[512];
         if (!rs(v, v->fsinfo, t) && R32(t, 0) == 0x41615252u) {
@@ -374,6 +396,9 @@ int fat_stat(fatvol *v, const char *p, vfs_ent *e) {
     return 0;
 }
 int64_t fat_read(fatvol *v, const char *p, void *b, u64 max) {
+    return fat_read_at(v, p, b, 0, max);
+}
+int64_t fat_read_at(fatvol *v, const char *p, void *b, u64 off, u64 max) {
     dent d;
     u32 par;
     int root;
@@ -382,23 +407,52 @@ int64_t fat_read(fatvol *v, const char *p, void *b, u64 max) {
         return r;
     if (root || (d.e[11] & 0x10))
         return VE_ISDIR;
-    u64 sz = R32(d.e, 28);
-    if (sz > max)
-        sz = max;
-    u32 c = ecl(d.e);
-    u64 o = 0;
+    u64 size = R32(d.e, 28);
+    if (off >= size)
+        return 0;
+    u64 sz = size - off < max ? size - off : max, cb = (u64)v->spc * 512;
+    u32 first = ecl(d.e), c = first, idx = 0, skip = (u32)(off / cb);
+    /* Skips to the cluster of off; the last position is kept for the next part */
+    if (v->cc_first && v->cc_first == first && v->cc_idx <= skip) {
+        c = v->cc_clus;
+        idx = v->cc_idx;
+    }
+    for (; idx < skip; idx++) {
+        if (!cvalid(v, c) || idx > v->clusters)
+            return VE_IO;
+        c = get(v, c);
+    }
+    u64 o = 0, in = off % cb;
     static u8 s[512];
     for (u32 g = 0; o < sz; g++) {
         if (!cvalid(v, c) || g > v->clusters)
             return VE_IO;
+        v->cc_first = first;
+        v->cc_idx = skip + g;
+        v->cc_clus = c;
         u32 s0 = c2s(v, c);
-        for (u32 i = 0; i < v->spc && o < sz; i++) {
+        for (u32 i = (u32)(in / 512); i < v->spc && o < sz; i++) {
+            if (!(in % 512) && sz - o >= 1024) { /* whole sectors straight into the buffer */
+                u64 run = v->spc - i, m = (sz - o) / 512;
+                if (run > m)
+                    run = m;
+                if (run > 1) {
+                    if (rsn(v, s0 + i, (u32)run, (u8 *)b + o))
+                        return VE_IO;
+                    o += run * 512;
+                    i += (u32)run - 1;
+                    in = 0;
+                    continue;
+                }
+            }
             if (rs(v, s0 + i, s))
                 return VE_IO;
-            u64 n = sz - o > 512 ? 512 : sz - o;
-            memcpy((u8 *)b + o, s, n);
+            u64 k = in % 512, n = 512 - k < sz - o ? 512 - k : sz - o;
+            memcpy((u8 *)b + o, s + k, n);
             o += n;
+            in = 0;
         }
+        in = 0;
         c = get(v, c);
     }
     return (int64_t)sz;
@@ -758,6 +812,20 @@ int fat_write(fatvol *v, const char *p, const void *b, u64 len, u32 now) {
         prev = c;
         u32 s0 = c2s(v, c);
         for (u32 i = 0; i < v->spc && o < len; i++) {
+            if (len - o >= 1024) { /* whole sectors straight from the buffer */
+                u64 run = v->spc - i, m = (len - o) / 512;
+                if (run > m)
+                    run = m;
+                if (run > 1) {
+                    if (wsn(v, s0 + i, (u32)run, (const u8 *)b + o)) {
+                        cfree(v, first);
+                        return VE_IO;
+                    }
+                    o += run * 512;
+                    i += (u32)run - 1;
+                    continue;
+                }
+            }
             u64 k = len - o > 512 ? 512 : len - o;
             memset(s, 0, 512);
             memcpy(s, (const u8 *)b + o, k);
@@ -894,8 +962,10 @@ int fat_rename(fatvol *v, const char *a, const char *b) {
         return r;
     if (root)
         return VE_INVAL;
-    size_t al = strlen(a);
-    if (!memcmp(a, b, al) && strlen(b) >= al && (b[al] == '/' || !b[al]))
+    size_t al = strlen(a), k = 0; /* not into itself, whatever the case of the letters */
+    while (k < al && b[k] && lc((u8)a[k]) == lc((u8)b[k]))
+        k++;
+    if (k == al && (b[al] == '/' || !b[al]))
         return VE_INVAL;
     u32 dir;
     const char *n;

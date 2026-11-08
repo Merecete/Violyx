@@ -65,6 +65,17 @@ static int n_fl(blkdev *d) {
     c[1] = 1;
     return submit(n, &n->io, c);
 }
+/* Normal shutdown notification (CC.SHN = 01b), then wait until CSTS.SHST reports it complete */
+static int n_off(blkdev *d) {
+    nv *n = d->p;
+    R32(0x14) = (R32(0x14) & ~(3u << 14)) | (1u << 14);
+    for (int i = 0; i < 8000; i++) {
+        if (((R32(0x1C) >> 2) & 3) == 2)
+            return 0;
+        udelay(1000);
+    }
+    return -1;
+}
 void nvme_init(const pci_t *c) {
     pci_enable(c);
     u64 bar = pci_bar(c, 0);
@@ -124,7 +135,9 @@ void nvme_init(const pci_t *c) {
     k[11] = (1 << 16) | 1;
     if (submit(n, &n->a, k))
         return;
-    blk_register("NVMe", sz, n, n_rd, n_wr, n_fl);
+    blkdev *b = blk_register("NVMe", sz, n, n_rd, n_wr, n_fl);
+    if (b)
+        b->off = n_off;
     memset(k, 0, 64);
     k[0] = 6 | (4 << 16);
     p = phys(n->buf);

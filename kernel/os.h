@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include "viofs.h"
-#define VERSION "0.1.4"
+#define VERSION "0.1.5"
 extern int cfg_lang, cfg_kbd;
 #define TR(de, en) (cfg_lang ? (en) : (de))
 typedef uint8_t u8;
@@ -80,6 +80,7 @@ void cfg_load(void);
 
 /* kbd.c */
 enum {
+    K_MENU = 0x1C0, /* K_MENU + n: item n of the program menu */
     K_F1 = 0x100,
     K_F2,
     K_F3,
@@ -132,7 +133,12 @@ typedef struct blkdev {
     int (*rd)(struct blkdev *, u64, void *);
     int (*wr)(struct blkdev *, u64, const void *);
     int (*fl)(struct blkdev *);
+    int (*off)(struct blkdev *); /* before power off: park, stop or shut down the drive */
+    /* optional: several sectors in one command (much faster on USB) */
+    int (*rdn)(struct blkdev *, u64, u32, void *);
+    int (*wrn)(struct blkdev *, u64, u32, const void *);
 } blkdev;
+void blk_shutdown(int off);
 blkdev *blk_register(const char *name, u64 sectors, void *p, int (*rd)(blkdev *, u64, void *),
                      int (*wr)(blkdev *, u64, const void *), int (*fl)(blkdev *));
 int blk_count(void);
@@ -140,6 +146,7 @@ blkdev *blk_get(int);
 void ide_probe(void);
 void blk_gone(blkdev *);
 blkdev *fs_device(void);
+int boot_drive(blkdev *);
 int fs_attach(blkdev *);
 void blk_model_ata(blkdev *, const u16 *);
 void install_set_image(const void *, u64);
@@ -208,6 +215,7 @@ int atoi(const char *);
 int strncmp(const char *, const char *, size_t);
 char *strstr(const char *, const char *);
 char *strchr(const char *, int);
+char *strrchr(const char *, int);
 int net_resolve(const char *, u32 *ip, char *txt);
 int net_ping(u32 ip, u16 seq, int *ms, int *ttl);
 extern int usb_keyboards;
@@ -242,6 +250,7 @@ void snd_stream_flush(void);
 u64 snd_stream_pos(void);
 void snd_stream_gain(int, int);
 void snd_stream_pause(int);
+void snd_fade(void);
 void prog_bg(void);
 void snd_select(void);
 int snd_has_hdmi(void);
@@ -261,6 +270,7 @@ void drives_sync(void);
 void drives_reset(void);
 int fsx_stat(const char *, vfs_ent *);
 int64_t fsx_read(const char *, void *, u64);
+int64_t fsx_read_at(const char *, void *, u64 off, u64 max);
 int fsx_write(const char *, const void *, u64, u32);
 int fsx_mkdir(const char *, u32);
 int fsx_remove(const char *);
@@ -274,6 +284,9 @@ int fsx_first(char *, int);
 const char *fsx_home(void);
 void fsx_info(const char *, char *, int);
 int fsx_eject(const char *);
+int fsx_can_format(const char *);
+int fsx_format(const char *, int exfat, const char *label, void (*prog)(u64, u64));
+const char *fsx_type(const char *);
 
 /* Violyx palette: 16 colours, written to the VGA hardware in ui_init() */
 enum {
@@ -316,6 +329,10 @@ typedef struct win {
     void *st;
     int cx, cy, cur;
     char foot[64];
+    char aname[20];  /* program name for its menu and Info window */
+    int fixed;       /* program window: keeps the violet colours whatever the colour scheme */
+    char amenu[200]; /* menu of the program, items separated by |, chosen items arrive as K_MENU + n
+                      */
 } win_t;
 void put(int x, int y, u8 ch, u8 attr);
 void text(int x, int y, u8 attr, const char *s);
@@ -339,9 +356,21 @@ void ui_goodbye(const char *, const char *);
 void ui_init(void);
 void ui_splash(void);
 void ui_show(void);
+void ui_blit(const u8 *img, const u8 *prev, int w, int h, int fixed);
+void ui_blank(void);
+#define SAVERS 6
+#define SWAITS 7
+extern int cfg_saver, cfg_swait;
+extern const int saver_min[SWAITS];
+const char *saver_name(int);
+void saver_run(int kind);
+const u8 *clock_picture(int pw, int ph);
 key_t key_wait(void);
+int ui_wait(key_t *);
+extern int prog_dirty;
 #define WALLS 8
 void win_place(struct win *, int, int, int, int);
+void win_menu(struct win *, const char *name, const char *items);
 void gput(int, int, u8, const u8 *, int, int, int);
 int prog_wants(struct win *, int);
 u8 gfx_newid(void);
@@ -351,6 +380,11 @@ u32 ui_rgb(int);
 void put8(int, int, u8, u8, u8);
 void cput8(struct win *, int, int, u8, u8, u8);
 void wall_set(int);
+extern int ui_fixed;
+#define SCHEMES 6
+extern int cfg_scheme;
+void scheme_set(int);
+const char *scheme_name(int);
 const char *wall_name(int);
 void wall_image(int);
 void wall_paint(void);
@@ -387,6 +421,9 @@ void app_invaders(void);
 void app_chomp(void);
 void app_mines(void);
 void app_calendar(void);
+void app_clock(void);
+void app_view(const char *file);
+int view_is_image(const char *name);
 void app_snake(void);
 void app_bricks(void);
 void app_novastrike(void);

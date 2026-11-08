@@ -29,6 +29,20 @@ blkdev *blk_register(const char *n, u64 s, void *p, int (*r)(blkdev *, u64, void
     d->id = ++blk_ids;
     return d;
 }
+/* Shutdown and restart: every drive empties its write cache. Before power off they are also
+ * parked (hard disks), stopped (USB) or shut down (NVMe), so they do not count it as a power
+ * failure. A drive that does not answer only costs its timeout. */
+void blk_shutdown(int off) {
+    for (int i = 0; i < nb; i++) {
+        blkdev *d = &bd[i];
+        if (d->gone)
+            continue;
+        if (d->fl)
+            d->fl(d);
+        if (off && d->off)
+            d->off(d);
+    }
+}
 void blk_gone(blkdev *d) {
     d->gone = 1;
 }
@@ -148,6 +162,16 @@ static int ide_fl(blkdev *x) {
     }
     return 0;
 }
+/* STANDBY IMMEDIATE: the disk parks its heads and spins down */
+static int ide_off(blkdev *x) {
+    ide_t *d = x->p;
+    sel(d, 0);
+    if (wait_nbsy(d->base) >= 0) {
+        outb(d->base + 7, 0xE0);
+        wait_nbsy(d->base);
+    }
+    return 0;
+}
 static void ide_one(u16 base, u16 ctrl, u8 sl) {
     if (nide >= 4)
         return;
@@ -192,7 +216,9 @@ static void ide_one(u16 base, u16 ctrl, u8 sl) {
     if (!sec)
         return;
     nide++;
-    blk_register("IDE", sec, d, ide_rd, ide_wr, ide_fl);
+    blkdev *b = blk_register("IDE", sec, d, ide_rd, ide_wr, ide_fl);
+    if (b)
+        b->off = ide_off;
     blk_model_ata(blk_get(nb - 1), w);
 }
 void ide_probe(void) {

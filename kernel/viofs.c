@@ -547,6 +547,10 @@ int vfs_stat(const char *path, vfs_ent *e) {
     return 0;
 }
 int64_t vfs_read(const char *path, void *buf, u64 max) {
+    return vfs_read_at(path, buf, 0, max);
+}
+/* Reads up to max bytes from offset off on */
+int64_t vfs_read_at(const char *path, void *buf, u64 off, u64 max) {
     if (!mounted)
         return VE_IO;
     u32 n;
@@ -558,17 +562,20 @@ int64_t vfs_read(const char *path, void *buf, u64 max) {
         return VE_IO;
     if (i.type == T_DIR)
         return VE_ISDIR;
-    u64 sz = i.size < max ? i.size : max, o = 0;
+    if (off >= i.size)
+        return 0;
+    u64 sz = i.size - off < max ? i.size - off : max, o = 0;
     while (o < sz) {
-        u32 b = bmap(&i, o / BS, 0);
-        u64 c = sz - o > BS ? BS : sz - o;
+        u64 at = off + o, in = at % BS;
+        u32 b = bmap(&i, at / BS, 0);
+        u64 c = BS - in < sz - o ? BS - in : sz - o;
         if (!b)
             memset((u8 *)buf + o, 0, c);
         else {
             u8 *p = bget(b);
             if (!p)
                 return VE_IO;
-            memcpy((u8 *)buf + o, p, c);
+            memcpy((u8 *)buf + o, p + in, c);
         }
         o += c;
     }

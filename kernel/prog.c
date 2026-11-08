@@ -416,6 +416,7 @@ void proc_syscall(regs *r) {
                 }
             p->sc = cw_;
             p->sr = ch_;
+            prog_dirty = 1;
             v = 0;
             break;
         }
@@ -434,6 +435,7 @@ void proc_syscall(regs *r) {
                 memcpy(p->cells + y * CMAX, (u32 *)a + y * cw_, (u64)cw_ * 4);
             p->sc = cw_;
             p->sr = ch_;
+            prog_dirty = 1;
             v = 0;
             break;
         }
@@ -462,6 +464,44 @@ void proc_syscall(regs *r) {
             if (ch_ > RMAX)
                 ch_ = RMAX;
             v = (long)cw_ << 16 | ch_;
+            break;
+        }
+        case 26: { /* part of a file: b points to {buffer, offset, length} */
+            u64 q[3];
+            if (!upath(p, a, pa)) {
+                v = VE_DENIED;
+                break;
+            }
+            if (!uok(p, b, sizeof q, 0)) {
+                v = VE_INVAL;
+                break;
+            }
+            memcpy(q, (void *)b, sizeof q);
+            if (q[2] > (512u << 10))
+                q[2] = 512u << 10; /* small parts keep the rest of the system running */
+            if (!uok(p, q[0], q[2], 1)) {
+                v = VE_INVAL;
+                break;
+            }
+            __asm__("sti");
+            v = fsx_read_at(pa, (void *)q[0], q[1], q[2]);
+            __asm__("cli");
+            break;
+        }
+        case 25: { /* program menu in the menu bar: "item|item|item" */
+            static char t[120];
+            if (!p->w)
+                break;
+            if (ustr(p, a, t, 120)) {
+                for (char *q = t; *q; q++)
+                    if ((u8)*q < 32 || (u8)*q > 126)
+                        *q = '?';
+                strlcpy_(p->w->amenu, t, 120); /* programs keep the old limit */
+                if (!p->w->aname[0])
+                    strlcpy_(p->w->aname, p->w->title, 20);
+                v = 0;
+            } else
+                v = VE_INVAL;
             break;
         }
         case 5: {
@@ -686,6 +726,7 @@ void proc_syscall(regs *r) {
     }
     r->rax = (u64)v;
 }
+int prog_dirty; /* a program has drawn: the screen should be drawn again */
 /* ---------- Window ---------- */
 static void pw_draw(win_t *w) {
     proc_t *p = w->st;
@@ -839,6 +880,7 @@ static int load(const u8 *b, u64 n, const char *base, dec_t *dec) {
                     h->rows + 2, &pw_app, p);
     if (!p->w)
         goto oom;
+    p->w->fixed = 1; /* programs keep their own (violet) colours */
     return 0;
 oom:
     as_free(p->root);

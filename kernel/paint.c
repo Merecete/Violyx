@@ -106,16 +106,19 @@ void wall_image(int i) {
 static int sxy(int x, int half) {
     return ((half * PH) / (H * 2)) * PW + (x * PW) / W;
 }
+/* Pictures keep their violet colours whatever the colour scheme. */
 void wall_paint(void) {
+    int of = ui_fixed;
+    ui_fixed = 1;
     if (wkind == 1) {
         for (int y = 0; y < H; y++)
             for (int x = 0; x < W; x++)
                 put8(x, y, 0xDF, limg[y * 2 * W + x], limg[(y * 2 + 1) * W + x]);
-        return;
-    }
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++)
-            put8(x, y, 0xDF, wimg[sxy(x, y * 2)], wimg[sxy(x, y * 2 + 1)]);
+    } else
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+                put8(x, y, 0xDF, wimg[sxy(x, y * 2)], wimg[sxy(x, y * 2 + 1)]);
+    ui_fixed = of;
 }
 static int wall_use(const u8 *c) {
     memcpy(wimg, c, WSZ);
@@ -283,7 +286,13 @@ static int psave(char *path) {
     strlcpy_(path, p, VFS_PATH);
     return 1;
 }
+static void paint_run(void);
 void app_paint(void) {
+    ui_fixed = 1; /* Paint shows pictures, so it keeps the violet colours */
+    paint_run();
+    ui_fixed = 0;
+}
+static void paint_run(void) {
     static int px = 40, py = 25, col = 196, pen;
     static char path[VFS_PATH];
     int dirty = 0;

@@ -239,7 +239,7 @@ static int time_off;
 int cfg_wall, cfg_lang = 1;
 typedef struct {
     u32 magic;
-    int off, wall, lang, kbd, vol, out;
+    int off, wall, lang, kbd, vol, out, scheme, saver, swait;
 } cfg_t;
 #define CFG_NAME "/system/config"
 static u32 to_secs(const rtc_t *t) {
@@ -309,7 +309,8 @@ void rtc_set(const rtc_t *t) {
     time_off = (int)(to_secs(t) - to_secs(&r));
 }
 int cfg_save(void) {
-    cfg_t c = {0x32464356, time_off, cfg_wall, cfg_lang, cfg_kbd, cfg_vol + 1, cfg_out + 1};
+    cfg_t c = {0x32464356,  time_off,    cfg_wall,       cfg_lang,      cfg_kbd,
+               cfg_vol + 1, cfg_out + 1, cfg_scheme + 1, cfg_saver + 1, cfg_swait + 1};
     return fs_ok() ? vfs_write(CFG_NAME, &c, sizeof c, fs_now()) : -1;
 }
 void cfg_load(void) {
@@ -321,6 +322,12 @@ void cfg_load(void) {
             cfg_vol = c.vol - 1;
         if (c.out >= 1 && c.out <= 3)
             cfg_out = c.out - 1;
+        if (c.scheme >= 1 && c.scheme <= SCHEMES)
+            cfg_scheme = c.scheme - 1;
+        if (c.saver >= 1 && c.saver <= SAVERS)
+            cfg_saver = c.saver - 1;
+        if (c.swait >= 1 && c.swait <= SWAITS)
+            cfg_swait = c.swait - 1;
         time_off = c.off;
         if (c.wall >= 0 && c.wall < WALLS)
             cfg_wall = c.wall;
@@ -328,7 +335,20 @@ void cfg_load(void) {
         cfg_kbd = c.kbd == 1;
     }
 }
-void reboot(void) {
+/* Orderly end before restart or power off: a message, the sound fades out, every drive empties
+ * its cache and, before power off, parks or shuts down. */
+static void sys_stop(int off) {
+    ui_goodbye(off ? TR("Violyx wird beendet ...", "Violyx is shutting down ...")
+                   : TR("Violyx wird neu gestartet ...", "Violyx is restarting ..."),
+               off ? TR("Laufwerke werden sicher abgemeldet.", "Drives are being stopped safely.")
+                   : TR("Daten werden sicher gespeichert.", "Saving data safely."));
+    snd_fade();
+    u64 t = ticks + 35;
+    while (ticks < t)
+        idle();
+    blk_shutdown(off);
+}
+static void hw_reboot(void) {
     __asm__("cli");
     outb(0xE9, 'R');
     for (int i = 0; i < 100000 && (inb(0x64) & 2); i++)
@@ -344,7 +364,12 @@ void reboot(void) {
     __asm__("lidt %0; int3" ::"m"(z));
     halt();
 }
+void reboot(void) {
+    sys_stop(0);
+    hw_reboot();
+}
 void poweroff(void) {
+    sys_stop(1);
     outb(0xE9, 'O');
     u64 r = rsreq.response ? (u64)rsreq.response->address : 0;
     if (r >= hhdm)
@@ -354,6 +379,26 @@ void poweroff(void) {
         TR("Violyx ist beendet.", "Violyx has shut down."),
         TR("Du kannst den Rechner jetzt ausschalten.", "You can now turn off the computer."));
     halt();
+}
+/* Is d the drive Violyx was started from? Compares the disk ID (MBR) or the disk GUID (GPT)
+ * that the boot loader reports. */
+int boot_drive(blkdev *d) {
+    struct limine_file *k = kfreq.response ? kfreq.response->kernel_file : 0;
+    if (!k || !d || d->gone)
+        return 0;
+    static u8 s[512];
+    if (k->mbr_disk_id && !d->rd(d, 0, s) && *(u32 *)(s + 440) == k->mbr_disk_id)
+        return 1;
+    static const u8 nul[16];
+    if (memcmp(&k->gpt_disk_uuid, nul, 16) && !d->rd(d, 1, s) && !memcmp(s, "EFI PART", 8) &&
+        !memcmp(s + 56, &k->gpt_disk_uuid, 16))
+        return 1;
+    /* The ISO written to a stick has neither: running without an installed system, a stick
+     * with the Violyx ISO counts as the boot drive */
+    if ((!fs_device() || fs_live()) && !d->rd(d, 64, s) && !memcmp(s + 1, "CD001", 5) &&
+        !memcmp(s + 40, "VIOLYX", 6))
+        return 1;
+    return 0;
 }
 int fs_live(void) {
     return kfreq.response && kfreq.response->kernel_file &&

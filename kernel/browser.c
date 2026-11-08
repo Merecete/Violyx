@@ -1366,6 +1366,7 @@ void web_app_open(const char *url) {
     T->n = 1;
     b->T = T;
     win_t *w = win_open("Violyx Internet", 1, 1, 78, 23, &web_app, b);
+    win_menu(w, "Internet", "*Info");
     if (!w) {
         web_kill(b);
         kfree(T);

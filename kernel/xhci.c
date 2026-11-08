@@ -166,7 +166,7 @@ typedef struct msc {
     hc_t *h;
     int slot, in, out, port;
     ring ri, ro, ep0;
-    u8 *buf;
+    u8 *buf, *big; /* big: 64 KiB that do not cross a 64 KiB boundary, for one TRB */
     u8 *cbw;
     u32 tag;
     blkdev *dev;
@@ -217,7 +217,11 @@ static void unstall(msc_t *m, int in) {
     command(q, q >> 32, 0, (16 << 10) | (m->slot << 24) | (dci << 16));
     ctrl(m->slot, &m->ep0, 0x02 | (1 << 8), 0, in ? (m->in / 2) | 0x80 : m->out / 2, 0, 0);
 }
+static int scsi_b(msc_t *m, const u8 *cdb, int cl, u32 len, int in, u8 *buf);
 static int scsi(msc_t *m, const u8 *cdb, int cl, u32 len, int in) {
+    return scsi_b(m, cdb, cl, len, in, m->buf);
+}
+static int scsi_b(msc_t *m, const u8 *cdb, int cl, u32 len, int in, u8 *buf) {
     u8 *c = m->cbw;
     memset(c, 0, 31);
     memcpy(c, "USBC", 4);
@@ -231,7 +235,7 @@ static int scsi(msc_t *m, const u8 *cdb, int cl, u32 len, int in) {
         unstall(m, 0);
         return -1;
     }
-    if (len && bulk(m, in, m->buf, len, &cc) && cc == 6)
+    if (len && bulk(m, in, buf, len, &cc) && cc == 6)
         unstall(m, in);
     u8 *s = m->cbw + 32;
     if (bulk(m, 1, s, 13, &cc)) {
@@ -288,12 +292,54 @@ static int m_wr(blkdev *d, u64 l, const void *b) {
     irq_on(f);
     return r;
 }
+/* Up to 128 sectors per READ(10)/WRITE(10): one command instead of 128 */
+static int m_rwn(blkdev *d, u64 l, u32 n, u8 *b, int wr) {
+    msc_t *m = d->p;
+    int r = 0;
+    while (n && !r) {
+        u32 k = n > 128 ? 128 : n;
+        u64 f = irq_off();
+        r = -1;
+        if (m_ok(d, m)) {
+            u8 c[10] = {wr ? 0x2A : 0x28, 0, l >> 24, l >> 16, l >> 8, l, 0, k >> 8, k, 0};
+            if (wr)
+                memcpy(m->big, b, k * 512);
+            r = scsi_b(m, c, 10, k * 512, !wr, m->big);
+            if (!r && !wr)
+                memcpy(b, m->big, k * 512);
+            waitport = 0;
+        }
+        irq_on(f);
+        b += k * 512;
+        l += k;
+        n -= k;
+    }
+    return r;
+}
+static int m_rdn(blkdev *d, u64 l, u32 n, void *b) {
+    return m_rwn(d, l, n, b, 0);
+}
+static int m_wrn(blkdev *d, u64 l, u32 n, const void *b) {
+    return m_rwn(d, l, n, (u8 *)b, 1);
+}
 static int m_fl(blkdev *d) {
     msc_t *m = d->p;
     u64 f = irq_off();
     if (m_ok(d, m)) {
         u8 c[10] = {0x35};
         scsi(m, c, 10, 0, 0);
+        waitport = 0;
+    }
+    irq_on(f);
+    return 0;
+}
+/* START STOP UNIT with Start = 0: the stick finishes its work and stops */
+static int m_off(blkdev *d) {
+    msc_t *m = d->p;
+    u64 f = irq_off();
+    if (m_ok(d, m)) {
+        u8 c[6] = {0x1B, 0, 0, 0, 0, 0};
+        scsi(m, c, 6, 0, 0);
         waitport = 0;
     }
     irq_on(f);
@@ -339,6 +385,9 @@ static void msc_start(msc_t *m) {
         m->dev = blk_register("USB", (u64)last + 1, m, m_rd, m_wr, m_fl);
         if (m->dev) {
             m->dev->usb = 1;
+            m->dev->off = m_off;
+            m->dev->rdn = m_rdn;
+            m->dev->wrn = m_wrn;
             strlcpy_(m->dev->model, mdl, 41);
         }
     }
@@ -903,6 +952,8 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
         ring_new(&m->ri, 64);
         ring_new(&m->ro, 64);
         m->buf = dma_alloc(4096);
+        m->big = dma_alloc(2 << 16);
+        m->big = (u8 *)(((u64)m->big + 0xFFFF) & ~0xFFFFull);
         m->cbw = dma_alloc(64);
         int top = m->in > m->out ? m->in : m->out;
         memset(ictx, 0, 33 * csz);

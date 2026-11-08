@@ -19,6 +19,18 @@ static int w_(uint64_t s, const void *b) {
     memcpy(disk + s * 512, b, 512);
     return 0;
 }
+static int rn_(uint64_t s, uint32_t n, void *b) {
+    for (uint32_t i = 0; i < n; i++)
+        if (r_(s + i, (char *)b + i * 512))
+            return -1;
+    return 0;
+}
+static int wn_(uint64_t s, uint32_t n, const void *b) {
+    for (uint32_t i = 0; i < n; i++)
+        if (w_(s + i, (const char *)b + i * 512))
+            return -1;
+    return 0;
+}
 static int f_(void) {
     return 0;
 }
@@ -88,6 +100,17 @@ static void check(void) {
                 printf("Inhalt %s %ld/%lu\n", M[i].p, (long)n, (unsigned long)M[i].l);
                 abort();
             }
+            for (int t = 0; t < 3; t++) { /* parts from random offsets */
+                uint64_t o = M[i].l ? (uint64_t)rand() % (M[i].l + 2) : rand() % 3,
+                         m = (uint64_t)rand() % 70000;
+                int64_t k = fat_read_at(&V, M[i].p, b, o, m);
+                uint64_t want = o >= M[i].l ? 0 : (M[i].l - o < m ? M[i].l - o : m);
+                if (k != (int64_t)want || (k && memcmp(b, M[i].d + o, k))) {
+                    printf("Teil %s %lu+%lu: %ld\n", M[i].p, (unsigned long)o, (unsigned long)m,
+                           (long)k);
+                    abort();
+                }
+            }
         }
     }
     int c = 0;
@@ -104,6 +127,10 @@ int main(int ac, char **av) {
     srand(atoi(av[3]));
     int iters = atoi(av[4]);
     D = (vfs_dev){r_, w_, f_, 0, (uint64_t)ns};
+    if (atoi(av[3]) % 2) { /* odd seeds: with the multi-sector functions */
+        D.rdn = rn_;
+        D.wrn = wn_;
+    }
     if (av[1][0] == 'm') {
         if (fat_mount(&V, &D))
             abort();
@@ -222,7 +249,20 @@ int main(int ac, char **av) {
                 fat_mkdir(&V, t, 1700000000);
                 *q = '/';
             }
-        if (fat_write(&V, av[5], av[6], strlen(av[6]), 1700000000))
+        const char *data = av[6];
+        long dl = strlen(av[6]);
+        if (av[6][0] == '@') { /* @FILE: contents of a host file */
+            FILE *g = fopen(av[6] + 1, "rb");
+            if (!g)
+                abort();
+            static char *big;
+            if (!big)
+                big = malloc(256 << 20);
+            dl = fread(big, 1, 256 << 20, g);
+            fclose(g);
+            data = big;
+        }
+        if (fat_write(&V, av[5], data, dl, 1700000000))
             abort();
         f = fopen(av[2], "wb");
         fwrite(disk, 1, ns * 512, f);

@@ -6,6 +6,7 @@ int main(void) {
             fr = VX_ATTR(VC_BLACK, VC_HOT), tx = VX_ATTR(VC_BLACK, VC_GLOW);
     long best = 0;
     vx_read("best", &best, sizeof best);
+    vx_menu("*Info");
     for (;;) {
         W = vx_cols() - 2;
         H = vx_rows() - 3;

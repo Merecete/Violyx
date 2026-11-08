@@ -113,11 +113,13 @@ static uint8_t nearest(int r, int g, int b) {
     int v = 8 + 10 * gi, e = sq(r - v) + sq(g - v) + sq(b - v);
     return e < d ? (uint8_t)(232 + gi) : (uint8_t)(16 + 36 * cr + 6 * cg + cb);
 }
-static void image(const uint8_t *in, int n, int maxc, int maxr, uint32_t bg) {
-    int w, h, c;
+/* Mode 0 (browser): 4-byte header, tiny images are skipped. Mode 2 (image viewer): 12-byte header
+ * that also holds the original and the shown size; bit 24 of bg enlarges small images to fit. */
+static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32_t bg) {
+    int w, h, c, hd = mode == 2 ? 12 : 4, up = mode == 2 && (bg >> 24) & 1;
     if (!stbi_info_from_memory(in, n, &w, &h, &c) || w < 1 || h < 1 || (long)w * h > 12000000L)
         return;
-    if (w < MINPX || h < MINPX) {
+    if (mode == 0 && (w < MINPX || h < MINPX)) {
         uint8_t z[4] = {0, 0, 0, 0};
         out(z, 4, 0);
         return;
@@ -128,6 +130,15 @@ static void image(const uint8_t *in, int n, int maxc, int maxr, uint32_t bg) {
     /* A cell has 4x8 pixels. Small images stay 1:1, large ones are scaled down to fit, the rest
      * stays background. */
     long dw = w, dh = h;
+    if (up && dw < maxc * 4 && dh < maxr * 8) {
+        if (dw * maxr * 8 > dh * maxc * 4) {
+            dh = dh * maxc * 4 / dw;
+            dw = maxc * 4;
+        } else {
+            dw = dw * maxr * 8 / dh;
+            dh = maxr * 8;
+        }
+    }
     if (dw > maxc * 4) {
         dh = dh * maxc * 4 / dw;
         dw = maxc * 4;
@@ -144,7 +155,7 @@ static void image(const uint8_t *in, int n, int maxc, int maxr, uint32_t bg) {
     long pw = cols * 4, ph = rows * 8;
     if (cols > 240 || rows > 100)
         return;
-    uint8_t *o = a_malloc(4 + pw * ph);
+    uint8_t *o = a_malloc(hd + pw * ph);
     int *rgb = a_malloc(dw * dh * 4 * sizeof(int));
     short *er = a_malloc((dw + 2) * 6 * sizeof(short));
     if (!o || !rgb || !er)
@@ -153,7 +164,15 @@ static void image(const uint8_t *in, int n, int maxc, int maxr, uint32_t bg) {
     o[1] = (uint8_t)(cols >> 8);
     o[2] = (uint8_t)rows;
     o[3] = (uint8_t)(rows >> 8);
-    memset(o + 4, 2, pw * ph);
+    o[4] = (uint8_t)w;
+    o[5] = (uint8_t)(w >> 8);
+    o[6] = (uint8_t)h;
+    o[7] = (uint8_t)(h >> 8);
+    o[8] = (uint8_t)dw;
+    o[9] = (uint8_t)(dw >> 8);
+    o[10] = (uint8_t)dh;
+    o[11] = (uint8_t)(dh >> 8);
+    memset(o + hd, 2, pw * ph);
     int br = (bg >> 16) & 255, bgg = (bg >> 8) & 255, bb = bg & 255;
     for (long y = 0; y < dh; y++) {
         long y0 = y * h / dh, y1 = (y + 1) * h / dh;
@@ -195,7 +214,7 @@ static void image(const uint8_t *in, int n, int maxc, int maxr, uint32_t bg) {
             for (int k = 0; k < 3; k++)
                 want[k] = t[k] + e0[(x + 1) * 3 + k] / 16;
             uint8_t i = nearest(want[0], want[1], want[2]);
-            o[4 + y * pw + x] = i;
+            o[hd + y * pw + x] = i;
             int got[3];
             if (i >= 232)
                 got[0] = got[1] = got[2] = 8 + 10 * (i - 232);
@@ -221,7 +240,7 @@ static void image(const uint8_t *in, int n, int maxc, int maxr, uint32_t bg) {
         e0 = e1;
         e1 = s;
     }
-    out(o, 4 + pw * ph, 0);
+    out(o, hd + pw * ph, 0);
 }
 static void gunzip(const uint8_t *in, long n, long cap) {
     if (n < 18 || in[0] != 0x1F || in[1] != 0x8B || in[2] != 8)
@@ -271,8 +290,8 @@ int main(void) {
         return 0;
     in_read(in, n);
     memset(in + n, 0, 64);
-    if (mode == 0)
-        image(in, (int)n, (int)a1, (int)a2, (uint32_t)a3);
+    if (mode == 0 || mode == 2)
+        image(mode, in, (int)n, (int)a1, (int)a2, (uint32_t)a3);
     else if (mode == 1)
         gunzip(in, n, a1);
     return 0;

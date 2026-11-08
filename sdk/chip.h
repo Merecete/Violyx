@@ -6,7 +6,9 @@
    Call chip_play() once and chip_tick() in the game loop. */
 #ifndef VX_CHIP_H
 #define VX_CHIP_H
+#ifndef VX_KERNEL
 #include "violyx.h"
+#endif
 typedef struct {
     const char *lead, *bass, *drums;
     int step_ms;
@@ -15,6 +17,20 @@ static const chip_song *chip_cur;
 static const char *chip_p[2], *chip_d;
 static long chip_next;
 static int chip_off;
+
+#ifndef VX_KERNEL
+/* Music on or off, remembered in the program's data folder */
+static void chip_load_setting(void) {
+    char c = 0;
+    if (vx_read("music", &c, 1) == 1)
+        chip_off = c == '0';
+}
+static void chip_toggle(void) {
+    chip_off = !chip_off;
+    char c = chip_off ? '0' : '1';
+    vx_write("music", &c, 1);
+}
+#endif
 
 static int chip_hz(const char *t) { /* note token to Hz, using a table of the top octave */
     static const int oct8[12] = {4186, 4435, 4699, 4978, 5274, 5588,

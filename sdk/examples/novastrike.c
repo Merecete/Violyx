@@ -956,6 +956,8 @@ static void draw(int state) {
 int main(void) {
     int paused = 0;
     vx_read("best", &best, sizeof best);
+    chip_load_setting();
+    vx_menu(vx_english() ? "*Info|Music on/off (M)|Pause (P)" : "*Info|Musik an/aus (M)|Pause (P)");
     new_game();
     for (;;) {
         long next = vx_ms() + 40;
@@ -965,8 +967,10 @@ int main(void) {
             while ((key = vx_key()) != 0) {
                 if (key == 'p' || key == 'P')
                     paused = !paused;
-                if (key == 'm' || key == 'M')
-                    chip_off = !chip_off;
+                if (key == 'm' || key == 'M' || key == VK_MENU + 1)
+                    chip_toggle();
+                if (key == VK_MENU + 2)
+                    paused = !paused;
                 if ((key == 'x' || key == 'X') && shields && !shield_time) {
                     shields--;
                     shield_time = 75;
