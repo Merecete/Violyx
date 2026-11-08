@@ -308,6 +308,8 @@ black -l 100 tools/*.py sdk/*.py
 
 ## Project layout
 
+![Violyx scheme](docs/violyx-scheme.png)
+
 | Path | Contents |
 |---|---|
 | `kernel/main.c`, `entry.asm` | Startup, interrupts, memory, timers, clock, clean shutdown |
