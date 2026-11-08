@@ -13,8 +13,9 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 | | |
 |---|---|
 | ![Programs](docs/programs.png) | ![Browser](docs/browser.png) |
-| ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
 | ![XZN](docs/XZN-Violyx.png) | ![Games](docs/games.png) |
+| ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
+
 
 | | | |
 |---|---|---|
