@@ -133,6 +133,7 @@ typedef struct {
 } track;
 static track list[MAXT];
 static int nt, cur = -1, sel, top_, shown = -1;
+static long resume_ms; /* where the remembered track goes on after starting XZN */
 static int order[MAXT];
 enum {
     F_MP3 = 1,
@@ -743,6 +744,7 @@ static void set_title(int i) {
 }
 /* Starts track i. gapless keeps what is already in the stream */
 static void play(int i, long start_ms, int gapless) {
+    resume_ms = 0;
     if (i < 0 || i >= nt)
         return;
     int prev_shown = shown;
@@ -867,7 +869,7 @@ static void pump(void) {
 
 /* ---------- saving ---------- */
 static void save_state(void) {
-    st.pos = playing || fmt ? (int)(now_ms() / 1000) : 0;
+    st.pos = playing || fmt ? (int)(now_ms() / 1000) : (int)(resume_ms / 1000);
     vx_write("state", &st, sizeof st);
 }
 static char lb[MAXT * (PATHN + NAMEN + 12)];
@@ -1773,12 +1775,14 @@ static void set_overlay(int o) {
 }
 static void toggle_pause(void) {
     if (!playing && !fmt) {
-        if (nt)
-            play(cur >= 0 ? cur : 0, 0, 0);
+        if (nt) {
+            long r = resume_ms;
+            play(cur >= 0 ? cur : 0, r, 0);
+        }
         return;
     }
     if (!playing) {
-        play(cur, 0, 0);
+        play(cur, resume_ms, 0);
         return;
     }
     paused = !paused;
@@ -2062,9 +2066,10 @@ int main(void) {
     set_gain();
     if (au_free() < 0)
         errmsg = vx_english() ? "No sound card found" : "Keine Soundkarte gefunden";
-    else {
-        int c = st.cur >= 0 && st.cur < nt ? st.cur : 0;
-        play(c, (long)st.pos * 1000, 0);
+    else if (nt) { /* the last track waits at its position: Space starts it */
+        cur = st.cur >= 0 && st.cur < nt ? st.cur : 0;
+        resume_ms = (long)st.pos * 1000;
+        set_title(cur);
     }
     long next = 0, savet = vx_ms() + 20000, t0 = vx_ms();
     for (;;) {

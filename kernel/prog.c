@@ -800,8 +800,12 @@ void proc_syscall(regs *r) {
                 case 4:
                     win_place(p->w, -1, -1, (int)b, (int)c);
                     break;
-                case 5:
-                    win_place(p->w, 0, 0, -1, 0);
+                case 5: /* back to full size: first the normal size of the package, so
+                           F5 later returns to a usable window and not to the mini size */
+                    if (p->w->zoomed)
+                        break;
+                    win_resize(p->w, p->cols, p->rows);
+                    win_zoom(p->w);
                     break;
                 case 6:
                     snd_stream_gain((int)b, (int)c);

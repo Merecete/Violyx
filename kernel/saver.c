@@ -172,7 +172,7 @@ static void logo_draw(u32 ms) {
 typedef struct {
     int nv, ne;
     short v[20][3];
-    u8 e[30][2];
+    u8 e[36][2];
 } model;
 static model mods[6];
 static int nmod;
@@ -188,7 +188,7 @@ static void mk(model *m, const short (*v)[3], int nv, int len2) {
             long d = 0;
             for (int k = 0; k < 3; k++)
                 d += (long)(v[i][k] - v[j][k]) * (v[i][k] - v[j][k]);
-            if (d > len2 * 98L / 100 && d < len2 * 102L / 100 && m->ne < 30) {
+            if (d > len2 * 98L / 100 && d < len2 * 102L / 100 && m->ne < 36) {
                 m->e[m->ne][0] = (u8)i;
                 m->e[m->ne][1] = (u8)j;
                 m->ne++;
@@ -227,8 +227,8 @@ static void wire_init(void) {
     m->ne = 0;
     for (int i = 0; i < 8; i++)
         for (int k = 0; k < 3; k++) {
-            m->v[i][k] = (short)(cube[i][k] * 13 / 10);
-            m->v[8 + i][k] = (short)(cube[i][k] * 6 / 10);
+            m->v[i][k] = (short)(cube[i][k] * 11 / 10);
+            m->v[8 + i][k] = (short)(cube[i][k] * 5 / 10);
         }
     for (int i = 0; i < 8; i++)
         for (int j = i + 1; j < 8; j++) {
@@ -242,7 +242,7 @@ static void wire_init(void) {
                 m->e[m->ne++][1] = (u8)(8 + j);
             }
         }
-    for (int i = 0; i < 8 && m->ne < 30; i++) {
+    for (int i = 0; i < 8; i++) { /* 12 + 12 + 8 = 32 edges */
         m->e[m->ne][0] = (u8)i;
         m->e[m->ne++][1] = (u8)(8 + i);
     }
