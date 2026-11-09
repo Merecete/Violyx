@@ -314,33 +314,40 @@ static int esc(void) {
 }
 static volatile int dns_st;
 static ip_addr_t dns_ip;
-static void dns_cb(const char *n, const ip_addr_t *a, void *x) {
+/* Name lookup without waiting, for programs: start, then ask until there is an answer */
+static int dns_gen, dns_my;
+static void dns_cb2(const char *n, const ip_addr_t *a, void *x) {
+    if ((int)(long)x != dns_gen)
+        return; /* an old, cancelled question */
     if (a) {
         dns_ip = *a;
         dns_st = 1;
     } else
         dns_st = -1;
 }
-int net_resolve(const char *name, u32 *ip, char *txt) {
+int dns_start(const char *name) {
     if (!net_ready())
         return -3;
+    dns_gen++;
+    dns_my = 1;
     dns_st = 0;
-    err_t e = dns_gethostbyname(name, &dns_ip, dns_cb, 0);
+    err_t e = dns_gethostbyname(name, &dns_ip, dns_cb2, (void *)(long)dns_gen);
     if (e == ERR_OK)
         dns_st = 1;
     else if (e != ERR_INPROGRESS)
-        return -1;
-    u64 end = ticks + 600;
-    while (!dns_st && ticks < end) {
-        idle();
-        if (esc())
-            return -2;
-    }
-    if (dns_st != 1)
-        return -1;
-    *ip = ip4_addr_get_u32(&dns_ip);
-    ipstr(&dns_ip, txt);
+        dns_st = -1;
     return 0;
+}
+int dns_poll(u32 *ip) {
+    if (!dns_my)
+        return -1;
+    if (dns_st == 1)
+        *ip = ip4_addr_get_u32(&dns_ip);
+    return dns_st;
+}
+void dns_cancel(void) {
+    dns_gen++;
+    dns_my = 0;
 }
 static struct raw_pcb *pp;
 static volatile int got;
@@ -406,7 +413,8 @@ int net_ping(u32 ip, u16 seq, int *ms, int *ttl) {
     return 0;
 }
 
-/* TCP client, blocking, cancelled with Esc; receiving goes through a ring buffer */
+/* TCP client for programs, without waiting: the program asks again until there is something.
+ * Receiving goes through a ring buffer. */
 #define RXS (256 * 1024)
 static struct tcp_pcb *tp;
 static u8 *rx;
@@ -443,9 +451,11 @@ static void t_err(void *a, err_t e) {
 static err_t t_sent(void *a, struct tcp_pcb *p, u16_t l) {
     return ERR_OK;
 }
-int tcp_open(u32 ip, u16 port) {
+/* Connecting without waiting: tcp_state tells when it is done */
+int tcp_start(u32 ip, u16 port) {
+    tcp_end();
     if (!net_ready())
-        return -1;
+        return -3;
     if (!rx)
         rx = kmalloc(RXS);
     if (!rx)
@@ -463,56 +473,39 @@ int tcp_open(u32 ip, u16 port) {
     tcp_sent(tp, t_sent);
     ip_addr_t d;
     ip4_addr_set_u32(&d, ip);
-    if (tcp_connect(tp, &d, port, t_conn) != ERR_OK)
+    if (tcp_connect(tp, &d, port, t_conn) != ERR_OK) {
+        tcp_end();
         return -1;
-    u64 end = ticks + 1500;
-    while (!conn && !terr && ticks < end) {
-        idle();
-        if (esc())
-            return -2;
     }
-    return conn ? 0 : -1;
+    return 0;
 }
-int tcp_tx(const void *b, size_t n) {
-    u64 end = ticks + 3000;
-    while (1) {
-        if (!tp || terr)
-            return -1;
-        int room = tcp_sndbuf(tp);
-        if (room > 0) {
-            int k = (size_t)room < n ? room : (int)n;
-            if (tcp_write(tp, b, k, TCP_WRITE_FLAG_COPY) == ERR_OK) {
-                tcp_output(tp);
-                return k;
-            }
-        }
-        if (ticks > end)
-            return -1;
-        idle();
-        if (esc())
-            return -1;
-    }
+int tcp_state(void) {
+    if (terr && !rcount())
+        return -1;
+    return conn ? 1 : terr ? -1 : 0;
 }
-int tcp_tx_all(const void *b, int n) {
-    int o = 0;
-    while (o < n) {
-        int r = tcp_tx((const u8 *)b + o, n - o);
-        if (r < 0)
-            return -1;
-        o += r;
-    }
-    return o;
+int tcp_send_nb(const void *b, size_t n) {
+    if (!tp || terr)
+        return -1;
+    if (!conn)
+        return 0;
+    int room = tcp_sndbuf(tp);
+    if (room <= 0)
+        return 0;
+    int k = (size_t)room < n ? room : (int)n;
+    if (tcp_write(tp, b, k, TCP_WRITE_FLAG_COPY) != ERR_OK)
+        return 0;
+    tcp_output(tp);
+    return k;
 }
-int tcp_rx(void *b, size_t n) {
-    u64 end = ticks + 3000;
-    while (!rcount()) {
+/* > 0 bytes, 0 closed by the other side, -2 nothing yet, -1 error */
+int tcp_recv_nb(void *b, size_t n) {
+    if (!rcount()) {
         if (fin)
             return terr ? -1 : 0;
-        if (ticks > end)
+        if (!tp)
             return -1;
-        idle();
-        if (esc())
-            return -1;
+        return -2;
     }
     u8 *d = b;
     size_t k = 0;
@@ -522,7 +515,7 @@ int tcp_rx(void *b, size_t n) {
     }
     if (tp)
         tcp_recved(tp, k);
-    return k;
+    return (int)k;
 }
 void tcp_end(void) {
     if (tp) {

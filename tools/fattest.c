@@ -1,6 +1,6 @@
 /* Host test for FAT32: gcc -g -fsanitize=address,undefined -DHOST -Ibuild -Ikernel tools/fattest.c
- * kernel/fat.c kernel/viofs.c -o fattest. Model run: fattest m IMAGE SEED ITER; damaged images:
- * fattest f IMAGE SEED ITER */
+ * kernel/fat.c kernel/viofs.c kernel/vfsname.c -o fattest. Model run: fattest m IMAGE SEED ITER;
+ * damaged images: fattest f IMAGE SEED ITER */
 #include "fat.h"
 #include <stdio.h>
 #include <stdlib.h>

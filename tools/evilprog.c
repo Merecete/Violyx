@@ -81,6 +81,48 @@ int main(void) {
             __asm__("mov $0,%eax; mov %eax,%ss");
             break;
         }
+        case 'q': { /* system services that belong to the built-in system programs only */
+            static char big[4096];
+            unsigned long q2[2] = {(unsigned long)big, sizeof big};
+            long v[9] = {vx_sys(30, 3, 0, 0),
+                         vx_sys(30, 11, (long)"/system", 0),
+                         vx_sys(30, 2, 0, (long)q2),
+                         vx_sys(30, 15, (long)big, 0),
+                         vx_sys(30, 4, (long)"/home/x.vpk", 0),
+                         vx_sys(30, 0, (long)"files", 0),
+                         vx_sys(30, 0, (long)"write", (long)"/system/config"),
+                         vx_sys(30, 99, 0, 0),
+                         vx_sys(30, 14, 1, (long)q2)};
+            vx_clear(t);
+            for (int k = 0; k < 9; k++)
+                vx_number(1, k, v[k], t);
+            vx_show();
+            for (;;)
+                vx_wait(-1);
+        }
+        case 'r': { /* bad pointers and sizes in the new calls */
+            static uint8_t px[960 * 800];
+            unsigned long q[5] = {0xFFFFFFFF80000000ull, 0, 0, 0, 0};
+            unsigned long q3[5] = {0, 0, (unsigned long)b, 100000, 0};
+            long img = 0;
+            for (int k = 1; k < 32 && !img; k++)
+                img = vx_sys(24, (long)px, 960, 800 | (long)k << 16);
+            long v[9] = {vx_sys(28, 0, (long)q, 0),
+                         vx_sys(28, 2, (long)q3, 0),
+                         vx_sys(28, 0, 0xFFFFFFFF80000000ull, 0),
+                         vx_sys(29, 6, (long)b, 8),
+                         vx_sys(29, 5, 0xFFFFFFFF80000000ull, 8),
+                         vx_sys(27, (long)"/system", (long)b, 64),
+                         vx_sys(23, 12, 100000, 100000),
+                         img,
+                         vx_sys(23, 99, 0, 0)};
+            vx_clear(t);
+            for (int k = 0; k < 9; k++)
+                vx_number(1, k, v[k], t);
+            vx_show();
+            for (;;)
+                vx_wait(-1);
+        }
     }
     vx_clear(t);
     vx_text(1, 1, "survived", t);

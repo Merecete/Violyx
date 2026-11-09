@@ -15,7 +15,8 @@ $(OUT)/$(NAME).vpk: $(APP).c violyx.c violyx.h link.ld mkvpk.py
 apps:
 	$(MAKE) APP=examples/hello NAME=hello TITLE=Hello VPKFLAGS='--cols 60 --rows 12 --author Merecete --icon "      | Hi!  |      "'
 	$(MAKE) APP=examples/snake NAME=snake TITLE=Snake VPKFLAGS='--cols 60 --rows 19 --version 1.1 --author Merecete --icon " ~~~~ |  ~~@ |      "'
-	$(MAKE) APP=examples/bricks NAME=bricks TITLE=Bricks VPKFLAGS='--cols 60 --rows 19 --author Merecete --icon "##  ##|  ##  |  O   "'
+	$(MAKE) APP=examples/bricks NAME=bricks TITLE=Bricks VPKFLAGS='--cols 60 --rows 19 --version 1.1 --author Merecete --icon "##  ##|  ##  |  O   "'
 	$(MAKE) APP=examples/novastrike NAME=novastrike TITLE=Novastrike VPKFLAGS='--cols 60 --rows 19 --author Merecete --icon "  V   |  :   | /A\\ "'
+	$(MAKE) APP=examples/fetch NAME=fetch TITLE=Fetch VPKFLAGS='--cols 70 --rows 18 --author Merecete --icon " .--. |( () )| '"'"'--'"'"' "'
 	$(MAKE) APP=helpers/vxdec NAME=vxdec TITLE=vxdec EXTRA='-Ihelpers/inc -I../third_party/stb'
 	$(MAKE) APP=examples/xzn NAME=xzn TITLE=XZN EXTRA='-Ihelpers/inc -I../third_party/stb -I../third_party/minimp3 -I../third_party/dr_flac' VPKFLAGS='--cols 76 --rows 20 --author Merecete --version 1.0 --icon "\\\\/ ~~ |/\\\\ ~~~|  ~~  "'

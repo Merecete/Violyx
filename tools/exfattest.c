@@ -1,6 +1,6 @@
 /* Host test for exFAT: gcc -g -fsanitize=address,undefined -DHOST -Ibuild -Ikernel
- * tools/exfattest.c kernel/exfat.c -o exfattest. Model run: exfattest m IMAGE SEED ITER; damaged
- * images: exfattest f IMAGE SEED ITER */
+ * tools/exfattest.c kernel/exfat.c kernel/vfsname.c -o exfattest. Model run: exfattest m IMAGE SEED
+ * ITER; damaged images: exfattest f IMAGE SEED ITER */
 #include "exfat.h"
 #include <stdio.h>
 #include <stdlib.h>

@@ -109,6 +109,11 @@ static inline long vx_image(const uint8_t *px, int w, int h) {
     return vx_sys(24, (long)px, w, h);
 }
 void vx_pixcell(int x, int y, int ix, int iy);
+/* More pictures at once: slots 1-31 (0 is the one of vx_image), together up to 24 MB */
+static inline long vx_image_slot(int slot, const uint8_t *px, int w, int h) {
+    return vx_sys(24, (long)px, w, (long)h | (long)(slot & 31) << 16);
+}
+void vx_pixcell_slot(int x, int y, int slot, int ix, int iy);
 /* Program menu: shown in the menu bar after Help, under the window title. Items are separated
    by |, for example vx_menu("Info|Music on/off"). Choosing item n sends the key VK_MENU + n. */
 static inline long vx_menu(const char *items) {
@@ -148,6 +153,73 @@ static inline long vx_rename(const char *a, const char *b) {
 }
 static inline long vx_list(const char *p, char *b, size_t n) {
     return vx_sys(17, (long)p, (long)b, (long)n);
+}
+/* Folder with sizes: each entry is 8 bytes size, 1 byte (1 = folder), the name and a 0. Returns
+ * the number of bytes used. */
+static inline long vx_list_sizes(const char *p, char *b, size_t n) {
+    return vx_sys(27, (long)p, (long)b, (long)n);
+}
+
+/* Error codes (negative results) */
+enum {
+    VX_NOTFOUND = -1,
+    VX_EXISTS = -2,
+    VX_FULL = -3,
+    VX_IOERR = -4,
+    VX_INVALID = -7,
+    VX_DENIED = -9,
+    VX_FORMAT = -10,
+    VX_BUSY = -12, /* the network is in use by another program */
+    VX_AGAIN = -13 /* nothing there yet, try again later */
+};
+
+/* System dialogs. They look like all other Violyx dialogs and wait for the user. */
+static inline long vx_dlg_(int kind, const char *t, const char *m, char *b, size_t n, int f) {
+    unsigned long q[5] = {(unsigned long)t, (unsigned long)m, (unsigned long)b, n,
+                          (unsigned long)f};
+    return vx_sys(28, kind, (long)q, 0);
+}
+static inline void vx_message(const char *title, const char *text) {
+    vx_dlg_(0, title, text, 0, 0, 0);
+}
+/* 1 = yes, 0 = no */
+static inline int vx_ask(const char *title, const char *text) {
+    return vx_dlg_(1, title, text, 0, 0, 0) > 0;
+}
+/* Input line, buf holds the suggestion. 1 = OK, 0 = cancelled */
+static inline int vx_input(const char *title, const char *prompt, char *buf, size_t size) {
+    return vx_dlg_(2, title, prompt, buf, size, 0) > 0;
+}
+/* The user chooses a file anywhere (also on sticks). The program may then read and write
+ * exactly this file. 1 = chosen, path holds it */
+static inline int vx_choose_file(const char *title, char *path, size_t size) {
+    return vx_dlg_(3, title, 0, path, size, 0) > 0;
+}
+/* Opens a file in a system program: "write" (text), "view" (pictures), "web" (address) */
+static inline long vx_open(const char *program, const char *file) {
+    return vx_sys(30, 0, (long)program, (long)file);
+}
+
+/* Network: the kernel offers name lookups and TCP connections, everything above (HTTP, TLS) is up
+ * to the program. The first use asks the user once whether the program may go online. One
+ * connection at a time; while another program uses the network the calls return VX_BUSY.
+ * Addresses are IPv4 in network order, as they come from vx_resolve. */
+static inline int vx_net_ready(void) {
+    char b[64];
+    return vx_sys(29, 0, (long)b, sizeof b) == 1;
+}
+int vx_resolve(const char *name, uint32_t *ip); /* waits up to 6 s; 0 = found */
+int vx_connect(uint32_t ip, int port);          /* waits up to 15 s; 0 = connected */
+/* Sends: bytes taken, 0 = no room just now (wait a little), < 0 = connection lost */
+static inline long vx_send(const void *b, size_t n) {
+    return vx_sys(29, 5, (long)b, (long)n);
+}
+/* Receives: bytes, 0 = the other side has closed, VX_AGAIN = nothing yet */
+static inline long vx_recv(void *b, size_t n) {
+    return vx_sys(29, 6, (long)b, (long)n);
+}
+static inline void vx_disconnect(void) {
+    vx_sys(29, 7, 0, 0);
 }
 #ifndef HOSTTEST
 void *memcpy(void *, const void *, size_t);

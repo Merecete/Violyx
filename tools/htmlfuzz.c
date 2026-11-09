@@ -1,4 +1,5 @@
-/* Host test: gcc -g -fsanitize=address,undefined -Ibuild -Ikernel tools/htmlfuzz.c -o htmlfuzz */
+/* Host test: gcc -g -fsanitize=address,undefined -Ibuild -Isystem/web tools/htmlfuzz.c -o htmlfuzz
+ */
 #define HOST
 #include "html.c"
 #include <stdio.h>

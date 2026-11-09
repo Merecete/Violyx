@@ -2,6 +2,10 @@
  * window and without file access. A malicious image can at most crash this helper. The kernel
  * checks everything it gets back. Mode 0: image (PNG, JPEG, GIF, BMP) -> 256-colour pixels, 4x8 per
  * text cell. Mode 1: gzip -> plain data. */
+#ifdef VXDEC_LIB
+/* Built into a program (image viewer, browser): it supplies out(), a_malloc, a_free, a_realloc */
+#include <string.h>
+#else
 #include "violyx.h"
 #include <string.h>
 static inline long in_size(void) {
@@ -64,6 +68,7 @@ static void *a_realloc(void *p, size_t n) {
         memcpy(q, p, o);
     return q;
 }
+#endif
 #define STBI_MALLOC  a_malloc
 #define STBI_FREE    a_free
 #define STBI_REALLOC a_realloc
@@ -153,13 +158,20 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
         dh = 1;
     long cols = (dw + 3) / 4, rows = (dh + 7) / 8;
     long pw = cols * 4, ph = rows * 8;
-    if (cols > 240 || rows > 100)
+    if (cols > 240 || rows > 100) {
+        stbi_image_free(p);
         return;
+    }
     uint8_t *o = a_malloc(hd + pw * ph);
     int *rgb = a_malloc(dw * dh * 4 * sizeof(int));
     short *er = a_malloc((dw + 2) * 6 * sizeof(short));
-    if (!o || !rgb || !er)
+    if (!o || !rgb || !er) {
+        a_free(er);
+        a_free(rgb);
+        a_free(o);
+        stbi_image_free(p);
         return;
+    }
     o[0] = (uint8_t)cols;
     o[1] = (uint8_t)(cols >> 8);
     o[2] = (uint8_t)rows;
@@ -241,6 +253,10 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
         e1 = s;
     }
     out(o, hd + pw * ph, 0);
+    a_free(er); /* matters when the decoder is built into a program */
+    a_free(rgb);
+    a_free(o);
+    stbi_image_free(p);
 }
 static void gunzip(const uint8_t *in, long n, long cap) {
     if (n < 18 || in[0] != 0x1F || in[1] != 0x8B || in[2] != 8)
@@ -278,7 +294,9 @@ static void gunzip(const uint8_t *in, long n, long cap) {
     long l = z.zout_start ? z.zout - z.zout_start : 0;
     if (l > 0 || ok)
         out(o, l, !ok);
+    a_free(o);
 }
+#ifndef VXDEC_LIB
 int main(void) {
     long n = in_size();
     int mode = (int)in_arg(1);
@@ -296,3 +314,4 @@ int main(void) {
         gunzip(in, n, a1);
     return 0;
 }
+#endif

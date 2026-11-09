@@ -5,7 +5,7 @@ Aufruf: fakeweb.py PORT LOGDATEI PKI-ORDNER"""
 import socket, ssl, struct, sys, threading, importlib.util, time, runpy
 
 port, logf, pki = sys.argv[1:4]
-src = open(__file__.replace("fakeweb.py", "fakenet.py")).read().split("srv=socket.socket()")[0]
+src = open(__file__.replace("fakeweb.py", "fakenet.py")).read().split("srv = socket.socket()")[0]
 sys.argv = ["x", port, logf]
 exec(src)
 HOSTS = {

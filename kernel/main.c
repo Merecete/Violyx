@@ -404,6 +404,17 @@ int fs_live(void) {
     return kfreq.response && kfreq.response->kernel_file &&
            kfreq.response->kernel_file->media_type == LIMINE_MEDIA_TYPE_OPTICAL;
 }
+/* The screens the boot loader has found: how many and how big. Violyx draws on the first. */
+void fb_list(char *o, int n) {
+    int c = fbreq.response ? (int)fbreq.response->framebuffer_count : 0;
+    int k = ksnprintf(o, n, "%d", c);
+    for (int i = 0; i < c && i < 3 && k < n - 14; i++) {
+        struct limine_framebuffer *f = fbreq.response->framebuffers[i];
+        k += ksnprintf(o + k, n - k, "%s%dx%d", i ? ", " : " (", (int)f->width, (int)f->height);
+    }
+    if (c && k < n - 2)
+        ksnprintf(o + k, n - k, c > 3 ? ", ...)" : ")");
+}
 void kmain(void) {
     if (!LIMINE_BASE_REVISION_SUPPORTED || !fbreq.response || !fbreq.response->framebuffer_count ||
         !mmreq.response || !hhreq.response)

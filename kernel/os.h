@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include "viofs.h"
-#define VERSION "0.1.5"
+#include "version.h"
 extern int cfg_lang, cfg_kbd;
 #define TR(de, en) (cfg_lang ? (en) : (de))
 typedef uint8_t u8;
@@ -182,41 +182,20 @@ int net_ready(void);
 const char *net_status(void);
 void net_info(char *, int, int);
 extern int net_aborted;
-int tcp_open(u32 ip, u16 port);
-int tcp_tx(const void *, size_t);
-int tcp_tx_all(const void *, int);
-int tcp_rx(void *, size_t);
+int tcp_start(u32 ip, u16 port);
+int tcp_state(void);
+int tcp_send_nb(const void *, size_t);
+int tcp_recv_nb(void *, size_t);
+int dns_start(const char *);
+int dns_poll(u32 *);
+void dns_cancel(void);
 void tcp_end(void);
-extern char tls_err[80];
-int tls_open(const char *host);
-int tls_write(const void *, int);
-int tls_read(void *, int);
-void tls_close(void);
-int tls_weak(void);
-typedef struct {
-    int status, length, tls, redirects, truncated, cert_bad;
-    char type[60], err[80], final_host[120], final_url[1200], fname[64];
-} http_res;
-int http_get(const char *url, const char *post, char *buf, int max, http_res *r,
-             void (*progress)(const char *));
-enum {
-    HTTP_NOCOOKIE = 1,
-    HTTP_NOGZIP = 2
-};
-int http_fetch(const char *url, const char *post, char *buf, int max, http_res *r,
-               void (*progress)(const char *), int flags);
-void cookie_set(const char *host, const char *path, const char *line, int len, int tls);
-int cookie_get(const char *host, const char *path, int tls, char *out, int max);
-void cookie_clear(void);
-void cookie_save(void);
-int cookie_count(void);
 extern int net_bg;
 int atoi(const char *);
 int strncmp(const char *, const char *, size_t);
 char *strstr(const char *, const char *);
 char *strchr(const char *, int);
 char *strrchr(const char *, int);
-int net_resolve(const char *, u32 *ip, char *txt);
 int net_ping(u32 ip, u16 seq, int *ms, int *ttl);
 extern int usb_keyboards;
 const char *usb_status(void);
@@ -240,8 +219,6 @@ void proc_fault(regs *);
 void proc_tick(regs *);
 u64 proc_stack_top(void);
 u64 hhdm_off(void);
-long prog_decode(int mode, const u8 *in, u64 n, u8 *out, u64 max, long a1, long a2, long a3, int ms,
-                 int *flag);
 void snd_probe(const pci_t *);
 void snd_tick(void);
 void snd_tone(int freq, int ms, int vol, int wave, int delay);
@@ -259,6 +236,9 @@ extern int cfg_out;
 int snd_ok(void);
 extern int cfg_vol;
 int prog_run(const char *);
+int prog_open(const char *name, const char *arg);
+void drive_format(const char *name);
+int wall_use(const u8 *);
 int prog_run_file(const char *, const char *);
 int prog_install(const char *);
 int prog_uninstall(const char *);
@@ -331,6 +311,7 @@ typedef struct win {
     char foot[64];
     char aname[20];  /* program name for its menu and Info window */
     int fixed;       /* program window: keeps the violet colours whatever the colour scheme */
+    int full;        /* covers the whole screen without a frame while it is in front */
     char amenu[200]; /* menu of the program, items separated by |, chosen items arrive as K_MENU + n
                       */
 } win_t;
@@ -370,6 +351,7 @@ int ui_wait(key_t *);
 extern int prog_dirty;
 #define WALLS 8
 void win_place(struct win *, int, int, int, int);
+void win_resize(struct win *, int cols, int rows);
 void win_menu(struct win *, const char *name, const char *items);
 void gput(int, int, u8, const u8 *, int, int, int);
 int prog_wants(struct win *, int);
@@ -391,6 +373,9 @@ void wall_paint(void);
 int wall_open_file(const char *);
 void app_paint(void);
 void dlg_box(const char *, int w, int h, int *x, int *y);
+void dlg_frame(const char *, int w, int h, int *x, int *y);
+void ui_under(void (*)(void));
+void fb_list(char *, int); /* f: draw it below dialogs, 0: no longer */
 void dlg_about(void);
 int dlg_savechoice(void);
 void ui_run(void);
@@ -423,7 +408,6 @@ void app_mines(void);
 void app_calendar(void);
 void app_clock(void);
 void app_view(const char *file);
-int view_is_image(const char *name);
 void app_snake(void);
 void app_bricks(void);
 void app_novastrike(void);

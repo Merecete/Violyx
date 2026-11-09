@@ -390,7 +390,7 @@ static void draw_win(win_t *w, int active) {
     if (active && w->foot[0])
         text(w->x + 2, w->y + w->h - 1, a, w->foot);
     ui_fixed = of;
-    if (!w->zoomed)
+    if (!w->zoomed && !w->full)
         shadow(w->x, w->y, w->w, w->h);
     if (active && w->cur) {
         cx = w->x + 1 + w->cx;
@@ -427,6 +427,16 @@ void win_place(win_t *w, int x, int y, int cols, int rows) {
     w->x = x < 0 ? (W - w->w) / 2 : x;
     w->y = y < 0 ? H - 2 - w->h : y;
 }
+void win_resize(win_t *w, int cols, int rows) {
+    if (cols + 2 > W)
+        cols = W - 2;
+    if (rows + 2 > H - 2)
+        rows = H - 4;
+    w->w = cols + 2;
+    w->h = rows + 2;
+    w->x = (W - w->w) / 2;
+    w->y = 1 + (H - 2 - w->h) / 2;
+}
 static void a_zoom(void) {
     if (win_top())
         win_zoom(win_top());
@@ -446,13 +456,16 @@ u32 ui_rgb(int i) {
     return (u32)pal[i][0] << 16 | (u32)pal[i][1] << 8 | pal[i][2];
 }
 static void a_reboot(void) {
-    if (ui_can_quit() && dlg_confirm(TR("Neustart", "Restart"),
-                                     TR("Violyx jetzt neu starten?", "Restart Violyx now?")))
+    /* first the question, then the programs: they may close for good when asked */
+    if (dlg_confirm(TR("Neustart", "Restart"),
+                    TR("Violyx jetzt neu starten?", "Restart Violyx now?")) &&
+        ui_can_quit())
         reboot();
 }
 static void a_off(void) {
-    if (ui_can_quit() && dlg_confirm(TR("Ausschalten", "Shut down"),
-                                     TR("Violyx jetzt beenden?", "Shut down Violyx now?")))
+    if (dlg_confirm(TR("Ausschalten", "Shut down"),
+                    TR("Violyx jetzt beenden?", "Shut down Violyx now?")) &&
+        ui_can_quit())
         poweroff();
 }
 static const mi m_sys[] = {{"Über Violyx", "About Violyx", dlg_about, 0, 0},
@@ -672,9 +685,34 @@ static void status(void) {
     ksnprintf(v, 24, "VIOLYX %s", VERSION);
     text(W - (int)strlen(v) - 1, H - 1, AT(C_RAISE, C_NEON), v);
 }
+/* Screens that are not windows (the programs overview) register how they draw themselves, so a
+ * dialog opened from them keeps them visible underneath */
+static void (*under[4])(void);
+static int nunder;
+void ui_under(void (*f)(void)) {
+    if (f && nunder < 4)
+        under[nunder++] = f;
+    else if (!f && nunder)
+        nunder--;
+}
 void ui_render(void) {
     cx = -1;
     prog_dirty = 0;
+    /* full screen windows: the whole screen while in front, otherwise like a zoomed window */
+    for (int i = 0; i < nw; i++)
+        if (z[i]->full) {
+            if (!z[i]->zoomed)
+                win_zoom(z[i]);
+            int top = i == nw - 1;
+            z[i]->x = top ? -1 : 0;
+            z[i]->y = top ? -1 : 1;
+            z[i]->w = top ? W + 2 : W;
+            z[i]->h = top ? H + 2 : H - 2;
+        }
+    if (nw && z[nw - 1]->full) {
+        draw_win(z[nw - 1], 1);
+        return;
+    }
     if (cfg_wall >= 6)
         wall_paint();
     else
@@ -683,6 +721,8 @@ void ui_render(void) {
     status();
     for (int i = 0; i < nw; i++)
         draw_win(z[i], i == nw - 1);
+    for (int i = 0; i < nunder; i++)
+        under[i]();
 }
 /* Waits for a key like key_wait, but returns 0 early when a program in the background has drawn
  * something new (at most 25 times a second): menus and dialogs then draw themselves again, so XZN
@@ -798,6 +838,10 @@ static void menu(int m) {
 /* Dialogs */
 void dlg_box(const char *t, int w, int h, int *x, int *y) {
     ui_render();
+    dlg_frame(t, w, h, x, y);
+}
+/* The box alone, without drawing the screen below again */
+void dlg_frame(const char *t, int w, int h, int *x, int *y) {
     *x = (W - w) / 2;
     *y = (H - h) / 2;
     fill(*x, *y, w, h, ' ', A_DLG);
@@ -1183,20 +1227,30 @@ void wall_set(int i) {
     if (i >= 6)
         wall_image(i);
 }
+/* Characters on the screen: UTF-8 continuation bytes take no cell */
+static int ulen(const char *s) {
+    int n = 0;
+    for (; *s; s++)
+        n += ((u8)*s & 0xC0) != 0x80;
+    return n;
+}
 void dlg_about(void) {
+    const int w = 64;
     int x, y;
-    dlg_box("Info", 58, 11, &x, &y);
-    text(x + 26, y + 2, AT(C_RAISE, C_NEON), "Violyx");
+    dlg_box("Info", w, 11, &x, &y);
     char v[20];
     ksnprintf(v, 20, "Version %s", VERSION);
-    text(x + (58 - (int)strlen(v)) / 2, y + 3, A_DLG, v);
-    const char *a = TR("Ein 64-Bit-Betriebssystem für x86-PCs, nur per Tastatur,",
-                       "A keyboard-only 64-bit operating system for x86 PCs,"),
-               *b = TR("mit einem Retro-Textdesktop in leuchtendem Violett.",
-                       "with a retro text desktop in glowing violet.");
-    text(x + 2, y + 5, A_DLG, a);
-    text(x + 2, y + 6, A_DLG, b);
-    text(x + 20, y + 8, A_DLG, "(c) 2026 Merecete");
+    const char *l[] = {"Violyx",
+                       v,
+                       "",
+                       TR("Ein 64-Bit-Betriebssystem für x86-PCs, nur per Tastatur,",
+                          "A keyboard-only 64-bit operating system for x86 PCs,"),
+                       TR("mit einem Retro-Textdesktop in leuchtendem Violett.",
+                          "with a retro text desktop in glowing violet."),
+                       "",
+                       "(c) 2026 Merecete"};
+    for (int i = 0; i < 7; i++) /* every line centred inside the frame */
+        text(x + (w - ulen(l[i])) / 2, y + 2 + i, i ? A_DLG : AT(C_RAISE, C_NEON), l[i]);
     ui_show();
     for (;;) {
         key_t k = key_wait();
@@ -1395,6 +1449,16 @@ void ui_run(void) {
         if (k.key == K_REBOOT) {
             a_reboot();
             continue;
+        }
+        {
+            win_t *fw = win_top(); /* a full screen program gets every key, Esc closes it */
+            if (fw && fw->full) {
+                if (k.key == K_ESC)
+                    a_close();
+                else if (fw->app->key)
+                    fw->app->key(fw, k);
+                continue;
+            }
         }
         if (k.key == K_F10) {
             menu(0);

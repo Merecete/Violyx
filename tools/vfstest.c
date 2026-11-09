@@ -3,6 +3,7 @@
 /* Random operations, a reference model, structure checks and simulated power failures */
 #define HOST
 #include "viofs.c"
+#include "vfsname.c"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

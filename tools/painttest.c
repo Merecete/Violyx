@@ -1,6 +1,6 @@
 /* Host test for fill and picture checks: gcc -g -fsanitize=address,undefined -DHOST
  * tools/painttest.c -o painttest */
-#include "../kernel/paint.c"
+#include "../system/paint.c"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>

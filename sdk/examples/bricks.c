@@ -1,12 +1,14 @@
 /* Bricks - a block breaking game for Violyx.
    SPDX-License-Identifier: MIT
    Left/Right or A/D move the paddle, Space launches the ball, P pauses, M switches the music.
-   Hit the ball with the paddle edge to speed it up: a fast ball smashes through several bricks. */
+   Hit the ball with the paddle edge to speed it up: a fast ball smashes through several bricks.
+   16 levels with tough bricks (two hits) and solid ones that never break; after the last level the
+   walls come back faster. */
 #include "violyx.h"
 #include "chip.h"
 
 #define COLS      12 /* bricks per row */
-#define ROWS      6
+#define ROWS      8
 #define FIX       256  /* the ball position is stored in 1/256 of a cell */
 #define KEY_LEFT  0x4B /* scan codes for vx_held */
 #define KEY_RIGHT 0x4D
@@ -31,27 +33,74 @@ static const chip_song theme = {
     "c3 . g3 . c3 . g3 . a2 . e3 . a2 . e3 . f2 . c3 . f2 . c3 . g2 . d3 . g2 . b2 .",
     "k.h.s.h.k.h.s.h.", 110};
 
-static const uint8_t colours[ROWS] = {VC_HOT, VC_ORCHID, VC_NEON, VC_VIOLET, VC_LAVENDER, VC_GLOW};
+static const uint8_t colours[ROWS] = {VC_HOT,      VC_ORCHID, VC_NEON, VC_VIOLET,
+                                      VC_LAVENDER, VC_GLOW,   VC_HOT,  VC_ORCHID};
+
+/* The walls: # brick, = tough brick (two hits), X solid (the ball bounces off, it never breaks).
+   Every brick can be reached, solid ones never close a brick in. */
+#define NLEVELS 16
+static const char *const levels[NLEVELS][ROWS] = {
+    {"............", "############", "############", "############", "############", "............",
+     "............", "............"},
+    {"............", "#.#.#.#.#.#.", ".#.#.#.#.#.#", "#.#.#.#.#.#.", ".#.#.#.#.#.#", "#.#.#.#.#.#.",
+     "............", "............"},
+    {"============", "###..##..###", "###..##..###", "###..##..###", "###..##..###", "............",
+     "............", "............"},
+    {"............", "############", "############", "XX..XXXX..XX", "############", "############",
+     "............", "............"},
+    {".....##.....", "....####....", "...######...", "..##====##..", "...######...", "....####....",
+     ".....##.....", "............"},
+    {"X..........X", "X.########.X", "X.#======#.X", "X.#======#.X", "X.########.X", "X..........X",
+     "............", "............"},
+    {"============", "............", "############", "............", "XXXX....XXXX", "############",
+     "............", "............"},
+    {"..#......#..", "...#....#...", "..########..", ".##.####.##.", "############", "#.########.#",
+     "#.#......#.#", "...##..##..."},
+    {"############", "#X#X#X#X#X#X", "############", "====....====", "############", "............",
+     "............", "............"},
+    {"............", ".XXXX..XXXX.", ".#==#..#==#.", ".#==#..#==#.", ".####..####.", "............",
+     "............", "............"},
+    {"..##....##..", ".####..####.", "############", "############", ".##########.", "..########..",
+     "...######...", "....####...."},
+    {"============", "XXX.........", "....XXXXX...", "............", "############", "############",
+     "............", "............"},
+    {"XXXXX..XXXXX", "X====..====X", "X##########X", "X##########X", "X##......##X", "............",
+     "............", "............"},
+    {"#=#=#=#=#=#=", "X.X.X.X.X.X.", "############", "=#=#=#=#=#=#", ".X.X.X.X.X.X", "############",
+     "............", "............"},
+    {"====XXXX====", "####....####", "####.##.####", "..XX.##.XX..", "####.##.####", "############",
+     "............", "............"},
+    {"XX========XX", "X##########X", "X#XX####XX#X", "X##########X", "X###.XX.###X", "XX###..###XX",
+     "............", "............"}};
+enum {
+    B_NONE,
+    B_NORMAL,
+    B_TOUGH,
+    B_SOLID
+};
+static int steps; /* small steps since the ball last touched the paddle or a brick */
 
 static void build_level(void) {
     left = 0;
+    const char *const *l = levels[(level - 1) % NLEVELS];
     for (int y = 0; y < ROWS; y++)
         for (int x = 0; x < COLS; x++) {
-            int on = 1;
-            if (level % 3 == 2)
-                on = (x + y) % 2 == 0; /* chess board */
-            if (level % 3 == 0)
-                on = x != 5 && x != 6; /* two towers */
-            bricks[y][x] = (char)on;
-            left += on;
+            char c = l[y][x];
+            int t = c == '#' ? B_NORMAL : c == '=' ? B_TOUGH : c == 'X' ? B_SOLID : B_NONE;
+            bricks[y][x] = (char)t;
+            if (t == B_NORMAL || t == B_TOUGH)
+                left++;
         }
 }
 
 static void new_ball(void) {
     stuck = 1;
     ball_dx = 90;
-    ball_dy = -60; /* cells are tall, so vertical speed is lower */
-    speed = 1 + (level > 5 ? 2 : level / 2);
+    ball_dy = -60;                     /* cells are tall, so vertical speed is lower */
+    int round = (level - 1) / NLEVELS; /* each pass through all levels is faster */
+    speed = 1 + (level > 5 ? 2 : level / 2) + round;
+    if (speed > MAXSPEED - 2)
+        speed = MAXSPEED - 2;
     punch = 1;
     cap_y = -1;
 }
@@ -68,6 +117,12 @@ static void new_game(void) {
 }
 
 static void hit_brick(int r, int c) {
+    if (bricks[r][c] == B_TOUGH) { /* cracks first, breaks on the next hit */
+        bricks[r][c] = B_NORMAL;
+        score += 5;
+        vx_tone(196, 50, 45, VX_SQUARE, 0);
+        return;
+    }
     bricks[r][c] = 0;
     left--;
     score += (ROWS - r) * 10 * (speed + 1) / 2;
@@ -100,8 +155,29 @@ static int move_ball(void) {
 
     int cx = nx / FIX, cy = ny / FIX;
     int r = cy - 2, c = (cx - x0_) / bw;
+    if (cx >= x0_ && r >= 0 && r < ROWS && c >= 0 && c < COLS && bricks[r][c] == B_SOLID) {
+        /* solid: always bounces, also a fast ball */
+        punch = 1;
+        steps = 0;
+        if (ball_y / FIX != cy)
+            ball_dy = -ball_dy;
+        else
+            ball_dx = -ball_dx;
+        vx_tone(1047, 25, 35, VX_TRIANGLE, 0);
+        return 1;
+    }
     if (cx >= x0_ && r >= 0 && r < ROWS && c >= 0 && c < COLS && bricks[r][c]) {
+        steps = 0;
+        int tough = bricks[r][c] == B_TOUGH;
         hit_brick(r, c);
+        if (tough) { /* a tough brick stops the ball like a wall */
+            punch = 1;
+            if (ball_y / FIX != cy)
+                ball_dy = -ball_dy;
+            else
+                ball_dx = -ball_dx;
+            return 1;
+        }
         /* A fast ball keeps flying: it only bounces once its punch is used up */
         if (--punch > 0) {
             ball_x = nx;
@@ -115,7 +191,15 @@ static int move_ball(void) {
             ball_dx = -ball_dx;
         return 1;
     }
+    /* Bouncing between solid bricks and the walls for a long time: a little nudge sideways */
+    if (++steps > 6000) {
+        steps = 0;
+        ball_dx += ball_dx > 0 ? 23 : -23;
+        if (ball_dx > 250 || ball_dx < -250)
+            ball_dx = ball_dx > 0 ? 40 : -40;
+    }
     if (ball_dy > 0 && cy == FH - 1 && cx >= paddle && cx < paddle + width) {
+        steps = 0;
         int middle = paddle + width / 2;
         int off = cx - middle;
         if (off < 0)
@@ -241,10 +325,17 @@ static void draw(int state) {
     }
 
     for (int y = 0; y < ROWS; y++)
-        for (int x = 0; x < COLS; x++)
-            if (bricks[y][x])
-                for (int i = 0; i < bw - 1; i++)
-                    vx_put(x0_ + x * bw + i, y + 3, (char)0xDB, VX_ATTR(VC_BLACK, colours[y]));
+        for (int x = 0; x < COLS; x++) {
+            int t = bricks[y][x];
+            if (!t)
+                continue;
+            char c = t == B_NORMAL ? (char)0xDB : t == B_TOUGH ? (char)0xB2 : (char)0xB1;
+            uint8_t a = VX_ATTR(VC_BLACK, t == B_NORMAL  ? colours[y]
+                                          : t == B_TOUGH ? VC_GLOW
+                                                         : VC_MID);
+            for (int i = 0; i < bw - 1; i++)
+                vx_put(x0_ + x * bw + i, y + 3, c, a);
+        }
     for (int i = 0; i < width; i++)
         vx_put(paddle + i, FH, (char)0xDF, VX_ATTR(VC_BLACK, VC_NEON));
     vx_put(ball_x / FIX, ball_y / FIX + 1, punch > 1 ? (char)0x0F : 'O',

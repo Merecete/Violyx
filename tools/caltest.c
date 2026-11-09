@@ -1,6 +1,6 @@
 /* Host test for the calendar: gcc -g -fsanitize=address,undefined -DHOST tools/caltest.c -o
  * caltest; the output is cross-checked with Python */
-#include "../kernel/calendar.c"
+#include "../system/calendar.c"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>

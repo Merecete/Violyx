@@ -1,6 +1,6 @@
 /* Host test of the game logic: gcc -g -fsanitize=address,undefined -DHOST tools/gametest.c -o
  * gametest */
-#include "../kernel/games.c"
+#include "../system/games.c"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>

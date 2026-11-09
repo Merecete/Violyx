@@ -109,6 +109,39 @@ void vx_pixcell(int x, int y, int ix, int iy) {
     if (x >= 0 && x < W && y >= 0 && y < H && ix >= 0 && ix < 240 && iy >= 0 && iy < 100)
         cells[y * W + x] = 0x80000000u | (uint32_t)ix << 8 | (uint32_t)iy << 16;
 }
+void vx_pixcell_slot(int x, int y, int slot, int ix, int iy) {
+    if (!W)
+        dims();
+    if (x >= 0 && x < W && y >= 0 && y < H && ix >= 0 && ix < 240 && iy >= 0 && iy < 100)
+        cells[y * W + x] =
+            0x80000000u | (uint32_t)ix << 8 | (uint32_t)iy << 16 | (uint32_t)(slot & 31) << 23;
+}
+int vx_resolve(const char *name, uint32_t *ip) {
+    long r = vx_sys(29, 1, (long)name, 0);
+    if (r < 0)
+        return (int)r;
+    long end = vx_ms() + 6000;
+    while (!(r = vx_sys(29, 2, 0, (long)ip))) {
+        if (vx_ms() > end)
+            return VX_NOTFOUND;
+        vx_wait(10);
+    }
+    return r == 1 ? 0 : VX_NOTFOUND;
+}
+int vx_connect(uint32_t ip, int port) {
+    long r = vx_sys(29, 3, ip, port);
+    if (r < 0)
+        return (int)r;
+    long end = vx_ms() + 15000;
+    while (!(r = vx_sys(29, 4, 0, 0))) {
+        if (vx_ms() > end) {
+            vx_disconnect();
+            return VX_IOERR;
+        }
+        vx_wait(10);
+    }
+    return r == 1 ? 0 : VX_IOERR;
+}
 void vx_show(void) {
     vx_sys(18, (long)cells, W, H);
 }
