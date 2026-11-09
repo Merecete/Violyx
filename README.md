@@ -21,14 +21,16 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 |---|---|---|
 | ![Violet](docs/violyx-violet.png) | ![Ruby](docs/violyx-ruby.png) | ![Ocean](docs/violyx-ocean.png) |
 
-> **Status: Experimental hobby project (version 0.1.5).** Tested in QEMU, VirtualBox, and on actual hardware (via USB flash drive), including wired internet and USB sound.
-> Installed programs run in protected memory, but the system itself does not, so please do not enter
-> passwords or use it for anything sensitive. See [Limitations](#limitations).
+> **Status: Experimental hobby project (version 0.2.0).** Tested in QEMU, VirtualBox, and on actual hardware (via USB flash drive), including wired internet and USB sound.
+> All programs, the browser included, run in protected memory, but the kernel and its drivers have
+> never been checked for security, so please do not enter passwords or use it for anything
+> sensitive. See [Limitations](#limitations).
 
 ## Features
 
 - **Keyboard-only desktop** with overlapping windows, menus and dialogs, in 256 colours
-- **Web browser** with HTTPS, certificate checks, images, tabs, bookmarks, history, search on the page, cookies, gzip, downloads and search forms
+- **Protected programs:** every program runs in ring 3 with its own memory, the built-in ones too. The kernel keeps only the desktop, drivers, file systems and the network stack
+- **Web browser** with HTTPS, certificate checks, images, tabs, bookmarks, history, search on the page, cookies, gzip, downloads, saving images and search forms
 - **Programs:** Write, Files, Commands, Calculator, Calendar, Clock, Paint, Image viewer, XZN, Settings
 - **XZN:** the Violyx edition of the Xenon-Zones (XZN) music player, for MP3, OGG, FLAC and WAV
 - **Games:** Pong, Invaders, Chomp, Mines, Snake, Bricks and Novastrike, with sound and music
@@ -36,7 +38,7 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 - **Colour schemes:** Violet, Ocean, Emerald, Amber, Ruby and Graphite, for everyone who prefers another colour
 - **Screen savers:** the Violyx logo with twinkling stars, 3D wire frames, a seven-segment clock, the analog clock and a synthwave sunset
 - **Backgrounds:** patterns, the Violyx logo and your own images, drawn in Paint
-- **Installable programs:** `.vpk` packages that run in protected memory, with an SDK in C
+- **Installable programs:** `.vpk` packages with an SDK in C, with system dialogs and network access (Violyx asks once)
 - **Networking:** Intel E1000 and Realtek RTL8125B/RTL8126 drivers, DHCP, DNS, ping, TCP/IP via lwIP
 - **HTTPS:** TLS 1.2 and 1.3 via Mbed TLS with Mozilla root certificates
 - **Storage:** IDE, AHCI (SATA), NVMe and USB mass storage
@@ -50,12 +52,13 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 
 ## Try it
 
-Download `violyx.iso` or another image from the [Releases](../../releases) page.
+Download `violyx-v0.2.0.iso` or another image from the [Releases](../../releases) page. The
+file names carry the version, so you always know which Violyx you have.
 
 ### QEMU
 
 ```sh
-qemu-system-x86_64 -drive file=violyx.img,format=raw -m 512 -nic user,model=e1000 \
+qemu-system-x86_64 -drive file=violyx-v0.2.0.img,format=raw -m 512 -nic user,model=e1000 \
   -device intel-hda -device hda-duplex
 ```
 
@@ -63,7 +66,7 @@ For UEFI, also pass your QEMU firmware file:
 
 ```sh
 qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=edk2-x86_64-code.fd \
-  -drive file=violyx.img,format=raw -m 512 -nic user,model=e1000 \
+  -drive file=violyx-v0.2.0.img,format=raw -m 512 -nic user,model=e1000 \
   -device intel-hda -device hda-duplex
 ```
 
@@ -72,7 +75,7 @@ qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=edk2-x86_64-code
 1. Create a VM with type **Other** and version **Other/Unknown (64-bit)**. The 64-bit
    version matters: Violyx does not run on the 32-bit setting.
 2. Give it at least **512 MB** of memory.
-3. Attach `violyx.vdi` as an existing hard disk, or use `violyx.iso` to try Violyx
+3. Attach `violyx-v0.2.0.vdi` as an existing hard disk, or use `violyx-v0.2.0.iso` to try Violyx
    without saving.
 4. Set the network adapter type to **Intel PRO/1000 MT Desktop**.
 5. For sound, enable audio with the **Intel HD Audio** or **ICH AC97** controller.
@@ -80,7 +83,7 @@ qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=edk2-x86_64-code
 
 ### USB stick
 
-Write `violyx.img` to a stick, for example with Rufus in DD mode. This erases the
+Write `violyx-v0.2.0.img` to a stick, for example with Rufus in DD mode. This erases the
 stick. Secure Boot must be turned off because Violyx is not signed.
 
 ## Keyboard
@@ -144,12 +147,15 @@ in quotes: `cp "My song.mp3" /drives/usb1`.
 | Ctrl+Page Up/Down | Switch tabs |
 | Ctrl+I | Images off or on for this site |
 | Ctrl+R / Ctrl+S | Reload / save the page to `/downloads` |
+| Ctrl+P | Save the image on the screen to `/downloads` |
 | Esc | End the search, then close the tab, then the window |
 
 Images load after the text and are shown in 256 colours. Files the browser cannot show are
-offered as a download, and a downloaded `.vpk` can be installed right away. Images and
-compressed pages are unpacked in a separate protected helper, so a broken image cannot
-harm the system. The history page also clears history and cookies.
+offered as a download, and a downloaded `.vpk` can be installed right away, so a simple web
+page with links to `.vpk` files works as a program store. Ctrl+P saves the image on the screen
+(or the first one of the page) unchanged, as the original PNG or JPEG. The whole browser runs
+as a protected program, images and compressed pages included, so a broken page or image
+cannot harm the system. The history page also clears history and cookies.
 
 ## Sound
 
@@ -252,24 +258,30 @@ Chomp, Bricks and Novastrike play chiptune music. M or the game's own menu in th
 turns it off and on again, and Bricks and Novastrike remember the choice.
 
 In Bricks, hitting the ball with the edge of the paddle makes it faster, and a fast ball
-smashes through several bricks. Novastrike has ten worlds with their own colours, music
+smashes through several bricks. Its 16 levels bring tough bricks that need two hits and solid
+ones that never break. After the last level the walls come back faster. Novastrike has ten worlds with their own colours, music
 and boss, and you win once all ten are free.
 
-Snake, Bricks, Novastrike and XZN run as protected programs. Their source is in `sdk/examples/`.
+All games run as protected programs. Snake, Bricks, Novastrike and XZN are SDK programs with
+their source in `sdk/examples/`, the other games are in `system/`.
 
 ## Installing programs
 
 Programs are single `.vpk` files that you can share, for example on a FAT32 stick. Open one in
 Files and confirm to install it. It then appears in the Programs overview (F2). Select it
 there and press Del to uninstall it together with its data. Commands offers `install`, `run`
-and `uninstall`. The live ISO can start a package directly, without installing it.
+and `uninstall`. `run FILE.vpk` starts a package directly without installing it, and the live
+ISO offers the same when you open one in Files. The built-in programs are part of Violyx and
+cannot be uninstalled.
 
 Each program runs in its own protected memory, so a crash closes only that program. A program
 can use its private data folder, `/home`, `/downloads` and `/drives`, but not `/system` or other
 programs. It can still read and change your files in `/home`, so only install programs you trust.
+A file the user picks in a program's file dialog may be used too, wherever it is. The first time
+a program wants to go online, Violyx asks whether it may.
 
 To write your own program in C, see [sdk/README.md](sdk/README.md). Programs can play sounds
-and music and show small pictures.
+and music, show pictures, use the Violyx dialogs and the network.
 
 ## Language and keyboard layout
 
@@ -302,7 +314,7 @@ C code is formatted with `clang-format` using the `.clang-format` file in the re
 `black -l 100`. Comments are in English.
 
 ```sh
-clang-format -i kernel/*.c sdk/examples/*.c
+clang-format -i kernel/*.c system/*.c system/web/*.c sdk/examples/*.c
 black -l 100 tools/*.py sdk/*.py
 ```
 
@@ -312,27 +324,29 @@ black -l 100 tools/*.py sdk/*.py
 |---|---|
 | `kernel/main.c`, `entry.asm` | Startup, interrupts, memory, timers, clock, clean shutdown |
 | `kernel/ui.c` | Graphics output, windows, menus, dialogs |
-| `kernel/apps.c`, `browser.c`, `calendar.c`, `paint.c` | Programs, browser, calendar, backgrounds and Paint |
-| `kernel/clock.c`, `viewer.c`, `saver.c` | Clock, image viewer and screen savers |
-| `kernel/games.c` | Invaders, Chomp and Mines, game logic also testable on a host system |
-| `kernel/html.c` | HTML layout, also testable on a host system |
+| `kernel/apps.c` | Programs overview, Settings, Help, System info, formatting dialog |
+| `kernel/prog.c` | Program packages, ELF loader, address spaces, scheduler, system calls and services |
+| `kernel/wall.c`, `clock.c`, `saver.c` | Backgrounds, the clock face and the screen savers |
 | `kernel/kbd.c`, `xhci.c` | Keyboard layouts, USB, USB audio |
 | `kernel/sound.c` | Sound drivers and mixer |
-| `kernel/viofs.c` | VioFS 2 file system, also testable on a host system |
-| `kernel/prog.c` | Program packages, ELF loader, address spaces, system calls |
+| `kernel/viofs.c`, `vfsname.c` | VioFS 2 file system, also testable on a host system |
 | `kernel/fat.c`, `exfat.c`, `drives.c` | FAT32 and exFAT drivers and the `/drives` layer with its access prompt |
 | `kernel/format.c` | Formatting USB drives with FAT32 or exFAT |
 | `kernel/disk.c`, `ahci.c`, `nvme.c` | Block layer, IDE, storage drivers |
-| `kernel/net.c`, `rge.c`, `tls.c`, `http.c`, `cookies.c` | Network drivers, TLS, HTTP, cookies |
+| `kernel/net.c`, `rge.c` | Network drivers, TCP and DNS for programs (lwIP) |
 | `kernel/install.c`, `acpi.c` | Installer, power off |
-| `sdk/` | SDK, example programs, XZN and the protected decoder helper |
+| `system/rt.c`, `os.h` | Runtime of the built-in programs in ring 3: window, dialogs, files, network |
+| `system/*.c` | Write, Files, Commands, Calculator, Calendar, Clock, Image viewer, Paint, Pong, Invaders, Chomp and Mines |
+| `system/web/` | Browser, HTML layout, HTTP, TLS (Mbed TLS) and cookies |
+| `sdk/` | SDK, example programs, XZN and the picture decoder |
 | `tools/` | Image builders and test tools |
 | `third_party/` | Bundled components |
 
 ## Limitations
 
-- Programs are protected from the system, but the built-in programs and drivers are not: a bug there can bring down the whole system.
-- Programs cannot use the network yet.
+- Programs are protected from each other and from the kernel. The kernel, its drivers and the desktop are not: a bug there can bring down the whole system.
+- One network connection at a time: while one program loads, another one has to wait.
+- One monitor: Violyx uses the screen the firmware switches on at startup.
 - Browser: no JavaScript, no style sheets and no password fields. WebP and SVG images are not shown. Many modern sites will not work.
 - Sound: no sound over HDMI or DisplayPort, because graphics cards only pass sound on with their own display driver. USB audio has been tested on one real mainboard chip.
 - Network: Intel E1000 cards and Realtek RTL8125B/RTL8126 without vendor firmware. The Realtek driver has been tested on one real RTL8126, not yet on an RTL8125B. No Wi-Fi.
