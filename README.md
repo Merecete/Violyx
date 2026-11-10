@@ -37,14 +37,14 @@ This project was created with the help of AI. It is written in C and x86-64 asse
   the Violyx edition of the Xenon-Zones (XZN) music player, for MP3, OGG, FLAC and WAV
 - **Games:** 
   Pong, Invaders, Chomp, Mines, Snake, Bricks and Novastrike, with sound and music
+- **Installable programs:**
+  ".vpk" packages with an SDK in C, with system dialogs and network access
 - **Sound:**
   Intel HD Audio, AC'97 and USB audio, including mainboard chips such as the Realtek ALC4080
 - **Colour schemes:**
   Violet, Ocean, Emerald, Amber, Ruby and Graphite
 - **Adjustable screen savers**
 - **Backgrounds** 
-- **Installable programs:**
-  ".vpk" packages with an SDK in C, with system dialogs and network access
 - **Networking:**
   Intel E1000 and Realtek RTL8125B/RTL8126 drivers, DHCP, DNS, ping, TCP/IP via lwIP
 - **HTTPS:**
