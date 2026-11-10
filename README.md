@@ -28,25 +28,24 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 ## Features
 
 - **Keyboard-only desktop** with overlapping windows, menus and dialogs, in 256 colours
-- **Protected programs:** every program runs in ring 3 with its own memory, the built-in ones too. The kernel keeps only the desktop, drivers, file systems and the network stack
+- **Programs protected** all program (Installed and integrated) runs in ring 3 with its own memory. The kernel keeps only the desktop, drivers, file systems and the network stack
 - **Web browser** with HTTPS, certificate checks, images, tabs, bookmarks, history, search on the page, cookies, gzip, downloads, saving images and search forms
-- **Programs:** Write, Files, Commands, Calculator, Calendar, Clock, Paint, Image viewer, XZN, Settings
-- **XZN:** the Violyx edition of the Xenon-Zones (XZN) music player, for MP3, OGG, FLAC and WAV
+- **XZN** the Violyx edition of the Xenon-Zones (XZN) music player, for MP3, OGG, FLAC and WAV
 - **Games:** Pong, Invaders, Chomp, Mines, Snake, Bricks and Novastrike, with sound and music
-- **Sound:** Intel HD Audio, AC'97 and USB audio, including mainboard chips such as the Realtek ALC4080
-- **Colour schemes:** Violet, Ocean, Emerald, Amber, Ruby and Graphite, for everyone who prefers another colour
-- **Screen savers:** the Violyx logo with twinkling stars, 3D wire frames, a seven-segment clock, the analog clock and a synthwave sunset
-- **Backgrounds:** patterns, the Violyx logo and your own images, drawn in Paint
-- **Installable programs:** `.vpk` packages with an SDK in C, with system dialogs and network access (Violyx asks once)
-- **Networking:** Intel E1000 and Realtek RTL8125B/RTL8126 drivers, DHCP, DNS, ping, TCP/IP via lwIP
-- **HTTPS:** TLS 1.2 and 1.3 via Mbed TLS with Mozilla root certificates
-- **Storage:** IDE, AHCI (SATA), NVMe and USB mass storage
-- **File system:** VioFS 2 with folders, long file names and large files
-- **USB sticks:** read and write FAT32 and exFAT sticks under `/drives`, format them, with hot-plugging and a safety prompt
+- **Sound** Intel HD Audio, AC'97 and USB audio, including mainboard chips such as the Realtek ALC4080
+- **Colour schemes** Violet, Ocean, Emerald, Amber, Ruby and Graphite
+- **Adjustable screen savers**
+- **Backgrounds** 
+- **Installable programs** `.vpk` packages with an SDK in C, with system dialogs and network access
+- **Networking** Intel E1000 and Realtek RTL8125B/RTL8126 drivers, DHCP, DNS, ping, TCP/IP via lwIP
+- **HTTPS** TLS 1.2 and 1.3 via Mbed TLS with Mozilla root certificates
+- **Storage** IDE, AHCI (SATA), NVMe and USB mass storage
+- **File system** VioFS 2 with folders, long file names and large files
+- **USB sticks** read and write FAT32 and exFAT sticks under `/drives`, format them, with hot-plugging and a safety prompt
 - **USB keyboards** on several xHCI controllers and behind USB hubs, plus PS/2
 - **Clean shutdown:** the sound fades out, every drive empties its cache, hard disks park, NVMe SSDs and USB sticks are signed off before the power goes off
 - **Installer** with several safety prompts
-- **Two languages:** English and German, with US and German keyboard layouts
+- **Two languages** English and German, with US and German keyboard layouts
 - **Boots on BIOS and UEFI** through the Limine bootloader
 
 ## Try it
