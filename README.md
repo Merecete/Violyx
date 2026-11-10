@@ -59,8 +59,6 @@ This project was created with the help of AI. It is written in C and x86-64 asse
   on several xHCI controllers and behind USB hubs, plus PS/2
 - **Clean shutdown:**
   the sound fades out, every drive empties its cache, hard disks park, NVMe SSDs and USB sticks are signed off before the power goes off
-- **Installer:**
-  with several safety prompts
 - **Two languages:**
   English and German, with US and German keyboard layouts
 - **Boots on BIOS and UEFI:**
