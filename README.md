@@ -21,7 +21,7 @@ This project was created with the help of AI. It is written in C and x86-64 asse
 |---|---|---|
 | ![Violet](docs/violyx-violet.png) | ![Ruby](docs/violyx-ruby.png) | ![Ocean](docs/violyx-ocean.png) |
 
-> This is an Experimental hobby project (v0.2.0). It's was tested in QEMU, VirtualBox, and on actual hardware (via USB flash drive), including wired internet and USB sound.
+> This is an Experimental hobby project (v0.2.0). It has been tested in QEMU, VirtualBox, and on actual hardware (via USB flash drive), including wired internet and USB sound.
 > All programs, the browser included, run in protected memory, but the kernel and its drivers have
 > never been checked for security. See the [Limitations](#limitations).
 
