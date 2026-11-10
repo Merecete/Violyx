@@ -302,6 +302,8 @@ next to another system is not supported yet. Please check the disk model careful
 You need Linux with `gcc`, `nasm`, `make`, `binutils` and `python3`.
 
 ```sh
+git clone https://github.com/Merecete/Violyx.git
+cd Violyx
 make
 ```
 
