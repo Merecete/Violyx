@@ -57,10 +57,11 @@ Once it runs, **F1** shows the help and **F2** all programs. All keys are in the
 
 ## Build it yourself
 
-On Debian or Ubuntu:
+On Linux:
+
+You need git, gcc, make, nasm, binutils and python3
 
 ```sh
-sudo apt install git gcc make nasm binutils python3
 git clone https://github.com/Merecete/Violyx.git
 cd Violyx
 make
