@@ -130,7 +130,7 @@ static void logo_draw(u32 ms) {
         "#   #  ###   ###   #     #   #  #   #", "#   #   #   #   #  #      # #    # # ",
         "#   #   #   #   #  #       #      #  ", " # #    #   #   #  #       #     # # ",
         "  #    ###   ###   #####   #    #   #"};
-    static const u8 cl[] = {C_GLOW, C_LAV, C_NEON, C_VIOLET, C_SEL};
+    static const u8 cl[] = {L_ROW1, L_ROW2, L_ROW3, L_ROW4, L_ROW5};
     static const u8 ramp[] = {C_VOID, C_RAISE, C_SEL, C_DIM, C_MID, C_LAV, C_GLOW};
     memset(buf, C_VOID, (u64)pw * ph);
     /* the lettering fills about 80 % of the width; P: pixels per point */
@@ -163,7 +163,7 @@ static void logo_draw(u32 ms) {
         for (int x = 0; l[y][x]; x++)
             if (l[y][x] == '#') {
                 int u = ox + x * P, v = oy + y * P, sh = P / 3 < 1 ? 1 : P / 3;
-                rect(u + sh, v + sh, P, P, C_PANEL); /* shadow */
+                rect(u + sh, v + sh, P, P, L_SHADE); /* shadow */
                 rect(u, v, P, P, cl[y]);
             }
 }
@@ -498,8 +498,10 @@ void saver_run(int kind) {
     while (!key_poll(&k)) {
         u32 ms = (u32)((ticks - t0) * 10);
         int fixed = 1;
-        if (kind == 1)
+        if (kind == 1) {
             logo_draw(ms);
+            fixed = 2; /* the colours of the logo */
+        }
         else if (kind == 2) {
             wire_draw(ms);
             fixed = 0;

@@ -38,11 +38,24 @@ static u8 mac[6];
 static int present, started;
 static u64 nextlink;
 static u32 seed;
+/* Random numbers for DNS ids, ports and TCP: from the processor (RDRAND) where there is one,
+ * mixed with the time stamp counter, so answers from outside are hard to forge */
 unsigned int net_rand(void) {
-    u32 a, d;
+    static int hw = -1;
+    if (hw < 0) {
+        u32 a = 1, b, c = 0, d;
+        __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
+        hw = (c >> 30) & 1;
+    }
+    u32 a, d, r = 0;
+    if (hw) {
+        unsigned char ok = 0;
+        for (int i = 0; i < 16 && !ok; i++)
+            __asm__ volatile("rdrand %0; setc %1" : "=r"(r), "=qm"(ok));
+    }
     __asm__ volatile("rdtsc" : "=a"(a), "=d"(d));
     seed = seed * 1103515245u + 12345u + a;
-    return seed ^ (d << 7);
+    return (seed ^ (d << 7)) ^ r;
 }
 u32_t sys_now(void) {
     return (u32_t)(ticks * 10);
@@ -527,4 +540,7 @@ void tcp_end(void) {
             tcp_abort(tp);
         tp = 0;
     }
+    /* what was not read stays with this connection: the next program must not get it */
+    rh = rt = 0;
+    fin = 1;
 }

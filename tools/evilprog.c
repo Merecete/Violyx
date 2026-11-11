@@ -123,6 +123,39 @@ int main(void) {
             for (;;)
                 vx_wait(-1);
         }
+        case 's': { /* holes closed in the review of 0.2.0 */
+            vx_write("/home/s.txt", "x", 1);
+            long v[9] = {vx_sys(30, 0, (long)"write", (long)"x://../../system/config"),
+                         vx_sys(23, 18, 200, 0) == vx_sys(23, 18, 200 & 15, 0),
+                         vx_sys(23, 12, 0xFFFFFFFFl, 5),
+                         vx_sys(23, 4, 30, 0xFFFFFFFFl),
+                         vx_sys(29, 9, 0, (long)b),
+                         vx_sys(15, (long)"/home", 0, 0),
+                         vx_sys(16, (long)"/downloads", (long)"/home/dl", 0),
+                         vx_sys(9, 0x1C, 0, 0),
+                         vx_sys(30, 0, (long)"view", (long)"/home/s.txt")};
+            vx_clear(t);
+            for (int k = 0; k < 9; k++)
+                vx_number(1, k, v[k], t);
+            vx_show();
+            for (;;)
+                vx_wait(-1);
+        }
+        case 't': /* the browser as a way out: needs the internet permission of the program */
+            vx_sys(30, 0, (long)"web", (long)"http://10.0.2.2:8080/?secret");
+            break;
+        case 'u': /* refuses every close, in full screen, and is busy when asked */
+        case 'v': /* the same, but it waits again */
+            vx_sys(23, 3, 2, 0);
+            vx_sys(23, 11, 1, 0);
+            for (;;) {
+                vx_clear(VX_ATTR(VC_VIOLET, VC_GLOW));
+                vx_text(1, 1, "never closes", VX_ATTR(VC_VIOLET, VC_GLOW));
+                vx_show();
+                vx_wait(-1);
+                while (m[0] == 'u' ? vx_key() >= 0 : vx_key() != 0)
+                    ;
+            }
     }
     vx_clear(t);
     vx_text(1, 1, "survived", t);

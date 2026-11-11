@@ -238,10 +238,16 @@ typedef struct {
     struct {
         u8 *px;
         int w, h;
+        u64 cap; /* size of the memory block, it can be larger than w * h */
         u8 gid;
     } im[NIMG]; /* pictures for pixel cells, slot 0 is the one of vx_image */
     u64 imbytes;
-    int sys;                      /* built-in system program: whole file system, system services */
+    int sys; /* built-in system program: whole file system, system services */
+    int lim; /* built-in program that reads foreign data (web pages, pictures): only the folders
+                of a normal program; L_NET internet without asking, L_INST may install */
+    u64 hash;                     /* of the package: the internet permission belongs to it */
+    int cl_n;                     /* refused requests to close, for the forced end */
+    u64 cl_t;
     int net;                      /* 1 may use the network, -1 refused for this run */
     int bi;                       /* index in the built-in table or -1 */
     int lw, lh;                   /* window size at the last drawing */
@@ -250,7 +256,11 @@ typedef struct {
     char grant[NGRANT][VFS_PATH]; /* files the user chose for it in a dialog */
     int ng;
 } proc_t;
-#define NBG 4
+#define L_NET  1
+#define L_INST 2
+#define L_LIM  4 /* marks a limited built-in program */
+#define L_RO   8 /* may only read */
+#define NBG    4
 static proc_t *bgp[NBG];
 static proc_t *cur;
 static u64 kctx, slice_end;
@@ -341,6 +351,10 @@ static int upath(proc_t *p, u64 a, char *o) {
     return prefix(o, p->base) || prefix(o, "/home") || prefix(o, "/downloads") ||
            prefix(o, "/drives");
 }
+/* Folders a normal program may fill, but not delete or move: its own folder and the shared ones */
+static int keep(proc_t *p, const char *o) {
+    return !p->sys && (!strcmp(o, p->base) || !strcmp(o, "/home") || !strcmp(o, "/downloads"));
+}
 static void grant(proc_t *p, const char *path) {
     if (p->sys)
         return;
@@ -402,6 +416,7 @@ static int ubuf(proc_t *p, u64 a, u8 **b, u64 *n) {
 }
 /* ---------- System dialogs for programs ---------- */
 #define DLGMAX 1280 /* longest input: addresses in the browser */
+static u64 dlg_ticks; /* time programs spent in dialogs of the system */
 static long sys_dialog(proc_t *p, u64 kind, u64 a) {
     static char t[64], m[256], io[DLGMAX];
     u64 q[5]; /* title, text, buffer, size, flags */
@@ -412,6 +427,7 @@ static long sys_dialog(proc_t *p, u64 kind, u64 a) {
     if ((q[0] && !ustr(p, q[0], t, 64)) || (q[1] && !ustr(p, q[1], m, 256)))
         return VE_INVAL;
     long v = VE_INVAL;
+    u64 t0 = ticks;
     __asm__("sti");
     switch (kind) {
         case 0:
@@ -446,20 +462,21 @@ static long sys_dialog(proc_t *p, u64 kind, u64 a) {
             break;
     }
     __asm__("cli");
+    dlg_ticks += ticks - t0;
     return v;
 }
 /* ---------- Network: TCP and DNS stay in the kernel, everything above runs in the program
  * ---------- */
 static proc_t *net_owner;
-static char netok[16][24];
+static u64 netok[16]; /* packages the user allowed the internet in this session */
 static int netokn;
 static int net_allowed(proc_t *p) {
-    if (p->sys || p->net > 0)
+    if (p->sys || (p->lim & L_NET) || p->net > 0)
         return 1;
     if (p->net < 0)
         return 0;
     for (int i = 0; i < netokn; i++)
-        if (!strcmp(netok[i], p->name)) {
+        if (netok[i] == p->hash) { /* the same package, not only the same name */
             p->net = 1;
             return 1;
         }
@@ -468,12 +485,14 @@ static int net_allowed(proc_t *p) {
         m, 120,
         TR("\"%s\" möchte ins Internet. Erlauben?", "\"%s\" wants to use the internet. Allow?"),
         p->w ? p->w->title : p->name);
+    u64 t0 = ticks;
     __asm__("sti");
     int y = dlg_confirm(TR("Internetzugang", "Internet access"), m);
     __asm__("cli");
+    dlg_ticks += ticks - t0;
     p->net = y ? 1 : -1;
     if (y && netokn < 16)
-        strlcpy_(netok[netokn++], p->name, 24);
+        netok[netokn++] = p->hash;
     return y;
 }
 static int net_mine(proc_t *p) {
@@ -554,7 +573,10 @@ static long sys_net(proc_t *p, u64 op, u64 b, u64 c) {
                 return r == -2 ? VE_AGAIN : VE_IO;
             return r ? 1 : (long)ms | (long)ttl << 16;
         }
-        case 9: { /* information line b into the buffer c (80 bytes) */
+        case 9: { /* information line b into the buffer c (80 bytes): addresses of this computer,
+                     only for the system programs */
+            if (!p->sys)
+                return VE_DENIED;
             if (!uok(p, c, 80, 1))
                 return VE_INVAL;
             net_info((char *)c, 80, (int)b);
@@ -590,7 +612,7 @@ static long win_control(proc_t *p, u64 op, u64 b, u64 c) {
             ui_render(); /* takes the new size at once */
             return 0;
         case 12: /* new size, centred */
-            if ((long)b < 10 || (long)c < 3)
+            if (b < 10 || c < 3 || b > 1000 || c > 1000)
                 return VE_INVAL;
             if (w->zoomed)
                 win_zoom(w);
@@ -615,7 +637,7 @@ static long win_control(proc_t *p, u64 op, u64 b, u64 c) {
             p->bg = 0;
             return 0;
         case 18: /* screen colour of palette entry b as 0xRRGGBB */
-            return (long)(ui_rgb((int)(b & 255)) & 0xFFFFFF);
+            return (long)(ui_rgb((int)(b & 15)) & 0xFFFFFF);
         case 20: /* size of the screen in cells */
             return (long)W << 16 | H;
         case 19: /* name of the program menu */
@@ -633,6 +655,10 @@ void proc_syscall(regs *r) {
     u64 a = r->rdi, b = r->rsi, c = r->rdx;
     static char pa[VFS_PATH], pb[VFS_PATH];
     long v = VE_DENIED;
+    if ((p->lim & L_RO) && (r->rax == 12 || (r->rax >= 14 && r->rax <= 16))) {
+        r->rax = (u64)v; /* the viewer writes nothing */
+        return;
+    }
     switch (r->rax) {
         case 0:
             p->state = P_DONE;
@@ -739,7 +765,7 @@ void proc_syscall(regs *r) {
                     if ((u8)*q < 32 || (u8)*q > 126)
                         *q = '?';
                 strlcpy_(p->w->amenu, t, 120);              /* programs keep the old limit */
-                if (p->sys && ustr(p, a, p->w->amenu, 200)) /* system programs: UTF-8, longer */
+                if ((p->sys || p->lim) && ustr(p, a, p->w->amenu, 200)) /* built-in: UTF-8 */
                     for (char *q = p->w->amenu; *q; q++)
                         if ((u8)*q < 32)
                             *q = '?';
@@ -798,7 +824,10 @@ void proc_syscall(regs *r) {
                     p->f1 = (int)b;
                     break;
                 case 4:
-                    win_place(p->w, -1, -1, (int)b, (int)c);
+                    if ((long)b >= 0 && (b > 1000 || c > 1000))
+                        v = VE_INVAL;
+                    else
+                        win_place(p->w, -1, -1, (int)b, (int)c);
                     break;
                 case 5: /* back to full size: first the normal size of the package, so
                            F5 later returns to a usable window and not to the mini size */
@@ -825,21 +854,22 @@ void proc_syscall(regs *r) {
                 v = VE_INVAL;
                 break;
             }
-            u64 need = (u64)iw * ih, have = (u64)p->im[sl].w * p->im[sl].h;
-            if (!p->im[sl].px || have < need) {
-                if (p->imbytes - (p->im[sl].px ? have : 0) + need > IMGMAX) {
+            u64 need = (u64)iw * ih, have = p->im[sl].px ? p->im[sl].cap : 0;
+            if (have < need) {
+                if (p->imbytes - have + need > IMGMAX) {
                     v = VE_NOSPC;
                     break;
                 }
-                if (p->im[sl].px)
-                    p->imbytes -= have;
+                p->imbytes -= have;
                 kfree(p->im[sl].px);
                 p->im[sl].px = kmalloc(need);
                 p->im[sl].w = p->im[sl].h = 0;
+                p->im[sl].cap = 0;
                 if (!p->im[sl].px) {
                     v = VE_NOSPC;
                     break;
                 }
+                p->im[sl].cap = need;
                 p->imbytes += need;
             }
             memcpy(p->im[sl].px, (void *)a, (u64)iw * ih);
@@ -904,8 +934,9 @@ void proc_syscall(regs *r) {
             p->brk = o;
             break;
         }
-        case 9:
-            v = key_down((u8)a);
+        case 9: /* held keys only for the window in front and only while no menu or dialog of
+                   the system is open: otherwise a program could follow what is typed elsewhere */
+            v = ui_keys_free && p->w && win_top() == p->w ? key_down((u8)a) : 0;
             break;
         case 10:
             v = cfg_lang;
@@ -969,7 +1000,7 @@ void proc_syscall(regs *r) {
                 v = VE_DENIED;
                 break;
             }
-            if (!strcmp(pa, p->base)) {
+            if (!strcmp(pa, p->base) || keep(p, pa)) {
                 v = VE_DENIED;
                 break;
             }
@@ -982,7 +1013,7 @@ void proc_syscall(regs *r) {
                 v = VE_DENIED;
                 break;
             }
-            if (!strcmp(pa, p->base)) {
+            if (!strcmp(pa, p->base) || keep(p, pa) || keep(p, pb)) {
                 v = VE_DENIED;
                 break;
             }
@@ -1073,6 +1104,23 @@ static int runnable(proc_t *p) {
 }
 /* Closing: a program that asked for it (mode 2) gets Esc and runs at once until it has ended or
  * waits for the user again. So it can ask about unsaved changes, also when switching off. */
+/* A program that keeps refusing (three times within ten seconds) can be ended anyway: no program
+ * may stay on the screen against the will of the user, also not in full screen. */
+static int refused(proc_t *p) {
+    if (ticks - p->cl_t > 1000)
+        p->cl_n = 0;
+    p->cl_t = ticks;
+    if (++p->cl_n < 3)
+        return 0;
+    p->cl_n = 0;
+    char m[120];
+    ksnprintf(m, 120,
+              TR("\"%s\" lässt sich nicht schließen. Sofort beenden? Nicht Gespeichertes geht "
+                 "verloren.",
+                 "\"%s\" does not close. End it now? Anything not saved is lost."),
+              p->w ? p->w->title : p->name);
+    return dlg_confirm(TR("Programm beenden", "End program"), m);
+}
 static int pw_close(win_t *w) {
     proc_t *p = w->st;
     if (p->state > P_WAIT)
@@ -1087,16 +1135,17 @@ static int pw_close(win_t *w) {
                 break; /* it has taken Esc and waits again: it stays open */
             if (runnable(p)) {
                 p->state = P_RUN;
+                u64 d0 = dlg_ticks;
                 proc_run(p);
-                end = ticks + 300; /* time for a dialog does not count */
+                end += dlg_ticks - d0; /* time in a dialog does not count, busy time does */
             } else
                 idle();
         }
-        return p->state > P_WAIT;
+        return p->state > P_WAIT || refused(p);
     }
     if (p->esc && !ui_quitting) {
         pkey_add(p, K_ESC);
-        return 0;
+        return refused(p);
     }
     return 1;
 }
@@ -1151,11 +1200,13 @@ static int load(const u8 *b, u64 n, const char *base) {
     int ns;
     if (!elf_check(el, en, &entry, s, &ns))
         return VE_FORMAT;
-    (void)n;
     proc_t *p = kmalloc(sizeof *p);
     if (!p)
         return VE_NOSPC;
     memset(p, 0, sizeof *p);
+    p->hash = 0xcbf29ce484222325ull; /* FNV-1a over the whole package */
+    for (u64 i = 0; i < n; i++)
+        p->hash = (p->hash ^ b[i]) * 0x100000001b3ull;
     p->cells = kmalloc(CMAX * RMAX * 4);
     void *rt = pg_alloc();
     if (!p->cells || !rt) {
@@ -1280,24 +1331,24 @@ static const struct {
     const char *name;
     const u8 *d;
     u64 n;
-    u8 sys, single;
-} builtin[] = {{"snake", pkg_snake, sizeof pkg_snake, 0, 0},
-               {"bricks", pkg_bricks, sizeof pkg_bricks, 0, 0},
-               {"novastrike", pkg_novastrike, sizeof pkg_novastrike, 0, 0},
-               {"xzn", pkg_xzn, sizeof pkg_xzn, 0, 0},
-               {"pong", pkg_pong, sizeof pkg_pong, 0, 0},
-               {"invaders", pkg_invaders, sizeof pkg_invaders, 0, 0},
-               {"chomp", pkg_chomp, sizeof pkg_chomp, 0, 0},
-               {"mines", pkg_mines, sizeof pkg_mines, 0, 0},
-               {"calc", pkg_calc, sizeof pkg_calc, 1, 0},
-               {"calendar", pkg_calendar, sizeof pkg_calendar, 1, 1},
-               {"clock", pkg_clock, sizeof pkg_clock, 1, 1},
-               {"write", pkg_write, sizeof pkg_write, 1, 0},
-               {"view", pkg_view, sizeof pkg_view, 1, 0},
-               {"paint", pkg_paint, sizeof pkg_paint, 1, 1},
-               {"files", pkg_files, sizeof pkg_files, 1, 0},
-               {"commands", pkg_commands, sizeof pkg_commands, 1, 0},
-               {"web", pkg_web, sizeof pkg_web, 1, 1}};
+    u8 sys, single, lim;
+} builtin[] = {{"snake", pkg_snake, sizeof pkg_snake, 0, 0, 0},
+               {"bricks", pkg_bricks, sizeof pkg_bricks, 0, 0, 0},
+               {"novastrike", pkg_novastrike, sizeof pkg_novastrike, 0, 0, 0},
+               {"xzn", pkg_xzn, sizeof pkg_xzn, 0, 0, 0},
+               {"pong", pkg_pong, sizeof pkg_pong, 0, 0, 0},
+               {"invaders", pkg_invaders, sizeof pkg_invaders, 0, 0, 0},
+               {"chomp", pkg_chomp, sizeof pkg_chomp, 0, 0, 0},
+               {"mines", pkg_mines, sizeof pkg_mines, 0, 0, 0},
+               {"calc", pkg_calc, sizeof pkg_calc, 1, 0, 0},
+               {"calendar", pkg_calendar, sizeof pkg_calendar, 1, 1, 0},
+               {"clock", pkg_clock, sizeof pkg_clock, 1, 1, 0},
+               {"write", pkg_write, sizeof pkg_write, 1, 0, 0},
+               {"view", pkg_view, sizeof pkg_view, 0, 0, L_LIM | L_RO},
+               {"paint", pkg_paint, sizeof pkg_paint, 1, 1, 0},
+               {"files", pkg_files, sizeof pkg_files, 1, 0, 0},
+               {"commands", pkg_commands, sizeof pkg_commands, 1, 0, 0},
+               {"web", pkg_web, sizeof pkg_web, 0, 1, L_LIM | L_NET | L_INST}};
 #define NBUILT ((int)(sizeof builtin / sizeof builtin[0]))
 static int is_builtin(const char *n) {
     for (int i = 0; i < NBUILT; i++)
@@ -1318,7 +1369,18 @@ static int run_builtin(int i, const char *arg) {
     char d[VFS_PATH];
     if (builtin[i].sys)
         strlcpy_(d, "/system", VFS_PATH);
-    else {
+    else if (builtin[i].lim & L_NET) { /* the browser: bookmarks, history and cookies */
+        strlcpy_(d, "/system/browser", VFS_PATH);
+        if (fs_ok())
+            fsx_mkdir(d, fs_now());
+    } else if (builtin[i].lim) { /* the viewer: the folder of the picture, for the next one */
+        strlcpy_(d, fsx_home(), VFS_PATH);
+        if (arg && arg[0] == '/') {
+            strlcpy_(d, arg, VFS_PATH);
+            char *s = strrchr(d, '/');
+            s[s == d] = 0;
+        }
+    } else {
         ksnprintf(d, VFS_PATH, "/programs/%s/data", builtin[i].name);
         if (fs_ok()) {
             char a[VFS_PATH];
@@ -1334,8 +1396,12 @@ static int run_builtin(int i, const char *arg) {
     proc_t *p = lastp;
     p->bi = i;
     p->sys = builtin[i].sys;
-    if (arg)
+    p->lim = builtin[i].lim;
+    if (arg) {
         strlcpy_(p->arg, arg, VFS_PATH);
+        if (p->lim && !(p->lim & L_NET) && arg[0] == '/')
+            grant(p, arg); /* the picture itself, also when it lies in / */
+    }
     if (builtin[i].single)
         single_p[i] = p;
     if (!cur) { /* first steps at once: the window shows its real title and content */
@@ -1558,7 +1624,8 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
     static char pa[VFS_PATH], pb[VFS_PATH], t[80];
     long v = VE_DENIED;
     /* open, argument, home folder and the simple states are there for every program */
-    if (!p->sys && op != 0 && op != 1 && !(op == 14 && b == 0) && !(op == 13 && b <= 1))
+    if (!p->sys && op != 0 && op != 1 && !(op == 14 && b == 0) && !(op == 13 && b <= 1) &&
+        !(op == 4 && (p->lim & L_INST))) /* the browser installs, the kernel asks first */
         return VE_DENIED;
     __asm__("sti");
     switch (op) {
@@ -1574,10 +1641,17 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
                     v = VE_INVAL;
                     break;
                 }
-                /* a file goes through the access check, an address (with ://) does not */
-                if (strstr(pb, "://") || !strcmp(nm, "web"))
+                /* only the browser takes an address, everything else is a file and goes through
+                 * the access check: "x://../../system/..." is a path too */
+                if (!strcmp(nm, "web")) {
                     strlcpy_(pa, pb, VFS_PATH);
-                else if (!upath(p, c, pa)) {
+                    /* the browser may go online without asking: for another program it would
+                     * be a way out with data, so that program needs the permission itself */
+                    int ok = p->sys || (p->lim & L_NET) || net_allowed(p);
+                    __asm__("sti");
+                    if (!ok)
+                        break;
+                } else if (!upath(p, c, pa)) {
                     v = VE_DENIED;
                     break;
                 }

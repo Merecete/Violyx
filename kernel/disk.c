@@ -292,10 +292,18 @@ int fs_init(void) {
         return -1;
     }
     int old = 0;
-    for (int i = 0; i < nb; i++) {
-        if (bd[i].gone)
+    /* first the disk the system was started from: with Violyx on several disks it is that one */
+    for (int i = -1; i < nb; i++) {
+        blkdev *d = i < 0 ? 0 : &bd[i];
+        if (i < 0) {
+            for (int k = 0; k < nb && !d; k++)
+                if (!bd[k].gone && boot_drive(&bd[k]))
+                    d = &bd[k];
+            if (!d)
+                continue;
+        } else if (bd[i].gone)
             continue;
-        int r = probe(&bd[i]);
+        int r = probe(d);
         if (r == 1) {
             ok = 1;
             return 0;

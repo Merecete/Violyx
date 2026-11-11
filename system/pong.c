@@ -4,7 +4,7 @@
 #define PH  4
 #define WIN 7
 typedef struct {
-    int w, h, by, bx, vx, vy, py, cy, sp, sc, state, err;
+    int w, h, by, bx, vx, vy, py, cy, sp, sc, state, err, two; /* two: two players */
     u32 rng;
 } pong_t; /* Coordinates in 8.8 fixed point */
 static int prnd(pong_t *p, int n) {
@@ -41,17 +41,26 @@ static void pong_step(win_t *w) {
     if (p->state != 1)
         return;
     int maxp = (p->h - PH) << 8;
-    if (key_down(0x48) || key_down(0x11))
+    /* alone: arrows or W/S; two players: left W/S, right the arrows */
+    if (key_down(0x11) || (!p->two && key_down(0x48)))
         p->py -= 0xA0;
-    if (key_down(0x50) || key_down(0x1F))
+    if (key_down(0x1F) || (!p->two && key_down(0x50)))
         p->py += 0xA0;
     if (p->py < 0x100)
         p->py = 0x100;
     if (p->py > maxp)
         p->py = maxp;
-    int target = p->vx > 0 ? (p->by - ((PH / 2) << 8) + (p->err << 8)) : ((p->h - PH) / 2) << 8,
-        spd = 0x48 + p->sp * 2, d = target - p->cy; /* with a reaction limit, so it can be beaten */
-    p->cy += d > spd ? spd : d < -spd ? -spd : d;
+    if (p->two) {
+        if (key_down(0x48))
+            p->cy -= 0xA0;
+        if (key_down(0x50))
+            p->cy += 0xA0;
+    } else {
+        int target =
+                p->vx > 0 ? (p->by - ((PH / 2) << 8) + (p->err << 8)) : ((p->h - PH) / 2) << 8,
+            spd = 0x48 + p->sp * 2, d = target - p->cy; /* a reaction limit, so it can be beaten */
+        p->cy += d > spd ? spd : d < -spd ? -spd : d;
+    }
     if (p->cy < 0x100)
         p->cy = 0x100;
     if (p->cy > maxp)
@@ -97,7 +106,10 @@ static void pong_draw(win_t *w) {
     u8 bg = AT(C_VOID, C_DIM);
     cfill(w, bg);
     char s[40];
-    ksnprintf(s, 40, TR("Du  %d : %d  Violyx", "You  %d : %d  Violyx"), p->sp, p->sc);
+    if (p->two)
+        ksnprintf(s, 40, TR("Links  %d : %d  Rechts", "Left  %d : %d  Right"), p->sp, p->sc);
+    else
+        ksnprintf(s, 40, TR("Du  %d : %d  Violyx", "You  %d : %d  Violyx"), p->sp, p->sc);
     ctext(w, (p->w - (int)strlen(s)) / 2, 0, AT(C_VOID, C_GLOW), s);
     for (int y = 1; y < p->h; y += 2)
         cput(w, p->w / 2, y, 0xB3, bg);
@@ -111,7 +123,11 @@ static void pong_draw(win_t *w) {
         p->state == 0   ? TR("Enter startet das Spiel", "Press Enter to start")
         : p->state == 3 ? TR("Pause - P geht weiter", "Paused - press P")
         : p->state == 2
-            ? (p->sp >= WIN
+            ? (p->two ? (p->sp >= WIN ? TR("Links gewinnt! Enter = Neues Spiel",
+                                           "Left wins! Enter = New game")
+                                        : TR("Rechts gewinnt! Enter = Neues Spiel",
+                                             "Right wins! Enter = New game"))
+               : p->sp >= WIN
                    ? TR("Gewonnen! Enter = Neues Spiel", "You win! Enter = New game")
                    : TR("Violyx gewinnt. Enter = Neues Spiel", "Violyx wins. Enter = New game"))
             : 0;
@@ -121,11 +137,33 @@ static void pong_draw(win_t *w) {
             l++;
         ctext(w, (p->w - l) / 2, p->h / 2, AT(C_VOID, C_LAV), m);
     }
-    strlcpy_(w->foot, TR(" Pfeile oben/unten   P Pause ", " Up/Down arrows   P Pause "), 64);
+    if (p->state == 0 || p->state == 2) { /* the mode, changeable before a game */
+        const char *o = p->two ? TR("Zu zweit: links W/S, rechts Pfeile   (1 = allein)",
+                                    "Two players: left W/S, right arrows   (1 = alone)")
+                               : TR("Allein gegen Violyx   (2 = zu zweit)",
+                                    "Alone against Violyx   (2 = two players)");
+        ctext(w, (p->w - (int)strlen(o)) / 2, p->h / 2 + 2, AT(C_VOID, C_DIM), o);
+    }
+    strlcpy_(w->foot,
+             p->two ? TR(" Links W/S   Rechts Pfeile   P Pause ",
+                         " Left W/S   Right arrows   P Pause ")
+                    : TR(" Pfeile oben/unten   P Pause ", " Up/Down arrows   P Pause "),
+             64);
 }
 static void pong_key(win_t *w, key_t k) {
     pong_t *p = w->st;
-    if (k.key == K_ENTER) {
+    if (k.key == '1' || k.key == '2' || k.key == K_MENU + 1 || k.key == K_MENU + 2) {
+        int two = k.key == '2' || k.key == K_MENU + 2;
+        if (two != p->two || p->state == 2) { /* a new game in the other mode */
+            p->two = two;
+            pong_reset(p, w);
+        }
+    } else if (k.key == K_MENU + 3) {
+        if (p->state == 1)
+            p->state = 3;
+        else if (p->state == 3)
+            p->state = 1;
+    } else if (k.key == K_ENTER) {
         if (p->state == 0)
             p->state = 1;
         else if (p->state == 2) {
@@ -162,7 +200,9 @@ void app_pong(void) {
     win_t *w = win_open("Pong", 7, 2, 66, 20, &pong_app, p);
     if (w)
         w->fixed = 1;
-    win_menu(w, "Pong", "*Info");
+    win_menu(w, "Pong",
+             TR("*Info|Allein gegen Violyx (1)|Zu zweit (2)|Pause (P)",
+                "*Info|Alone against Violyx (1)|Two players (2)|Pause (P)"));
     if (!w) {
         kfree(p);
         return;

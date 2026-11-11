@@ -67,6 +67,7 @@ static u64 rep_at;
 #define PS(n)  (*(volatile u32 *)(op + 0x400 + (n) * 0x10))
 static int want, waitport, cur_kind, cur_slot, cur_hn, cur_vid, cur_pid, cur_cls;
 static void *cur_m;
+static int usb_ch; /* a drive came or went: the folder /drives is updated */
 static ring cur_ep0;
 static void ring_new(ring *r, int n) {
     r->t = dma_alloc(n * sizeof(trb));
@@ -162,15 +163,28 @@ static int command(u32 a, u32 b, u32 c, u32 d) {
         return -1;
     return (e.c >> 24) == 1 ? (int)(e.d >> 24) : -1;
 }
+/* One drive of a storage device. Card readers have several (SD, microSD, CF ...) and a slot
+ * without a card has no medium: it is asked again and again, so a card put in later appears. */
+#define MLUN 8
+struct msc;
+typedef struct {
+    struct msc *m;
+    blkdev *dev;
+    u8 n, ok, rmb; /* ok: a direct access drive, rmb: removable medium */
+    u64 next;      /* next look for a card */
+    char mdl[26];
+} mlun_t;
 typedef struct msc {
     hc_t *h;
-    int slot, in, out, port;
+    int slot, in, out, port, nlun, lun;
     ring ri, ro, ep0;
     u8 *buf, *big; /* big: 64 KiB that do not cross a 64 KiB boundary, for one TRB */
     u8 *cbw;
     u32 tag;
-    blkdev *dev;
+    mlun_t L[MLUN];
 } msc_t;
+#define NMSC 8
+static msc_t *mscs[NMSC]; /* the storage devices plugged in, for the look for cards */
 static int ctrl(int slot, ring *r, u32 rq, u16 val, u16 idx, u16 len, void *buf) {
     int in = rq & 0x80;
     put_trb(r, rq | (val & 0xFFFFu) << 16 | 0, idx | (u32)len << 16, 8,
@@ -228,6 +242,7 @@ static int scsi_b(msc_t *m, const u8 *cdb, int cl, u32 len, int in, u8 *buf) {
     *(u32 *)(c + 4) = ++m->tag;
     *(u32 *)(c + 8) = len;
     c[12] = in ? 0x80 : 0;
+    c[13] = (u8)m->lun;
     c[14] = cl;
     memcpy(c + 15, cdb, cl);
     int cc = 0;
@@ -265,10 +280,12 @@ static int m_ok(blkdev *d, msc_t *m) {
         return 0;
     UH = m->h;
     waitport = m->port;
+    m->lun = ((mlun_t *)d->p)->n;
     return 1;
 }
+#define MOF(d) (((mlun_t *)(d)->p)->m)
 static int m_rd(blkdev *d, u64 l, void *b) {
-    msc_t *m = d->p;
+    msc_t *m = MOF(d);
     u64 f = irq_off();
     int r = -1;
     if (m_ok(d, m)) {
@@ -281,7 +298,7 @@ static int m_rd(blkdev *d, u64 l, void *b) {
     return r;
 }
 static int m_wr(blkdev *d, u64 l, const void *b) {
-    msc_t *m = d->p;
+    msc_t *m = MOF(d);
     u64 f = irq_off();
     int r = -1;
     if (m_ok(d, m)) {
@@ -294,7 +311,7 @@ static int m_wr(blkdev *d, u64 l, const void *b) {
 }
 /* Up to 128 sectors per READ(10)/WRITE(10): one command instead of 128 */
 static int m_rwn(blkdev *d, u64 l, u32 n, u8 *b, int wr) {
-    msc_t *m = d->p;
+    msc_t *m = MOF(d);
     int r = 0;
     while (n && !r) {
         u32 k = n > 128 ? 128 : n;
@@ -323,7 +340,7 @@ static int m_wrn(blkdev *d, u64 l, u32 n, const void *b) {
     return m_rwn(d, l, n, (u8 *)b, 1);
 }
 static int m_fl(blkdev *d) {
-    msc_t *m = d->p;
+    msc_t *m = MOF(d);
     u64 f = irq_off();
     if (m_ok(d, m)) {
         u8 c[10] = {0x35};
@@ -335,7 +352,7 @@ static int m_fl(blkdev *d) {
 }
 /* START STOP UNIT with Start = 0: the stick finishes its work and stops */
 static int m_off(blkdev *d) {
-    msc_t *m = d->p;
+    msc_t *m = MOF(d);
     u64 f = irq_off();
     if (m_ok(d, m)) {
         u8 c[6] = {0x1B, 0, 0, 0, 0, 0};
@@ -345,52 +362,134 @@ static int m_off(blkdev *d) {
     irq_on(f);
     return 0;
 }
-static void msc_start(msc_t *m) {
-    u8 tur[6] = {0}, sense[6] = {3, 0, 0, 0, 18, 0}, inq[6] = {0x12, 0, 0, 0, 36, 0};
-    int ok = 0;
-    static char mdl[26];
-    mdl[0] = 0;
-    if (!scsi(m, inq, 6, 36, 1)) {
-        int k = 0;
-        for (int i = 8; i < 32; i++) {
-            if (i == 16 && k && mdl[k - 1] != ' ')
-                mdl[k++] = ' ';
-            u8 c = m->buf[i];
-            if (c < 32 || c > 126)
-                c = ' ';
-            if (c == ' ' && (!k || mdl[k - 1] == ' '))
-                continue;
-            mdl[k++] = (char)c;
-        }
-        while (k && mdl[k - 1] == ' ')
-            k--;
-        mdl[k] = 0;
-    }
-    for (int i = 0; i < 40 && !ok; i++) {
-        ok = !scsi(m, tur, 6, 0, 0);
-        if (!ok) {
-            scsi(m, sense, 6, 18, 1);
-            udelay(100000);
-        }
-    }
-    if (!ok)
-        return;
+/* TEST UNIT READY: 0 ready, 1 no medium (or not yet), 2 medium changed, -1 no answer */
+static int m_ready(msc_t *m) {
+    u8 tur[6] = {0}, sense[6] = {3, 0, 0, 0, 18, 0};
+    if (!scsi(m, tur, 6, 0, 0))
+        return 0;
+    m->buf[2] = m->buf[12] = 0;
+    if (scsi(m, sense, 6, 18, 1))
+        return -1;
+    int key = m->buf[2] & 15, asc = m->buf[12];
+    return key == 6 && asc == 0x28 ? 2 : 1;
+}
+/* A medium is in the drive: its size, then it becomes a drive of the system */
+static void m_attach(mlun_t *L) {
+    msc_t *m = L->m;
     u8 c[10] = {0x25};
     if (scsi(m, c, 10, 8, 1))
         return;
     u8 *b = m->buf;
     u32 last = b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3],
         bs = b[4] << 24 | b[5] << 16 | b[6] << 8 | b[7];
-    if (bs == 512) {
-        m->dev = blk_register("USB", (u64)last + 1, m, m_rd, m_wr, m_fl);
-        if (m->dev) {
-            m->dev->usb = 1;
-            m->dev->off = m_off;
-            m->dev->rdn = m_rdn;
-            m->dev->wrn = m_wrn;
-            strlcpy_(m->dev->model, mdl, 41);
+    if (bs != 512 || !last)
+        return;
+    L->dev = blk_register("USB", (u64)last + 1, L, m_rd, m_wr, m_fl);
+    if (L->dev) {
+        L->dev->usb = 1;
+        L->dev->off = m_off;
+        L->dev->rdn = m_rdn;
+        L->dev->wrn = m_wrn;
+        strlcpy_(L->dev->model, L->mdl, 41);
+        usb_ch = 1;
+    }
+}
+/* Endpoint 0 after a STALL (e.g. GET MAX LUN of a device with only one drive) */
+static void ep0_reset(msc_t *m) {
+    command(0, 0, 0, (14 << 10) | (m->slot << 24) | (1 << 16));
+    u64 q = phys(&m->ep0.t[m->ep0.i]) | m->ep0.cy;
+    command(q, q >> 32, 0, (16 << 10) | (m->slot << 24) | (1 << 16));
+}
+static void msc_start(msc_t *m, int ifn) {
+    u8 inq[6] = {0x12, 0, 0, 0, 36, 0};
+    /* GET MAX LUN: card readers have one drive per slot */
+    m->nlun = 1;
+    m->buf[0] = 0;
+    if (!ctrl(m->slot, &m->ep0, 0xA1 | (0xFE << 8), 0, (u16)ifn, 1, m->buf))
+        m->nlun = (m->buf[0] & 15) + 1;
+    else
+        ep0_reset(m);
+    if (m->nlun > MLUN)
+        m->nlun = MLUN;
+    for (int i = 0; i < m->nlun; i++) {
+        mlun_t *L = &m->L[i];
+        L->m = m;
+        L->n = (u8)i;
+        m->lun = i;
+        L->mdl[0] = 0;
+        if (scsi(m, inq, 6, 36, 1))
+            continue;
+        L->ok = (m->buf[0] & 0x1F) == 0; /* a direct access drive, not a CD */
+        L->rmb = m->buf[1] >> 7;
+        int k = 0;
+        for (int j = 8; j < 32; j++) {
+            if (j == 16 && k && L->mdl[k - 1] != ' ')
+                L->mdl[k++] = ' ';
+            u8 c = m->buf[j];
+            if (c < 32 || c > 126)
+                c = ' ';
+            if (c == ' ' && (!k || L->mdl[k - 1] == ' '))
+                continue;
+            L->mdl[k++] = (char)c;
+        }
+        while (k && L->mdl[k - 1] == ' ')
+            k--;
+        L->mdl[k] = 0;
+        if (!L->ok)
+            continue;
+        /* a stick needs a moment; an empty card slot says so at once and is asked again later */
+        for (int t = 0; t < 40; t++) {
+            int r = m_ready(m);
+            if (!r) {
+                m_attach(L);
+                break;
+            }
+            if (r == 1 && m->buf[12] == 0x3A) /* MEDIUM NOT PRESENT */
+                break;
+            udelay(100000);
         }
     }
+    for (int i = 0; i < NMSC; i++)
+        if (!mscs[i]) {
+            mscs[i] = m;
+            break;
+        }
+}
+/* Cards that are put in or taken out: about once a second, only drives with a removable medium */
+static void msc_poll(void) {
+    for (int i = 0; i < NMSC; i++) {
+        msc_t *m = mscs[i];
+        if (!m)
+            continue;
+        for (int j = 0; j < m->nlun; j++) {
+            mlun_t *L = &m->L[j];
+            if (!L->ok || (L->dev && !L->rmb) || ticks < L->next)
+                continue;
+            L->next = ticks + (L->dev ? 200 : 100);
+            UH = m->h;
+            waitport = m->port;
+            m->lun = j;
+            int r = m_ready(m);
+            waitport = 0;
+            if (L->dev && r) { /* taken out or changed */
+                blk_gone(L->dev);
+                L->dev = 0;
+                usb_ch = 1;
+                L->next = 0;
+            } else if (!L->dev && !r)
+                m_attach(L);
+        }
+    }
+}
+static void msc_gone(msc_t *m) {
+    for (int i = 0; i < NMSC; i++)
+        if (mscs[i] == m)
+            mscs[i] = 0;
+    for (int j = 0; j < m->nlun; j++)
+        if (m->L[j].dev) {
+            blk_gone(m->L[j].dev);
+            m->L[j].dev = 0;
+        }
 }
 #define IC(i) ((u32 *)(ictx + (i) * csz))
 /* ---------- USB audio (class 1 and 2): playback through an isochronous endpoint ---------- The
@@ -974,7 +1073,7 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
         e[4] = 512;
         if (command(phys(ictx), phys(ictx) >> 32, 0, (12 << 10) | (slot << 24)) < 0)
             return;
-        msc_start(m);
+        msc_start(m, msi);
         return;
     }
     if (ifn < 0 || !epa || usb_keyboards >= MAXK)
@@ -1015,7 +1114,6 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
 /* Bookkeeping for plugging and unplugging, also behind hubs */
 static ud_t kids[48];
 static u8 kid_used[48];
-static int usb_ch;
 int usb_hold;
 static ud_t *kid_new(void) {
     for (int i = 0; i < 48; i++)
@@ -1042,8 +1140,8 @@ static void dev_gone(ud_t *q) {
             q->kid[i] = 0;
             q->ktr[i] = 0;
         }
-    if (q->kind == 2 && q->m && q->m->dev)
-        blk_gone(q->m->dev);
+    if (q->kind == 2 && q->m)
+        msc_gone(q->m);
     if (q->kind == 4 || (ua_found && UA.h == UH && UA.slot == q->slot))
         ua_gone();
     if (q->kind == 1) {
@@ -1202,6 +1300,7 @@ void usb_hotplug(void) {
                 hub_poll(&pt[n]);
         }
     }
+    msc_poll();
     UH = sv;
     irq_on(f);
     if (usb_ch)

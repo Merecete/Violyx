@@ -57,6 +57,9 @@ u64 heap_free(void);
 void *dma_alloc(size_t);
 u64 phys(const void *);
 void mmio_map(u64, u64);
+int efi_available(void); /* started by UEFI, variables can be set */
+int efi_add_boot(int idx, u64 start, u64 len, const u8 *guid);
+unsigned int net_rand(void);
 
 /* main.c */
 extern volatile u64 ticks;
@@ -287,6 +290,14 @@ enum {
     C_ORCH,
     C_GLOW
 };
+/* Colours of the logo: with ui_fixed 3 (cells) or fixed 2 (ui_blit) these places of the palette
+ * show the rows of the logo and its shadow instead. The logo pictures use none of them otherwise. */
+#define L_ROW1  C_HOT
+#define L_ROW2  C_ORCH
+#define L_ROW3  C_NEON
+#define L_ROW4  C_VIOLET
+#define L_ROW5  C_WALL
+#define L_SHADE C_PANEL
 #define AT(b, f) (((b) << 4) | (f))
 
 /* ui.c */
@@ -358,6 +369,7 @@ int prog_wants(struct win *, int);
 u8 gfx_newid(void);
 void cputg(struct win *, int, int, u8, const u8 *, int, int, int);
 extern int ui_quitting;
+extern int ui_keys_free; /* 1 while the window in front gets the keys, no system menu open */
 u32 ui_rgb(int);
 void put8(int, int, u8, u8, u8);
 void cput8(struct win *, int, int, u8, u8, u8);

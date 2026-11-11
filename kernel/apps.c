@@ -494,7 +494,7 @@ static void in_draw(win_t *w) {
 }
 static const app_t in_app = {in_draw, 0, 0, 0, 0};
 void app_info(void) {
-    win_open("Systeminfo", 18, 6, 50, 12, &in_app, 0);
+    win_open(TR("Systeminfo", "System info"), 18, 6, 50, 12, &in_app, 0);
 }
 /* ---------- Help ---------- */
 static const char *help_de[] = {"Willkommen bei Violyx!",

@@ -87,6 +87,12 @@ static u8 *fb;
 static u32 fbw, fbh, fbp, fbb, fbr, fbg, fbl;
 static int sc = 1, ox, oy, force = 1, pcx = -1, pcy = -1;
 static u32 col[256], colv[16]; /* colv: the violet colours 0-15 for programs and pictures */
+static u32 coll[16];           /* colv with the colours of the logo, cells with bit 25 */
+/* The logo: five rows from pink to deep violet, and its shadow. They take the places of colours
+ * the logo pictures do not use otherwise (see os.h, L_ROW1 ...). */
+static const u8 logo_rgb[6][4] = {{L_ROW1, 0xFB, 0x00, 0xBB}, {L_ROW2, 0xEB, 0x00, 0xB3},
+                                  {L_ROW3, 0xCA, 0x02, 0xB5}, {L_ROW4, 0x98, 0x1E, 0xC9},
+                                  {L_ROW5, 0x48, 0x11, 0x87}, {L_SHADE, 0x16, 0x0E, 0x25}};
 int ui_fixed; /* cells drawn while set keep the violet colours whatever the colour scheme */
 static u8 pal[16][3];
 static int plevel = 16;
@@ -170,7 +176,8 @@ static void cell(int x, int y, u32 v, int ul) {
         return;
     }
     const u8 *g = font[v & 0xFF];
-    const u32 *lo = (v >> 24) & 1 ? colv : col; /* bit 24: fixed violet colours */
+    /* bit 24: fixed violet colours, bit 25: those of the logo */
+    const u32 *lo = (v >> 25) & 1 ? coll : (v >> 24) & 1 ? colv : col;
     u8 fi = (v >> 8) & 255, bi = (v >> 16) & 255;
     u32 fg = fi < 16 ? lo[fi] : col[fi], bg = bi < 16 ? lo[bi] : col[bi];
     for (int r = 0; r < 16; r++) {
@@ -422,6 +429,10 @@ void win_place(win_t *w, int x, int y, int cols, int rows) {
         cols = W - 2;
     if (rows + 2 > H - 2)
         rows = H - 4;
+    if (cols < 4)
+        cols = 4;
+    if (rows < 1)
+        rows = 1;
     w->w = cols + 2;
     w->h = rows + 2;
     w->x = x < 0 ? (W - w->w) / 2 : x;
@@ -432,6 +443,10 @@ void win_resize(win_t *w, int cols, int rows) {
         cols = W - 2;
     if (rows + 2 > H - 2)
         rows = H - 4;
+    if (cols < 4)
+        cols = 4;
+    if (rows < 1)
+        rows = 1;
     w->w = cols + 2;
     w->h = rows + 2;
     w->x = (W - w->w) / 2;
@@ -453,6 +468,7 @@ int ui_can_quit(void) {
     return 1;
 }
 u32 ui_rgb(int i) {
+    i &= 15;
     return (u32)pal[i][0] << 16 | (u32)pal[i][1] << 8 | pal[i][2];
 }
 static void a_reboot(void) {
@@ -1184,6 +1200,12 @@ static void pal_set(int level) {
         g = q[1] * level / 16;
         b = q[2] * level / 16;
         colv[i] = (r << fbr) | (g << fbg) | (b << fbl);
+        coll[i] = colv[i];
+    }
+    for (int i = 0; i < 6; i++) {
+        const u8 *q = logo_rgb[i];
+        u32 r = q[1] * level / 16, g = q[2] * level / 16, b = q[3] * level / 16;
+        coll[q[0]] = (r << fbr) | (g << fbg) | (b << fbl);
     }
     static const u8 L[6] = {0, 95, 135, 175, 215, 255};
     for (int i = 16; i < 256; i++) {
@@ -1312,7 +1334,7 @@ void ui_blit(const u8 *img, const u8 *prev, int w, int h, int fixed) {
     u64 n = (u64)w * bs * fbb;
     if (n > sizeof line)
         return;
-    const u32 *lo = fixed ? colv : col;
+    const u32 *lo = fixed == 2 ? coll : fixed ? colv : col;
     for (int y = 0; y < h; y++) {
         const u8 *row = img + (u64)y * w;
         if (prev && !memcmp(row, prev + (u64)y * w, w))
@@ -1349,9 +1371,9 @@ void ui_splash(void) {
         "#   #  ###   ###   #     #   #  #   #", "#   #   #   #   #  #      # #    # # ",
         "#   #   #   #   #  #       #      #  ", " # #    #   #   #  #       #     # # ",
         "  #    ###   ###   #####   #    #   #"};
-    static const u8 c[] = {C_GLOW, C_LAV, C_NEON, C_VIOLET, C_SEL};
+    static const u8 c[] = {L_ROW1, L_ROW2, L_ROW3, L_ROW4, L_ROW5};
     int lx = (W - 74) / 2, ly = (H - 5) / 2;
-    ui_fixed = 1; /* the boot logo always stays violet */
+    ui_fixed = 3; /* the boot logo always keeps its colours */
     fill(0, 0, W, H, ' ', AT(C_VOID, C_VOID));
     for (int y = 0; y < 5; y++)
         for (int x = 0; l[y][x]; x++)
@@ -1409,6 +1431,7 @@ static int win_key(key_t k) {
     }
     return 0;
 }
+int ui_keys_free;
 void ui_run(void) {
     u64 last = 0, nf = 0, input = ticks;
     for (;;) {
@@ -1416,8 +1439,10 @@ void ui_run(void) {
         present();
         key_t k;
         while (!key_poll(&k)) {
+            ui_keys_free = 1; /* held keys belong to the window in front */
             /* screen saver after the chosen time without a key */
             if (cfg_saver && ticks - input >= (u64)saver_min[cfg_swait] * 6000) {
+                ui_keys_free = 0;
                 saver_run(cfg_saver);
                 input = ticks;
                 continue;
@@ -1445,6 +1470,7 @@ void ui_run(void) {
             }
             idle();
         }
+        ui_keys_free = 0; /* menus and dialogs of the system: no program sees the keys */
         input = ticks;
         if (k.key == K_REBOOT) {
             a_reboot();

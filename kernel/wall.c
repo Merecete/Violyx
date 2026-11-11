@@ -17,7 +17,7 @@ static void logo(void) {
         "#   #  ###   ###   #     #   #  #   #", "#   #   #   #   #  #      # #    # # ",
         "#   #   #   #   #  #       #      #  ", " # #    #   #   #  #       #     # # ",
         "  #    ###   ###   #####   #    #   #"};
-    static const u8 cl[] = {C_GLOW, C_LAV, C_NEON, C_VIOLET, C_SEL};
+    static const u8 cl[] = {L_ROW1, L_ROW2, L_ROW3, L_ROW4, L_ROW5};
     int lw = W, lh = H * 2;
     memset(limg, C_VOID, (u64)lw * lh);
     u32 r = 12345;
@@ -51,7 +51,7 @@ static void logo(void) {
                         int u = ox + x * s + i, v = oy + y * s + j;
                         limg[v * lw + u] = cl[y];
                         if (u + 1 < lw && v + 1 < lh && limg[(v + 1) * lw + u + 1] == C_VOID)
-                            limg[(v + 1) * lw + u + 1] = C_PANEL;
+                            limg[(v + 1) * lw + u + 1] = L_SHADE;
                     }
 }
 static int wfile(const char *p, u8 *out) {
@@ -80,7 +80,7 @@ static int sxy(int x, int half) {
 /* Pictures keep their violet colours whatever the colour scheme. */
 void wall_paint(void) {
     int of = ui_fixed;
-    ui_fixed = 1;
+    ui_fixed = wkind == 1 ? 3 : 1; /* the logo with its own colours */
     if (wkind == 1) {
         for (int y = 0; y < H; y++)
             for (int x = 0; x < W; x++)
