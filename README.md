@@ -15,7 +15,6 @@ used for the build tools.
 |---|---|
 | ![Programs](docs/programs.png) | ![Browser](docs/browser.png) |
 | ![XZN](docs/XZN-Violyx.png) | ![Games](docs/games.png) |
-| ![File-Manager](docs/file-manager.png) | ![Console](docs/commands.png) |
 
 | | | |
 |---|---|---|
