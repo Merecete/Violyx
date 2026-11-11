@@ -78,7 +78,118 @@ static int sxy(int x, int half) {
     return ((half * PH) / (H * 2)) * PW + (x * PW) / W;
 }
 /* Pictures keep their violet colours whatever the colour scheme. */
+/* ---------- a picture from the image viewer ----------
+ * Stored as it was decoded for the screen: picture cells of 4x8 pixels in 256 colours, scaled to
+ * another screen size when needed. The file keeps where the picture came from. */
+#define PFILE "/system/wallpaper.vpb"
+#define PID   250 /* picture id of the background, programs get 1-249 */
+static u8 *ppx, *pscr;       /* as stored, and scaled to the screen */
+static int pc, pr, pon, pok; /* size in cells, set, file there */
+static char psrc[VFS_PATH];
+static void photo_scale(void) {
+    gfx_forget(PID); /* the screen must not draw from the old memory any more */
+    kfree(pscr);
+    pscr = 0;
+    if (!ppx)
+        return;
+    int w = W * 4, h = H * 8, sw = pc * 4, sh = pr * 8;
+    pscr = kmalloc((u64)w * h);
+    if (!pscr)
+        return;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            pscr[y * w + x] = ppx[(y * sh / h) * sw + x * sw / w];
+}
+static int photo_keep(const u8 *px, int cols, int rows, const char *src) {
+    u8 *n = kmalloc((u64)cols * rows * 32);
+    if (!n)
+        return VE_NOSPC;
+    memcpy(n, px, (u64)cols * rows * 32);
+    kfree(ppx);
+    ppx = n;
+    pc = cols;
+    pr = rows;
+    strlcpy_(psrc, src, VFS_PATH);
+    pon = 1;
+    photo_scale();
+    wall_photo_check();
+    return 0;
+}
+int wall_photo_set(const u8 *px, int cols, int rows, const char *src) {
+    if (cols < 1 || rows < 1 || cols > 240 || rows > 100)
+        return VE_INVAL;
+    int r = photo_keep(px, cols, rows, src);
+    if (r || !fs_ok())
+        return r;
+    u64 n = 8 + VFS_PATH + (u64)cols * rows * 32;
+    u8 *b = kmalloc(n);
+    if (!b)
+        return VE_NOSPC;
+    memset(b, 0, 8 + VFS_PATH);
+    memcpy(b, "VPB1", 4);
+    b[4] = (u8)cols, b[5] = (u8)(cols >> 8), b[6] = (u8)rows, b[7] = (u8)(rows >> 8);
+    strlcpy_((char *)b + 8, src, VFS_PATH);
+    memcpy(b + 8 + VFS_PATH, px, (u64)cols * rows * 32);
+    r = vfs_write(PFILE, b, n, fs_now());
+    kfree(b);
+    return r;
+}
+void wall_photo_clear(void) {
+    if (!pon)
+        return;
+    pon = pok = 0;
+    gfx_forget(PID);
+    kfree(ppx);
+    kfree(pscr);
+    ppx = pscr = 0;
+    if (fs_ok())
+        vfs_remove(PFILE);
+}
+void wall_photo_load(void) {
+    vfs_ent e;
+    if (!fs_ok() || vfs_stat(PFILE, &e) || e.size < 8 + VFS_PATH || e.size > 8 + VFS_PATH + 768000)
+        return;
+    u8 *b = kmalloc(e.size);
+    if (!b)
+        return;
+    int64_t n = vfs_read(PFILE, b, e.size);
+    int c = b[4] | b[5] << 8, r = b[6] | b[7] << 8;
+    b[8 + VFS_PATH - 1] = 0;
+    if (n == (int64_t)e.size && !memcmp(b, "VPB1", 4) && c >= 1 && r >= 1 && c <= 240 &&
+        r <= 100 && (u64)n == 8 + VFS_PATH + (u64)c * r * 32)
+        photo_keep(b + 8 + VFS_PATH, c, r, (const char *)b + 8);
+    kfree(b);
+}
+void wall_photo_check(void) {
+    pok = pon && pscr && fsx_exists(psrc);
+}
+const char *wall_photo_name(void) {
+    if (!pon)
+        return 0;
+    const char *b = strrchr(psrc, '/');
+    return b ? b + 1 : psrc;
+}
+static int pw_, ph_;
 void wall_paint(void) {
+    if (pok) {
+        if (pw_ != W || ph_ != H) {
+            pw_ = W, ph_ = H;
+            photo_scale();
+        }
+        if (pscr) {
+            int of = ui_fixed;
+            ui_fixed = 1;
+            for (int y = 1; y < H - 1; y++)
+                for (int x = 0; x < W; x++)
+                    gput(x, y, PID, pscr, W * 4, x, y);
+            ui_fixed = of;
+            return;
+        }
+    }
+    if (cfg_wall < 6) { /* the background of the settings */
+        fill(0, 1, W, H - 2, 0xB1, AT(C_WALL, C_DESK));
+        return;
+    }
     int of = ui_fixed;
     ui_fixed = wkind == 1 ? 3 : 1; /* the logo with its own colours */
     if (wkind == 1) {
@@ -92,6 +203,7 @@ void wall_paint(void) {
     ui_fixed = of;
 }
 int wall_use(const u8 *c) {
+    wall_photo_clear();
     memcpy(wimg, c, WSZ);
     wkind = 2;
     int r = 0;

@@ -45,6 +45,8 @@ static void idmap(u64 a, u64 n, int uc) {
         u64 *t = t4;
         for (int l = 0; l < 2; l++) {
             int i = l ? (p >> 30) & 511 : (p >> 39) & 255;
+            if (t[i] & (1 << 7)) /* a large page is there already: leave it */
+                goto next;
             if (!(t[i] & 1)) {
                 void *m = dma_alloc(4096);
                 memset(m, 0, 4096);
@@ -55,6 +57,7 @@ static void idmap(u64 a, u64 n, int uc) {
         u64 *e = &t[(p >> 21) & 511];
         if (!(*e & 1))
             *e = p | 3 | (1 << 7) | (uc ? (1 << 3) | (1 << 4) : 0);
+    next:;
     }
     __asm__ volatile("mov %%cr3,%0; mov %0,%%cr3" : "=r"(cr3));
 }
@@ -190,8 +193,11 @@ int efi_add_boot(int idx, u64 start, u64 len, const u8 *guid) {
     u32 at;
     u64 sz = sizeof ord;
     wname(nm, "BootOrder");
-    if (get(nm, &at, &sz, ord))
+    u64 r = get(nm, &at, &sz, ord);
+    if (r == 0x800000000000000Eull) /* there is no order yet */
         sz = 0;
+    else if (r || sz % 2) /* unreadable or too long: never write an order that lost entries */
+        return -4;
     for (u64 i = 0; i < sz / 2; i++)
         if (ord[i] == k)
             return 0;

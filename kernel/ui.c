@@ -159,6 +159,11 @@ static void gcell(int x, int y, u32 v) {
         }
     }
 }
+void gfx_forget(u8 id) {
+    for (int i = 0; i < gn; i++)
+        if (gt[i].id == id)
+            gt[i].px = 0;
+}
 void gput(int x, int y, u8 id, const u8 *px, int stride, int ix, int iy) {
     if (x >= 0 && y >= 0 && x < W && y < H) {
         gslot(id, px, stride);
@@ -729,10 +734,7 @@ void ui_render(void) {
         draw_win(z[nw - 1], 1);
         return;
     }
-    if (cfg_wall >= 6)
-        wall_paint();
-    else
-        fill(0, 1, W, H - 2, 0xB1, A_DESK);
+    wall_paint();
     bar(-1);
     status();
     for (int i = 0; i < nw; i++)
@@ -867,17 +869,55 @@ void dlg_frame(const char *t, int w, int h, int *x, int *y) {
     ksnprintf(b, 44, " %s ", t);
     text(*x + (w - (int)strlen(b)) / 2, *y, A_DLGT, b);
 }
+/* Long texts of messages and questions are broken into lines at the spaces (at most 64
+ * characters, counted in UTF-8 characters, and 6 lines) */
+#define WL 6
+static int wrap(const char *s, char l[WL][200], int *wid) {
+    int n = 0;
+    *wid = 0;
+    while (*s && n < WL) {
+        int len = 0, chars = 0, cut = 0, cutc = 0;
+        while (s[len]) {
+            if ((s[len] & 0xC0) != 0x80) {
+                if (chars == 64)
+                    break;
+                chars++;
+            }
+            if (s[len] == ' ') {
+                cut = len;
+                cutc = chars - 1;
+            }
+            len++;
+        }
+        if (s[len] && cut) {
+            len = cut;
+            chars = cutc;
+        }
+        if (len > 199)
+            len = 199;
+        memcpy(l[n], s, len);
+        l[n][len] = 0;
+        if (chars > *wid)
+            *wid = chars;
+        n++;
+        s += len;
+        while (*s == ' ')
+            s++;
+    }
+    return n;
+}
 void dlg_msg(const char *t, const char *s) {
-    int x, y;
-    int w = strlen(s) + 6;
+    int x, y, w;
+    static char l[WL][200];
+    int n = wrap(s, l, &w);
+    w += 6;
     if (w < 30)
         w = 30;
-    if (w > 76)
-        w = 76;
 redraw:
-    dlg_box(t, w, 7, &x, &y);
-    text(x + 3, y + 2, A_DLG, s);
-    text(x + w / 2 - 6, y + 4, A_SEL, TR(" [ Enter ] ", " [ Enter ] "));
+    dlg_box(t, w, 6 + n, &x, &y);
+    for (int i = 0; i < n; i++)
+        text(x + 3, y + 2 + i, A_DLG, l[i]);
+    text(x + w / 2 - 6, y + 3 + n, A_SEL, TR(" [ Enter ] ", " [ Enter ] "));
     cx = -1;
     present();
     for (;;) {
@@ -889,17 +929,18 @@ redraw:
     }
 }
 int dlg_confirm(const char *t, const char *s) {
-    int x, y;
-    int w = strlen(s) + 6;
+    int x, y, w;
+    static char l[WL][200];
+    int n = wrap(s, l, &w);
+    w += 6;
     if (w < 34)
         w = 34;
-    if (w > 76)
-        w = 76;
 redraw:
-    dlg_box(t, w, 7, &x, &y);
-    text(x + 3, y + 2, A_DLG, s);
-    text(x + w / 2 - 11, y + 4, A_SEL, TR(" J = Ja ", " Y = Yes "));
-    text(x + w / 2 + 2, y + 4, A_SEL, TR(" N = Nein ", " N = No "));
+    dlg_box(t, w, 6 + n, &x, &y);
+    for (int i = 0; i < n; i++)
+        text(x + 3, y + 2 + i, A_DLG, l[i]);
+    text(x + w / 2 - 11, y + 3 + n, A_SEL, TR(" J = Ja ", " Y = Yes "));
+    text(x + w / 2 + 2, y + 3 + n, A_SEL, TR(" N = Nein ", " N = No "));
     cx = -1;
     present();
     for (;;) {
@@ -1304,6 +1345,7 @@ int dlg_savechoice(void) {
 void ui_init(void) {
     memcpy(pal, pal0, sizeof pal);
     wall_set(cfg_wall);
+    wall_photo_load();
 }
 void ui_goodbye(const char *a, const char *b) {
     memcpy(pal, pal0, sizeof pal);

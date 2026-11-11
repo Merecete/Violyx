@@ -147,6 +147,9 @@ static void se_draw(win_t *w) {
     cfill(w, T);
     ctext(w, 2, 0, HI, TR("Datum und Uhrzeit", "Date and time"));
     ctext(w, 2, 7, HI, TR("Darstellung", "Appearance"));
+    char pn[40]; /* a picture from the image viewer */
+    if (wall_photo_name())
+        ksnprintf(pn, 30, "%s %s", TR("Bild", "Picture"), wall_photo_name());
     for (int i = 0; i < 13; i++) {
         int y = i < 5 ? i + 1 : i + 3;
         char b[50];
@@ -170,7 +173,7 @@ static void se_draw(win_t *w) {
             ksnprintf(b, 50, "%17s  < %02d >", lb[i], v[i]);
         else
             ksnprintf(b, 50, "%17s  < %s >", lb[i],
-                      i == 5   ? wall_name(cfg_wall)
+                      i == 5   ? (wall_photo_name() ? pn : wall_name(cfg_wall))
                       : i == 6 ? scheme_name(cfg_scheme)
                       : i == 7 ? (cfg_lang ? "English" : "Deutsch")
                                : (cfg_kbd ? "US" : TR("Deutsch", "German")));
@@ -196,8 +199,12 @@ static void se_key(win_t *w, key_t k) {
         int d = k.key == K_RIGHT ? 1 : -1;
         s->msg = 0;
         if (s->sel >= 5) {
-            if (s->sel == 5)
-                wall_set((cfg_wall + WALLS + d) % WALLS);
+            if (s->sel == 5) {
+                if (wall_photo_name()) /* back to the background of the settings */
+                    wall_photo_clear();
+                else
+                    wall_set((cfg_wall + WALLS + d) % WALLS);
+            }
             else if (s->sel == 6)
                 scheme_set((cfg_scheme + SCHEMES + d) % SCHEMES);
             else if (s->sel == 7)

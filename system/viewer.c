@@ -197,6 +197,44 @@ static void step(win_t *w, int d) {
     }
     kfree(it);
 }
+/* The picture as background: decoded once more for the whole screen, filling it */
+static void as_wall(view_t *v) {
+    if (!v->data)
+        return;
+    if (!dlg_confirm(TR("Hintergrund", "Background"),
+                     TR("Dieses Bild als Hintergrund verwenden? Fehlt die Datei später, zum "
+                        "Beispiel weil der USB-Stick nicht steckt, gilt wieder der Hintergrund "
+                        "aus den Einstellungen.",
+                        "Use this picture as background? When the file is missing later, for "
+                        "example because the USB stick is not plugged in, the background from "
+                        "the settings is used again.")))
+        return;
+    int sw, sh;
+    ui_screen(&sw, &sh);
+    if (sw > 240)
+        sw = 240;
+    if (sh > 100)
+        sh = 100;
+    u8 *o = kmalloc(VOUT);
+    u8 *b = o ? kmalloc(8 + VFS_PATH + (u64)sw * sh * 32) : 0;
+    long k = b ? prog_decode(2, v->data, v->n, o, VOUT, sw, sh, (long)1 << 25, 15000, 0) : -1;
+    int c = k >= 12 ? o[0] | o[1] << 8 : 0, r = k >= 12 ? o[2] | o[3] << 8 : 0;
+    int ok = 0;
+    if (k == 12 + (long)c * r * 32 && c == sw && r == sh) {
+        memset(b, 0, 8 + VFS_PATH);
+        memcpy(b, "VPB1", 4);
+        b[4] = (u8)c, b[5] = (u8)(c >> 8), b[6] = (u8)r, b[7] = (u8)(r >> 8);
+        strlcpy_((char *)b + 8, v->path, VFS_PATH);
+        memcpy(b + 8 + VFS_PATH, o + 12, (u64)c * r * 32);
+        ok = !vx_sys(30, 18, (long)b, 0);
+    }
+    kfree(b);
+    kfree(o);
+    if (!ok)
+        dlg_msg(TR("Hintergrund", "Background"),
+                TR("Das Bild konnte nicht als Hintergrund gesetzt werden.",
+                   "The picture could not be set as background."));
+}
 static void vw_key(win_t *w, key_t k) {
     view_t *v = w->st;
     if (k.key == K_MENU + 1 || k.key == K_LEFT || k.key == K_PGUP)
@@ -209,7 +247,9 @@ static void vw_key(win_t *w, key_t k) {
     } else if (k.key == K_MENU + 4 || k.key == K_ENTER) {
         win_zoom(w);
         decode(v, cw(w), ch(w) - 1);
-    }
+    } else if (k.key == K_MENU + 5 || k.key == 'h' || k.key == 'H' || k.key == 'b' ||
+               k.key == 'B')
+        as_wall(v);
 }
 static void vw_free(win_t *w) {
     view_t *v = w->st;
@@ -249,9 +289,9 @@ static void app_view_(const char *path) {
     v->dr = v->lr = ch(w) - 1;
     win_menu(w, TR("Bildbetrachter", "Image viewer"),
              TR("*Info|Vorheriges Bild (Links)|Nächstes Bild (Rechts)|Anpassen an/aus (F)|"
-                "Vollbild (Enter)",
+                "Vollbild (Enter)|Als Hintergrund (H)",
                 "*Info|Previous image (Left)|Next image (Right)|Fit on/off (F)|"
-                "Full window (Enter)"));
+                "Full window (Enter)|Use as background (B)"));
 }
 void prog_main(void) {
     static char a[VFS_PATH];

@@ -244,6 +244,8 @@ u32 fs_now(void) {
 }
 static const char *DIRS[] = {"/system", "/programs", "/home", "/downloads", 0};
 /* Finds the Violyx GPT partition. 1 = found, 2 = old version */
+/* With several Violyx on one disk (next to other systems), the data that belongs to the started
+ * one: the Violyx partition right behind the boot partition the kernel was loaded from */
 static int probe(blkdev *d) {
     static u8 s[512];
     if (d->rd(d, 1, s) || memcmp(s, "EFI PART", 8))
@@ -252,38 +254,51 @@ static int probe(blkdev *d) {
     u32 cnt = *(u32 *)(s + 80), esz = *(u32 *)(s + 84);
     if (esz < 128 || esz > 512 || cnt > 512)
         return 0;
-    for (u32 i = 0; i < cnt; i++) {
-        u64 sec = el + i * esz / 512;
-        if (d->rd(d, sec, s))
-            return 0;
-        u8 *e = s + (i * esz) % 512;
-        if (memcmp(e, GUID, 16))
-            continue;
-        u64 lba = *(u64 *)(e + 32), last = *(u64 *)(e + 40);
-        if (last < lba)
-            return 0;
-        static u8 h[512];
-        if (d->rd(d, lba, h))
-            return 0;
-        if (!memcmp(h, "VIOLYXFS", 8))
-            return 2;
-        int fresh = !memcmp(h, "VIOFSNEW", 8);
-        if (!fresh && memcmp(h, "VIOFS2\0\0", 8))
-            return 0;
-        dev = d;
-        FS_LBA = lba;
-        FS_N = last - lba + 1;
-        vfs_dev v = {v_rd, v_wr, v_fl, lba, FS_N};
-        if (fresh) {
-            if (vfs_format(&v, fs_now()))
+    const u8 *bp = boot_drive(d) ? boot_part_guid() : 0;
+    u64 bend = 0, lba = 0, last = 0;
+    int found = 0;
+    for (int pass = 0; pass < 2; pass++)
+        for (u32 i = 0; i < cnt; i++) {
+            if (d->rd(d, el + i * esz / 512, s))
                 return 0;
-            for (int k = 0; DIRS[k]; k++)
-                vfs_mkdir(DIRS[k], fs_now());
-            return 1;
+            u8 *e = s + (i * esz) % 512;
+            u64 a = *(u64 *)(e + 32), z = *(u64 *)(e + 40);
+            if (!pass) {
+                if (bp && !memcmp(e + 16, bp, 16))
+                    bend = z + 1;
+                continue;
+            }
+            if (memcmp(e, GUID, 16) || z < a)
+                continue;
+            /* the first one, or the nearest behind the boot partition */
+            if (!found || (bend && (lba < bend || a < lba) && a >= bend)) {
+                lba = a;
+                last = z;
+                found = 1;
+            }
         }
-        return vfs_mount(&v) ? 0 : 1;
+    if (!found)
+        return 0;
+    static u8 h[512];
+    if (d->rd(d, lba, h))
+        return 0;
+    if (!memcmp(h, "VIOLYXFS", 8))
+        return 2;
+    int fresh = !memcmp(h, "VIOFSNEW", 8);
+    if (!fresh && memcmp(h, "VIOFS2\0\0", 8))
+        return 0;
+    dev = d;
+    FS_LBA = lba;
+    FS_N = last - lba + 1;
+    vfs_dev v = {v_rd, v_wr, v_fl, lba, FS_N};
+    if (fresh) {
+        if (vfs_format(&v, fs_now()))
+            return 0;
+        for (int k = 0; DIRS[k]; k++)
+            vfs_mkdir(DIRS[k], fs_now());
+        return 1;
     }
-    return 0;
+    return vfs_mount(&v) ? 0 : 1;
 }
 static char stbuf[48];
 int fs_init(void) {

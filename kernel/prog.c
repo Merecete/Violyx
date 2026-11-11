@@ -260,6 +260,7 @@ typedef struct {
 #define L_INST 2
 #define L_LIM  4 /* marks a limited built-in program */
 #define L_RO   8 /* may only read */
+#define L_WALL 16 /* may set a picture as background */
 #define NBG    4
 static proc_t *bgp[NBG];
 static proc_t *cur;
@@ -1344,7 +1345,7 @@ static const struct {
                {"calendar", pkg_calendar, sizeof pkg_calendar, 1, 1, 0},
                {"clock", pkg_clock, sizeof pkg_clock, 1, 1, 0},
                {"write", pkg_write, sizeof pkg_write, 1, 0, 0},
-               {"view", pkg_view, sizeof pkg_view, 0, 0, L_LIM | L_RO},
+               {"view", pkg_view, sizeof pkg_view, 0, 0, L_LIM | L_RO | L_WALL},
                {"paint", pkg_paint, sizeof pkg_paint, 1, 1, 0},
                {"files", pkg_files, sizeof pkg_files, 1, 0, 0},
                {"commands", pkg_commands, sizeof pkg_commands, 1, 0, 0},
@@ -1625,7 +1626,8 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
     long v = VE_DENIED;
     /* open, argument, home folder and the simple states are there for every program */
     if (!p->sys && op != 0 && op != 1 && !(op == 14 && b == 0) && !(op == 13 && b <= 1) &&
-        !(op == 4 && (p->lim & L_INST))) /* the browser installs, the kernel asks first */
+        !(op == 4 && (p->lim & L_INST)) && /* the browser installs, the kernel asks first */
+        !(op == 18 && (p->lim & L_WALL)))   /* the image viewer sets the background */
         return VE_DENIED;
     __asm__("sti");
     switch (op) {
@@ -1793,6 +1795,27 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
         case 17: /* is a path write protected? */
             v = sys_path(p, b, pa) ? fsx_protected(pa) : VE_INVAL;
             break;
+        case 18: { /* the picture of the image viewer as background: b = "VPB1", columns and
+                      rows (16 bit each), the path of the picture (VFS_PATH bytes), then the
+                      picture cells of 4x8 pixels */
+            const u8 *h = (const u8 *)b;
+            if (!uok(p, b, 8 + VFS_PATH, 0) || memcmp(h, "VPB1", 4)) {
+                v = VE_INVAL;
+                break;
+            }
+            int cc = h[4] | h[5] << 8, rr = h[6] | h[7] << 8;
+            if (cc < 1 || rr < 1 || cc > 240 || rr > 100 ||
+                !uok(p, b + 8 + VFS_PATH, (u64)cc * rr * 32, 0)) {
+                v = VE_INVAL;
+                break;
+            }
+            if (!upath(p, b + 8, pa)) { /* a picture the program may read itself */
+                v = VE_DENIED;
+                break;
+            }
+            v = wall_photo_set(h + 8 + VFS_PATH, cc, rr, pa);
+            break;
+        }
         default:
             v = VE_INVAL;
     }

@@ -57,6 +57,7 @@ u64 heap_free(void);
 void *dma_alloc(size_t);
 u64 phys(const void *);
 void mmio_map(u64, u64);
+const u8 *boot_part_guid(void);
 int efi_available(void); /* started by UEFI, variables can be set */
 int efi_add_boot(int idx, u64 start, u64 len, const u8 *guid);
 unsigned int net_rand(void);
@@ -365,6 +366,7 @@ void win_place(struct win *, int, int, int, int);
 void win_resize(struct win *, int cols, int rows);
 void win_menu(struct win *, const char *name, const char *items);
 void gput(int, int, u8, const u8 *, int, int, int);
+void gfx_forget(u8); /* a picture whose memory is freed */
 int prog_wants(struct win *, int);
 u8 gfx_newid(void);
 void cputg(struct win *, int, int, u8, const u8 *, int, int, int);
@@ -383,6 +385,14 @@ const char *wall_name(int);
 void wall_image(int);
 void wall_paint(void);
 int wall_open_file(const char *);
+/* A picture from the image viewer as background, in picture cells. It falls back to the chosen
+ * background while its file is missing (a stick that is not plugged in). */
+int wall_photo_set(const u8 *px, int cols, int rows, const char *src);
+void wall_photo_clear(void);
+void wall_photo_load(void);
+void wall_photo_check(void);
+const char *wall_photo_name(void); /* file name of the picture, 0 when there is none */
+int fsx_exists(const char *);
 void app_paint(void);
 void dlg_box(const char *, int w, int h, int *x, int *y);
 void dlg_frame(const char *, int w, int h, int *x, int *y);

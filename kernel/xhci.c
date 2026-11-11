@@ -171,6 +171,7 @@ typedef struct {
     struct msc *m;
     blkdev *dev;
     u8 n, ok, rmb; /* ok: a direct access drive, rmb: removable medium */
+    u8 dead;       /* answers missing: no more looks, so a broken device cannot slow down */
     u64 next;      /* next look for a card */
     char mdl[26];
 } mlun_t;
@@ -411,6 +412,7 @@ static void msc_start(msc_t *m, int ifn) {
         ep0_reset(m);
     if (m->nlun > MLUN)
         m->nlun = MLUN;
+    int budget = 60; /* at most 6 s of waiting for all drives together */
     for (int i = 0; i < m->nlun; i++) {
         mlun_t *L = &m->L[i];
         L->m = m;
@@ -438,7 +440,7 @@ static void msc_start(msc_t *m, int ifn) {
         if (!L->ok)
             continue;
         /* a stick needs a moment; an empty card slot says so at once and is asked again later */
-        for (int t = 0; t < 40; t++) {
+        for (int t = 0; t < 40 && budget > 0; t++, budget--) {
             int r = m_ready(m);
             if (!r) {
                 m_attach(L);
@@ -463,7 +465,7 @@ static void msc_poll(void) {
             continue;
         for (int j = 0; j < m->nlun; j++) {
             mlun_t *L = &m->L[j];
-            if (!L->ok || (L->dev && !L->rmb) || ticks < L->next)
+            if (!L->ok || L->dead >= 3 || (L->dev && !L->rmb) || ticks < L->next)
                 continue;
             L->next = ticks + (L->dev ? 200 : 100);
             UH = m->h;
@@ -471,7 +473,8 @@ static void msc_poll(void) {
             m->lun = j;
             int r = m_ready(m);
             waitport = 0;
-            if (L->dev && r) { /* taken out or changed */
+            L->dead = r < 0 ? L->dead + 1 : 0;
+            if (L->dev && r > 0) { /* taken out or changed (no answer is not enough) */
                 blk_gone(L->dev);
                 L->dev = 0;
                 usb_ch = 1;

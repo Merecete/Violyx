@@ -60,6 +60,7 @@ void drives_sync(void) {
                 break;
             }
     }
+    wall_photo_check();
 }
 void drives_reset(void) {
     for (int i = 0; i < MAXD; i++) {
@@ -210,6 +211,28 @@ int fsx_stat(const char *p, vfs_ent *e) {
         return fs_ok() ? vfs_stat(p, e) : VE_NOFS;
     int o = open_(i);
     return o ? o : dr[i].ex ? exf_stat(&dr[i].x, r, e) : fat_stat(&dr[i].v, r, e);
+}
+/* Is the file there? Without asking the user and without opening the drive for programs: only
+ * for the background picture, which falls back to the chosen background when its stick is gone */
+int fsx_exists(const char *p) {
+    int i;
+    const char *r;
+    vfs_ent e;
+    int k = split(p, &i, &r);
+    if (k == 0)
+        return fs_ok() && !vfs_stat(p, &e) && !e.dir;
+    if (k == 1 || i < 0 || i >= MAXD || !dr[i].d || dr[i].d->gone)
+        return 0;
+    drv_t *x = &dr[i];
+    int al = x->allowed, st = x->st;
+    x->allowed = 1; /* no question, only for this look */
+    int o = open_(i);
+    int ok = !o && !(x->ex ? exf_stat(&x->x, r, &e) : fat_stat(&x->v, r, &e)) && !e.dir;
+    if (!al) {
+        x->allowed = 0;
+        x->st = st;
+    }
+    return ok;
 }
 int64_t fsx_read(const char *p, void *b, u64 m) {
     int i;

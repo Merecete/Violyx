@@ -119,9 +119,11 @@ static uint8_t nearest(int r, int g, int b) {
     return e < d ? (uint8_t)(232 + gi) : (uint8_t)(16 + 36 * cr + 6 * cg + cb);
 }
 /* Mode 0 (browser): 4-byte header, tiny images are skipped. Mode 2 (image viewer): 12-byte header
- * that also holds the original and the shown size; bit 24 of bg enlarges small images to fit. */
+ * that also holds the original and the shown size; bit 24 of bg enlarges small images to fit, bit
+ * 25 fills the whole area and cuts off what sticks out (for a background). */
 static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32_t bg) {
-    int w, h, c, hd = mode == 2 ? 12 : 4, up = mode == 2 && (bg >> 24) & 1;
+    int w, h, c, hd = mode == 2 ? 12 : 4, up = mode == 2 && (bg >> 24) & 1,
+                 cover = mode == 2 && (bg >> 25) & 1;
     if (!stbi_info_from_memory(in, n, &w, &h, &c) || w < 1 || h < 1 || (long)w * h > 12000000L)
         return;
     if (mode == 0 && (w < MINPX || h < MINPX)) {
@@ -134,8 +136,22 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
         return;
     /* A cell has 4x8 pixels. Small images stay 1:1, large ones are scaled down to fit, the rest
      * stays background. */
-    long dw = w, dh = h;
-    if (up && dw < maxc * 4 && dh < maxr * 8) {
+    long dw = w, dh = h, sx = 0, sy = 0, sw = w, sh = h; /* the part of the image used */
+    if (cover) {
+        dw = maxc * 4;
+        dh = maxr * 8;
+        if ((long)w * dh > (long)h * dw) { /* wider than the area: cut left and right */
+            sw = h * dw / dh;
+            sx = (w - sw) / 2;
+        } else {
+            sh = w * dh / dw;
+            sy = (h - sh) / 2;
+        }
+        if (sw < 1)
+            sw = 1;
+        if (sh < 1)
+            sh = 1;
+    } else if (up && dw < maxc * 4 && dh < maxr * 8) {
         if (dw * maxr * 8 > dh * maxc * 4) {
             dh = dh * maxc * 4 / dw;
             dw = maxc * 4;
@@ -187,11 +203,11 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
     memset(o + hd, 2, pw * ph);
     int br = (bg >> 16) & 255, bgg = (bg >> 8) & 255, bb = bg & 255;
     for (long y = 0; y < dh; y++) {
-        long y0 = y * h / dh, y1 = (y + 1) * h / dh;
+        long y0 = sy + y * sh / dh, y1 = sy + (y + 1) * sh / dh;
         if (y1 <= y0)
             y1 = y0 + 1;
         for (long x = 0; x < dw; x++) {
-            long x0 = x * w / dw, x1 = (x + 1) * w / dw;
+            long x0 = sx + x * sw / dw, x1 = sx + (x + 1) * sw / dw;
             if (x1 <= x0)
                 x1 = x0 + 1;
             long sr = 0, sg = 0, sb = 0, sa = 0, cnt = 0;

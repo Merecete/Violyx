@@ -369,6 +369,10 @@ static int gpt_load(blkdev *d, gpt_t *g) {
         g->el >= d->sectors)
         return -1;
     g->secs = (g->cnt * g->esz + 511) / 512;
+    /* the table at the start and the copy at the end lie outside the usable area */
+    if (g->secs > 256 || g->el + g->secs > g->first || g->alt <= g->last ||
+        g->alt - g->last <= g->secs)
+        return -1;
     g->tb = kmalloc(g->secs * 512);
     if (!g->tb)
         return -1;
@@ -469,6 +473,9 @@ static void slots(gpt_t *g) {
         pname(e, s->name);
         s->bad = 0;
         if (!memcmp(e, T_ESP, 16) || !memcmp(e, T_MSR, 16) || !memcmp(e, T_WRE, 16))
+            s->bad = 1;
+        /* outside the usable area or overlapping another one: a damaged table, not touched */
+        if (s->a < g->first || s->b > g->last || s->a < pos)
             s->bad = 1;
         /* an earlier Violyx: its boot partition right in front belongs to it */
         if (!memcmp(e, T_VIO, 16) && j && nsl >= 2) {

@@ -400,6 +400,12 @@ int boot_drive(blkdev *d) {
         return 1;
     return 0;
 }
+/* unique GUID of the partition the kernel was loaded from, 0 if unknown */
+const u8 *boot_part_guid(void) {
+    static const u8 nul[16];
+    struct limine_file *k = kfreq.response ? kfreq.response->kernel_file : 0;
+    return k && memcmp(&k->gpt_part_uuid, nul, 16) ? (const u8 *)&k->gpt_part_uuid : 0;
+}
 int fs_live(void) {
     return kfreq.response && kfreq.response->kernel_file &&
            kfreq.response->kernel_file->media_type == LIMINE_MEDIA_TYPE_OPTICAL;
