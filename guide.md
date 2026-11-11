@@ -144,6 +144,11 @@ Violyx reads nothing from a stick until you allow it: the first time you open a 
 asks for confirmation. Answer `Y` or `J` to read and save files there. Only USB drives are
 listed, never internal disks. Use **E** in Files or `eject` in Commands before unplugging.
 
+SD and other memory cards work in a USB card reader. Every slot of the reader is its own
+drive, and a card appears about a second after you put it in, even if the reader was
+plugged in before. Card readers built into the PC that are not connected over USB are not
+supported.
+
 Sticks can be plugged in while Violyx is running, and the live ISO can save to them too.
 Files use long names and are compatible with Windows, macOS and Linux. exFAT also holds
 files over 4 GB, as most sticks of 64 GB and more come formatted. NTFS is not supported.
@@ -162,7 +167,7 @@ games resize with their window and have sound.
 
 | Game | Goal | Keys |
 |---|---|---|
-| Pong | Beat the computer | Up and Down or W and S move |
+| Pong | Beat the computer, or play against a friend (key 2) | Alone: Up and Down or W and S; two players: left W and S, right Up and Down |
 | Invaders | Stop the alien waves | Arrows move, Space fires, P pauses |
 | Chomp | Eat all dots and avoid the ghosts | Arrows or WASD move, P pauses, M music |
 | Mines | Uncover every safe field | Arrows move, Space opens, F flags, 1 to 3 size, N new game |
@@ -209,6 +214,15 @@ into an installation.
 
 Start Violyx from the ISO or a USB stick and open **System → Install**.
 
-**Violyx always uses the entire disk and erases everything on it.** The default answer
-is always No, and you must type `DELETE` to continue. Installing into a single partition
-next to another system is not supported yet. Please check the disk model carefully.
+There are two ways. The default answer is always No, and before anything is erased you
+must type `DELETE`. Please check the disk model carefully.
+
+- **Entire disk:** Violyx erases everything on the disk and uses all of it.
+- **Next to another system** (only when Violyx was started by UEFI and the disk has a GPT
+  partition table): choose one partition or a free, unallocated area of at least 128 MB.
+  Only that area is used. Violyx creates a small boot partition of its own ("Violyx Boot")
+  and its data partition there, and adds the start entry "Violyx" to the firmware. The
+  other system and its EFI partition stay untouched and still start by default. To start
+  Violyx, choose "Violyx" in the boot menu of the firmware (often F11, F12 or F8).
+  Violyx does not shrink partitions: make room first, for example in Windows Disk
+  Management. If BitLocker is on, keep the recovery key at hand.
