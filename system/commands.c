@@ -103,6 +103,8 @@ static const struct {
     {"edit", "[DATEI]", "[FILE]", "Öffnet die Datei in Schreiben.", "Opens the file in Write."},
     {"view bild", "DATEI", "FILE", "Öffnet ein Bild im Bildbetrachter.",
      "Opens a picture in the image viewer."},
+    {"cc", "DATEI.c [-o X.vpk] [-s 60x18] [-t Titel]", "FILE.c [-o X.vpk] [-s 60x18] [-t Title]",
+     "Übersetzt ein C-Programm zu einem Paket.", "Compiles a C program into a package."},
     {"df", "", "", "Zeigt den freien Platz der Systemplatte.",
      "Shows the free space of the system disk."},
     {"eject", "usb1", "usb1", "Meldet einen USB-Stick sicher ab.", "Signs a USB stick off safely."},
@@ -495,6 +497,55 @@ static void sh_exec(sh_t *s) {
                 app_write(p);
         } else
             app_write(0);
+    } else if (!strcmp(c, "cc")) {
+        /* the files become whole paths from here, the rest goes to the compiler as it is */
+        static char cl[VFS_PATH];
+        int n = 0, err = 0, path_next = 1, first = 1;
+        cl[0] = 0;
+        const char *w = a;
+        while (*w && !err) {
+            while (*w == ' ')
+                w++;
+            if (!*w)
+                break;
+            char wd[VFS_PATH];
+            int k = 0, q = *w == '"';
+            if (q)
+                w++;
+            while (*w && (q ? *w != '"' : *w != ' ') && k < VFS_PATH - 1)
+                wd[k++] = *w++;
+            if (q && *w == '"')
+                w++;
+            wd[k] = 0;
+            const char *out = wd;
+            if (wd[0] != '-' && (path_next || first)) {
+                if (sh_path(s, wd, p)) {
+                    err = 1;
+                    break;
+                }
+                out = p;
+                first = 0;
+            }
+            path_next = !strcmp(wd, "-o") || !strcmp(wd, "-I");
+            int has_sp = strchr(out, ' ') != 0;
+            int m = ksnprintf(cl + n, sizeof cl - (size_t)n, has_sp ? "%s\"%s\"" : "%s%s",
+                              n ? " " : "", out);
+            if (m < 0 || n + m >= (int)sizeof cl - 1) {
+                sh_err(s, VE_INVAL);
+                err = 1;
+                break;
+            }
+            n += m;
+        }
+        if (!err) {
+            if (!*a)
+                sh_put(s, TR("cc DATEI.c  (siehe help cc)", "cc FILE.c  (see help cc)"));
+            else {
+                int r = prog_open("cc", cl);
+                if (r < 0)
+                    sh_err(s, r);
+            }
+        }
     } else if (!strcmp(c, "view") || !strcmp(c, "bild")) {
         if (!sh_path(s, a, p))
             app_view(p);

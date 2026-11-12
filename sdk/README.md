@@ -3,7 +3,9 @@
 Write your own Violyx programs in C. A program is a single `.vpk` package that you can copy to a
 FAT32 stick, share with others and install in Violyx: open it in Files and confirm.
 
-You need Linux or WSL with `gcc`, `binutils`, `make` and `python3`.
+On Violyx itself the built-in C compiler does it: `cc snake.c -s 60x19` in Commands (see the
+guide, "Writing C programs in Violyx"). On a PC you need Linux or WSL with `gcc`, `binutils`,
+`make` and `python3`:
 
 ```sh
 make APP=examples/snake NAME=snake TITLE=Snake VPKFLAGS='--cols 60 --rows 19 --icon " ~~~~ |  ~~@ |      "'

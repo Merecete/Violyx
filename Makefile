@@ -80,7 +80,8 @@ VPK_pong     = --name pong --title Pong --cols 64 --rows 18
 VPK_invaders = --name invaders --title Invaders --cols 64 --rows 20
 VPK_chomp    = --name chomp --title Chomp --cols 42 --rows 20
 VPK_mines    = --name mines --title Mines --cols 50 --rows 17
-SYSPROG = calc calendar clock write view paint files commands web pong invaders chomp mines
+VPK_cc       = --name cc --title C-Compiler --cols 76 --rows 20
+SYSPROG = calc calendar clock write view paint files commands web pong invaders chomp mines cc
 build/sys/calc.elf: build/u/calc.o $(URT)
 build/sys/calendar.elf: build/u/calendar.o $(URT)
 build/sys/clock.elf: build/u/clock.o $(URT)
@@ -94,6 +95,53 @@ build/sys/pong.elf: build/u/pong.o $(URT)
 build/sys/invaders.elf: build/u/games_invaders.o $(URT)
 build/sys/chomp.elf: build/u/games_chomp.o $(URT)
 build/sys/mines.elf: build/u/games_mines.o $(URT)
+# ---------- The C compiler (system/cc): chibicc + vas + the C library, built with gcc ----------
+# The C library for the programs the compiler makes is built by chibicc itself (build/host/chibicc
+# on this computer) into assembly and carried inside the compiler together with the headers.
+CCDIR   = system/cc
+CCHOST  = build/host/chibicc
+CCLIB   = string stdlib stdio ctype math misc vx
+CCC     = $(filter-out $(CCDIR)/chibicc/main.c,$(wildcard $(CCDIR)/chibicc/*.c))
+CCU     = -O2 -ffreestanding -fno-stack-protector -fpie -fno-asynchronous-unwind-tables -nostdinc -Isystem/cc/include -isystem $(shell gcc -print-file-name=include) -m64 -march=x86-64 -fno-tree-loop-distribute-patterns -DVIOLYX -DVX_LIBC -Isdk -I$(CCDIR) -I$(CCDIR)/lib -Ibuild/cc -std=gnu11 -w
+CCOBJ   = $(patsubst $(CCDIR)/chibicc/%.c,build/cc/c_%.o,$(CCC)) build/cc/driver.o build/cc/vas.o $(patsubst %,build/cc/l_%.o,$(CCLIB)) build/cc/sdk.o build/cc/crt.o build/cc/fpu.o
+CCHDR   = $(wildcard $(CCDIR)/include/*.h) $(wildcard $(CCDIR)/include-cc/*.h) sdk/violyx.h sdk/chip.h
+$(CCHOST): $(wildcard $(CCDIR)/chibicc/*.c) $(CCDIR)/chibicc/chibicc.h
+	@mkdir -p build/host
+	gcc -O2 -std=c11 -w -o $@ $(wildcard $(CCDIR)/chibicc/*.c)
+# the C library for programs, one assembly file per source (static names stay apart)
+CCLS    = $(patsubst %,build/cc/lib/%.s,$(CCLIB) violyx)
+build/cc/lib/violyx.s: sdk/violyx.c sdk/violyx.h $(CCHOST) $(CCHDR)
+	@mkdir -p build/cc/lib
+	$(CCHOST) -DVX_LIBC -I$(CCDIR)/include -I$(CCDIR)/include-cc -Isdk -I$(CCDIR)/lib -S -o $@ $<
+build/cc/lib/%.s: $(CCDIR)/lib/%.c $(CCDIR)/lib/sys.h $(CCHOST) $(CCHDR)
+	@mkdir -p build/cc/lib
+	$(CCHOST) -DVX_LIBC -I$(CCDIR)/include -I$(CCDIR)/include-cc -Isdk -I$(CCDIR)/lib -S -o $@ $<
+build/cc/ccdata.h: $(CCLS) $(CCDIR)/lib/crt_violyx.s $(CCDIR)/lib/fpu.s $(CCHDR) tools/mkccdata.py
+	python3 tools/mkccdata.py $@ $(foreach h,$(wildcard $(CCDIR)/include/*.h $(CCDIR)/include-cc/*.h) sdk/violyx.h sdk/chip.h,/cc/include/$(notdir $(h))=$(h)) /cc/lib/crt.s=$(CCDIR)/lib/crt_violyx.s /cc/lib/fpu.s=$(CCDIR)/lib/fpu.s $(foreach f,$(CCLS),/cc/lib/$(notdir $(f))=$(f))
+build/cc/c_%.o: $(CCDIR)/chibicc/%.c $(CCDIR)/chibicc/chibicc.h
+	@mkdir -p build/cc
+	$(CC) $(CCU) -c $< -o $@
+build/cc/driver.o: $(CCDIR)/driver.c build/cc/ccdata.h $(CCDIR)/chibicc/chibicc.h $(CCDIR)/vas.h
+	@mkdir -p build/cc
+	$(CC) $(CCU) -c $< -o $@
+build/cc/vas.o: $(CCDIR)/vas.c $(CCDIR)/vas.h
+	@mkdir -p build/cc
+	$(CC) $(CCU) -c $< -o $@
+build/cc/l_%.o: $(CCDIR)/lib/%.c $(CCDIR)/lib/sys.h
+	@mkdir -p build/cc
+	$(CC) $(CCU) -c $< -o $@
+build/cc/sdk.o: sdk/violyx.c sdk/violyx.h
+	@mkdir -p build/cc
+	$(CC) $(CCU) -c $< -o $@
+build/cc/%.o: $(CCDIR)/lib/%.s
+	@mkdir -p build/cc
+	$(CC) -c $< -o $@
+build/cc/crt.o: $(CCDIR)/lib/crt_violyx.s
+	@mkdir -p build/cc
+	$(CC) -c $< -o $@
+build/sys/cc.elf: $(CCOBJ)
+	@mkdir -p build/sys
+	$(ULD) -o $@ $(CCOBJ)
 build/sys/%.elf: sdk/link.ld
 	@mkdir -p build/sys
 	$(ULD) -o $@ $(filter %.o,$^) $(filter %.a,$^)

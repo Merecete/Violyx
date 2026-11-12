@@ -55,7 +55,9 @@ typedef struct {
     uint64_t size, dir;
 } vx_stat_t;
 long vx_sys(long n, long a, long b, long c);
+#ifndef VX_LIBC /* with the C library of the Violyx compiler, main may take argc and argv */
 int main(void);
+#endif
 /* Screen. The window can change (F5 zooms): vx_cols/vx_rows always return the current size. */
 int vx_cols(void);
 int vx_rows(void);
@@ -221,7 +223,7 @@ static inline long vx_recv(void *b, size_t n) {
 static inline void vx_disconnect(void) {
     vx_sys(29, 7, 0, 0);
 }
-#ifndef HOSTTEST
+#if !defined(HOSTTEST) && !defined(VX_LIBC)
 void *memcpy(void *, const void *, size_t);
 void *memset(void *, int, size_t);
 void *memmove(void *, const void *, size_t);

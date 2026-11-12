@@ -1,0 +1,2 @@
+These headers come with chibicc (MIT license, see ../chibicc/LICENSE) and only work with it.
+The build computer's gcc uses its own versions when it builds the compiler itself.

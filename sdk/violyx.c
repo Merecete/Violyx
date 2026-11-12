@@ -1,4 +1,7 @@
 #include "violyx.h"
+/* Without the C library of the Violyx compiler (cc): the start, the system call and the few
+ * C functions the SDK needs itself. With it (VX_LIBC), these come from there. */
+#ifndef VX_LIBC
 __asm__(
     ".text\n.globl _start\n_start:\n  and $-16,%rsp\n  call main\n  xor %edi,%edi\n  xor %eax,%eax\n  int $48\n1: jmp 1b\n"
     "vx_sys:\n .globl vx_sys\n  mov %rdi,%rax\n  mov %rsi,%rdi\n  mov %rdx,%rsi\n  mov %rcx,%rdx\n  int $48\n  ret\n");
@@ -50,6 +53,7 @@ int strncmp(const char *a, const char *b, size_t n) {
     }
     return 0;
 }
+#endif
 static uint32_t cells[240 * 100];
 static int W, H;
 static void dims(void) {

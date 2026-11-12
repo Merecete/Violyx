@@ -261,6 +261,8 @@ typedef struct {
 #define L_LIM  4 /* marks a limited built-in program */
 #define L_RO   8 /* may only read */
 #define L_WALL 16 /* may set a picture as background */
+#define L_ARGS 32 /* the argument is a command line: "/home/a.c -o b.vpk" (the compiler) */
+#define L_RUN  64 /* may start a package it can read (the compiler, after building it) */
 #define NBG    4
 static proc_t *bgp[NBG];
 static proc_t *cur;
@@ -1341,6 +1343,7 @@ static const struct {
                {"invaders", pkg_invaders, sizeof pkg_invaders, 0, 0, 0},
                {"chomp", pkg_chomp, sizeof pkg_chomp, 0, 0, 0},
                {"mines", pkg_mines, sizeof pkg_mines, 0, 0, 0},
+               {"cc", pkg_cc, sizeof pkg_cc, 0, 0, L_LIM | L_ARGS | L_RUN},
                {"calc", pkg_calc, sizeof pkg_calc, 1, 0, 0},
                {"calendar", pkg_calendar, sizeof pkg_calendar, 1, 1, 0},
                {"clock", pkg_clock, sizeof pkg_clock, 1, 1, 0},
@@ -1374,12 +1377,23 @@ static int run_builtin(int i, const char *arg) {
         strlcpy_(d, "/system/browser", VFS_PATH);
         if (fs_ok())
             fsx_mkdir(d, fs_now());
-    } else if (builtin[i].lim) { /* the viewer: the folder of the picture, for the next one */
+    } else if (builtin[i].lim) { /* the viewer: the folder of the picture, for the next one;
+                                    the compiler: the folder of the source file */
         strlcpy_(d, fsx_home(), VFS_PATH);
-        if (arg && arg[0] == '/') {
-            strlcpy_(d, arg, VFS_PATH);
+        if (arg && (arg[0] == '/' || (arg[0] == '"' && arg[1] == '/'))) {
+            const char *a = arg[0] == '"' ? arg + 1 : arg;
+            strlcpy_(d, a, VFS_PATH);
+            if (builtin[i].lim & L_ARGS) /* only the first word, up to a space or quote */
+                for (char *q = d; *q; q++)
+                    if (*q == (arg[0] == '"' ? '"' : ' ')) {
+                        *q = 0;
+                        break;
+                    }
             char *s = strrchr(d, '/');
-            s[s == d] = 0;
+            if (s)
+                s[s == d] = 0;
+            else
+                strlcpy_(d, fsx_home(), VFS_PATH);
         }
     } else {
         ksnprintf(d, VFS_PATH, "/programs/%s/data", builtin[i].name);
@@ -1400,7 +1414,7 @@ static int run_builtin(int i, const char *arg) {
     p->lim = builtin[i].lim;
     if (arg) {
         strlcpy_(p->arg, arg, VFS_PATH);
-        if (p->lim && !(p->lim & L_NET) && arg[0] == '/')
+        if (p->lim && !(p->lim & (L_NET | L_ARGS)) && arg[0] == '/')
             grant(p, arg); /* the picture itself, also when it lies in / */
     }
     if (builtin[i].single)
@@ -1627,7 +1641,8 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
     /* open, argument, home folder and the simple states are there for every program */
     if (!p->sys && op != 0 && op != 1 && !(op == 14 && b == 0) && !(op == 13 && b <= 1) &&
         !(op == 4 && (p->lim & L_INST)) && /* the browser installs, the kernel asks first */
-        !(op == 18 && (p->lim & L_WALL)))   /* the image viewer sets the background */
+        !(op == 18 && (p->lim & L_WALL)) && /* the image viewer sets the background */
+        !(op == 6 && (p->lim & L_RUN)))     /* the compiler starts what it built */
         return VE_DENIED;
     __asm__("sti");
     switch (op) {
@@ -1658,7 +1673,9 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
                     break;
                 }
             }
-            if (!p->sys && !strcmp(nm, "files")) /* not a way around the access check */
+            /* not a way around the access check: the file manager, and the compiler, which works
+             * in the folder of its source and may start what it builds */
+            if (!p->sys && (!strcmp(nm, "files") || !strcmp(nm, "cc")))
                 break;
             v = prog_open(nm, c ? pa : 0);
             break;
@@ -1726,8 +1743,11 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
         case 5:
             v = ustr(p, b, t, 24) ? prog_run(t) : VE_INVAL;
             break;
-        case 6:
-            v = sys_path(p, b, pa) ? prog_run_file(pa, 0) : VE_INVAL;
+        case 6: /* a package: system programs anywhere, the compiler only what it may read */
+            if (p->sys ? sys_path(p, b, pa) : upath(p, b, pa))
+                v = prog_run_file(pa, 0);
+            else
+                v = p->sys ? VE_INVAL : VE_DENIED;
             break;
         case 7:
             v = ustr(p, b, t, 24) ? prog_uninstall(t) : VE_INVAL;
