@@ -7,6 +7,8 @@ typedef struct {
     u32 *cl;
     u8 *tb;
     u8 *buf;
+    u8 *big; /* ATAPI: 32 KiB for the data of one command */
+    cdrive c;
 } port;
 static const int WAIT = 5000000;
 static int issue(port *p, u8 cmd, u64 lba, int data, int wr) {
@@ -67,6 +69,63 @@ static int a_fl(blkdev *d) {
 static int a_off(blkdev *d) {
     return issue(d->p, 0xE0, 0, 0, 0);
 }
+/* After an error the port stops: start it again (AHCI 1.3, 6.2.2.1) */
+static void recover(port *p) {
+    u64 pb = p->pb;
+    PR(0x18) &= ~1u;
+    for (int i = 0; i < 500000 && (PR(0x18) & (1 << 15)); i++)
+        udelay(1);
+    PR(0x30) = ~0u;
+    PR(0x10) = ~0u;
+    for (int i = 0; i < 1000000 && (PR(0x20) & 0x88); i++)
+        udelay(1);
+    PR(0x18) |= 1;
+}
+/* ATAPI: a SCSI command as a packet, the data by DMA into big */
+static int a_pkt(cdrive *c, const u8 *cdb, void *buf, u32 len) {
+    port *p = c->p;
+    u64 pb = p->pb;
+    u32 *h = p->cl;
+    u8 *f = p->tb;
+    if (len > 32768 || (len & 1))
+        return -1;
+    memset(f, 0, 256);
+    f[0] = 0x27;
+    f[1] = 0x80;
+    f[2] = 0xA0;
+    f[3] = 1; /* DMA */
+    f[5] = (u8)len;
+    f[6] = (u8)(len >> 8);
+    memcpy(f + 0x40, cdb, 12);
+    h[0] = 5 | (1 << 5) | ((len ? 1u : 0u) << 16);
+    h[1] = 0;
+    u64 t = phys(p->tb);
+    h[2] = (u32)t;
+    h[3] = (u32)(t >> 32);
+    u32 *pr = (u32 *)(p->tb + 128);
+    u64 b = phys(p->big);
+    pr[0] = (u32)b;
+    pr[1] = (u32)(b >> 32);
+    pr[2] = 0;
+    pr[3] = len ? len - 1 : 0;
+    PR(0x10) = PR(0x10);
+    PR(0x38) = 1;
+    for (int i = 0; i < 2 * WAIT; i++) {
+        u32 tf = PR(0x20), is = PR(0x10);
+        if (is & (1u << 30) || tf & 1) {
+            recover(p);
+            return -1;
+        }
+        if (!(PR(0x38) & 1)) {
+            if (len)
+                memcpy(buf, p->big, len);
+            return 0;
+        }
+        udelay(1);
+    }
+    recover(p);
+    return -1;
+}
 void ahci_init(const pci_t *c) {
     pci_enable(c);
     u64 base = pci_bar(c, 5);
@@ -84,7 +143,8 @@ void ahci_init(const pci_t *c) {
         if (!(pi >> n & 1))
             continue;
         u64 pb = base + 0x100 + n * 0x80;
-        if ((PR(0x28) & 15) != 3 || PR(0x24) != 0x101)
+        u32 sig = PR(0x24);
+        if ((PR(0x28) & 15) != 3 || (sig != 0x101 && sig != 0xEB140101u))
             continue;
         PR(0x18) &= ~1u;
         for (int i = 0; i < 500000 && (PR(0x18) & (1 << 15)); i++)
@@ -110,6 +170,22 @@ void ahci_init(const pci_t *c) {
         for (int i = 0; i < 1000000 && (PR(0x20) & 0x88); i++)
             udelay(1);
         PR(0x18) |= 1;
+        if (sig == 0xEB140101u) { /* a CD or DVD drive */
+            p->big = dma_alloc(32768);
+            if (p->big && issue(p, 0xA1, 0, 1, 0) == 0) {
+                u16 *w = (u16 *)p->buf;
+                p->c.pkt = a_pkt;
+                p->c.p = p;
+                for (int i = 0; i < 20; i++) {
+                    p->c.model[i * 2] = (char)(w[27 + i] >> 8);
+                    p->c.model[i * 2 + 1] = (char)w[27 + i];
+                }
+                for (int i = 39; i >= 0 && (p->c.model[i] == ' ' || !p->c.model[i]); i--)
+                    p->c.model[i] = 0;
+                cd_add(&p->c);
+            }
+            continue;
+        }
         if (issue(p, 0xEC, 0, 1, 0) == 0) {
             u16 *w = (u16 *)p->buf;
             u64 s = *(u64 *)(w + 100);

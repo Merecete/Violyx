@@ -141,12 +141,30 @@ typedef struct blkdev {
     /* optional: several sectors in one command (much faster on USB) */
     int (*rdn)(struct blkdev *, u64, u32, void *);
     int (*wrn)(struct blkdev *, u64, u32, const void *);
+    int cd;                           /* a CD or DVD: read only, not a disk for installing */
+    int (*eject)(struct blkdev *);    /* optional: opens the tray */
 } blkdev;
 void blk_shutdown(int off);
 blkdev *blk_register(const char *name, u64 sectors, void *p, int (*rd)(blkdev *, u64, void *),
                      int (*wr)(blkdev *, u64, const void *), int (*fl)(blkdev *));
-int blk_count(void);
+int blk_count(void); /* disks only, without CD drives */
 blkdev *blk_get(int);
+int blk_count_all(void); /* with CDs, for /drives */
+blkdev *blk_get_all(int);
+/* CD and DVD drives (cdrom.c): the transport sends a 12-byte SCSI command with data coming in */
+typedef struct cdrive {
+    int (*pkt)(struct cdrive *, const u8 *cdb, void *buf, u32 len);
+    void *p;
+    blkdev *dev; /* while a disc is in */
+    char model[41];
+    u64 next;
+    int dead, usb;
+    u8 *cbuf;    /* read ahead: blocks cblk .. cblk+ccnt-1 */
+    u32 cblk, ccnt;
+} cdrive;
+void cd_add(cdrive *c);
+void cd_remove(cdrive *c);
+void cd_poll(void);
 void ide_probe(void);
 void blk_gone(blkdev *);
 blkdev *fs_device(void);

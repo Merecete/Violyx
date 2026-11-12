@@ -144,8 +144,8 @@ void nvme_init(const pci_t *c) {
     k[6] = p;
     k[7] = p >> 32;
     k[10] = 1;
-    if (!submit(n, &n->a, k)) {
-        blkdev *d = blk_get(blk_count() - 1);
+    if (b && !submit(n, &n->a, k)) {
+        blkdev *d = b;
         memcpy(d->model, n->buf + 24, 40);
         d->model[40] = 0;
         for (int i = 39; i >= 0 && d->model[i] == ' '; i--)

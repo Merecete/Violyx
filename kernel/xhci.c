@@ -174,6 +174,7 @@ typedef struct {
     u8 dead;       /* answers missing: no more looks, so a broken device cannot slow down */
     u64 next;      /* next look for a card */
     char mdl[26];
+    cdrive *cd;    /* a CD/DVD drive: cdrom.c looks after it */
 } mlun_t;
 typedef struct msc {
     hc_t *h;
@@ -395,6 +396,25 @@ static void m_attach(mlun_t *L) {
         usb_ch = 1;
     }
 }
+/* CD/DVD drives on USB: the commands of cdrom.c through bulk-only transport */
+static int u_pkt(cdrive *c, const u8 *cdb, void *buf, u32 len) {
+    mlun_t *L = c->p;
+    msc_t *m = L->m;
+    if (len > 65536)
+        return -1;
+    u64 f = irq_off();
+    hc_t *sv = UH;
+    UH = m->h;
+    waitport = m->port;
+    m->lun = L->n;
+    int r = scsi_b(m, cdb, 12, len, 1, m->big);
+    if (!r && len)
+        memcpy(buf, m->big, len);
+    waitport = 0;
+    UH = sv;
+    irq_on(f);
+    return r;
+}
 /* Endpoint 0 after a STALL (e.g. GET MAX LUN of a device with only one drive) */
 static void ep0_reset(msc_t *m) {
     command(0, 0, 0, (14 << 10) | (m->slot << 24) | (1 << 16));
@@ -421,8 +441,9 @@ static void msc_start(msc_t *m, int ifn) {
         L->mdl[0] = 0;
         if (scsi(m, inq, 6, 36, 1))
             continue;
-        L->ok = (m->buf[0] & 0x1F) == 0; /* a direct access drive, not a CD */
+        L->ok = (m->buf[0] & 0x1F) == 0; /* a direct access drive */
         L->rmb = m->buf[1] >> 7;
+        int is_cd = (m->buf[0] & 0x1F) == 5;
         int k = 0;
         for (int j = 8; j < 32; j++) {
             if (j == 16 && k && L->mdl[k - 1] != ' ')
@@ -437,6 +458,14 @@ static void msc_start(msc_t *m, int ifn) {
         while (k && L->mdl[k - 1] == ' ')
             k--;
         L->mdl[k] = 0;
+        if (is_cd && !L->cd && (L->cd = kmalloc(sizeof(cdrive)))) {
+            memset(L->cd, 0, sizeof(cdrive));
+            L->cd->pkt = u_pkt;
+            L->cd->p = L;
+            L->cd->usb = 1;
+            strlcpy_(L->cd->model, L->mdl, 41);
+            cd_add(L->cd);
+        }
         if (!L->ok)
             continue;
         /* a stick needs a moment; an empty card slot says so at once and is asked again later */
@@ -488,11 +517,17 @@ static void msc_gone(msc_t *m) {
     for (int i = 0; i < NMSC; i++)
         if (mscs[i] == m)
             mscs[i] = 0;
-    for (int j = 0; j < m->nlun; j++)
+    for (int j = 0; j < m->nlun; j++) {
         if (m->L[j].dev) {
             blk_gone(m->L[j].dev);
             m->L[j].dev = 0;
         }
+        if (m->L[j].cd) {
+            cd_remove(m->L[j].cd);
+            kfree(m->L[j].cd);
+            m->L[j].cd = 0;
+        }
+    }
 }
 #define IC(i) ((u32 *)(ictx + (i) * csz))
 /* ---------- USB audio (class 1 and 2): playback through an isochronous endpoint ---------- The

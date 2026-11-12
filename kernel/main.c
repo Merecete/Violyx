@@ -89,6 +89,7 @@ void isr_handler(regs *r) {
 /* Waits for the next event. Without a PIT (some new Intel systems) time runs on the TSC. */
 void idle(void) {
     usb_hotplug();
+    cd_poll();
     prog_bg();
     if (pit_ok) {
         __asm__("sti;hlt");

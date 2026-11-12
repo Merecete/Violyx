@@ -2,17 +2,20 @@
 #include "fat.h"
 #include "exfat.h"
 #include "format.h"
-/* Drives: puts USB disks under /drives on top of VioFS. Rules: only USB devices appear here, never
- * internal disks. Violyx asks before the first access, and until then not a single sector of the
+#include "iso9660.h"
+/* Drives: puts USB disks and CDs under /drives on top of VioFS. Rules: only USB devices and CD/DVD
+ * drives appear here, never internal disks. CDs are read only. Violyx asks before the first access, and until then not a single sector of the
  * stick is read. The prompt sits here on purpose, in one central place, so no program can get
  * around it. */
-#define MAXD 8
+#define NUSB 8 /* usb1 .. usb8, then cd1 .. cd4 */
+#define MAXD 12
 typedef struct {
     blkdev *d;
     u32 id;
-    int allowed, st, ex; /* ex: the drive uses exFAT */
+    int allowed, st, ex, iso; /* ex: the drive uses exFAT, iso: a CD with ISO 9660 */
     fatvol v;
     exfvol x;
+    isovol c;
 } drv_t;
 static drv_t dr[MAXD];
 static blkdev *cur;
@@ -40,9 +43,9 @@ void drives_sync(void) {
             dr[i].st = 0;
             fsx_gen++;
         }
-    for (int j = 0; j < blk_count(); j++) {
-        blkdev *d = blk_get(j);
-        if (!d->usb || d == fs_device())
+    for (int j = 0; j < blk_count_all(); j++) {
+        blkdev *d = blk_get_all(j);
+        if ((!d->usb && !d->cd) || d == fs_device())
             continue;
         int have = 0;
         for (int i = 0; i < MAXD; i++)
@@ -50,7 +53,7 @@ void drives_sync(void) {
                 have = 1;
         if (have)
             continue;
-        for (int i = 0; i < MAXD; i++)
+        for (int i = d->cd ? NUSB : 0; i < (d->cd ? MAXD : NUSB); i++)
             if (!dr[i].d) {
                 dr[i].d = d;
                 dr[i].id = d->id;
@@ -91,6 +94,14 @@ static const u8 BASIC[16] = {0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
                              0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7};
 static int find_fat(drv_t *x) {
     static u8 s[512], h[512];
+    x->iso = 0;
+    if (cur->cd) { /* a CD or DVD: ISO 9660 over the whole disc */
+        vfs_dev v = {t_rd, t_wr, t_fl, 0, cur->sectors, cur->rdn ? t_rdn : 0, 0};
+        int r = iso_mount(&x->c, &v);
+        if (!r)
+            x->iso = 1;
+        return r;
+    }
     if (cur->rd(cur, 1, h))
         return VE_IO;
     if (!memcmp(h, "EFI PART", 8)) {
@@ -136,10 +147,17 @@ static int find_fat(drv_t *x) {
     }
     return VE_FORMAT;
 }
+static void dname(int i, char *o, int n) {
+    if (i < NUSB)
+        ksnprintf(o, n, "usb%d", i + 1);
+    else
+        ksnprintf(o, n, "cd%d", i - NUSB + 1);
+}
 static void desc(drv_t *x, char *o, int n) {
     u64 mb = x->d->sectors / 2048;
-    const char *m = x->d->model[0] ? x->d->model : "USB";
-    const char *t = x->allowed && x->st == 1 ? (x->ex ? ", exFAT" : ", FAT32") : "";
+    const char *m = x->d->model[0] ? x->d->model : x->d->cd ? "CD/DVD" : "USB";
+    const char *t = x->allowed && x->st == 1 ? (x->iso ? ", ISO 9660" : x->ex ? ", exFAT" : ", FAT32")
+                                             : "";
     if (mb >= 2048)
         ksnprintf(o, n, "%s, %ld GB%s", m, mb / 1024, t);
     else
@@ -160,6 +178,11 @@ static int split(const char *p, int *i, const char **rel) {
         *i = q[3] - '1';
         if (q[4])
             *rel = q + 4;
+    } else if (!memcmp(q, "cd", 2) && q[2] >= '1' && q[2] <= '0' + MAXD - NUSB &&
+               (!q[3] || q[3] == '/')) {
+        *i = NUSB + q[2] - '1';
+        if (q[3])
+            *rel = q + 3;
     }
     return 2;
 }
@@ -168,10 +191,11 @@ static int open_(int i) {
         return VE_NOENT;
     drv_t *x = &dr[i];
     if (!x->allowed) {
-        char t[40], s[72], m[60];
+        char t[40], s[72], m[60], nm[8];
         u32 id = x->id;
         desc(x, m, 60);
-        ksnprintf(t, 40, TR("Laufwerk usb%d öffnen", "Open drive usb%d"), i + 1);
+        dname(i, nm, 8);
+        ksnprintf(t, 40, TR("Laufwerk %s öffnen", "Open drive %s"), nm);
         ksnprintf(s, 72, TR("%s: Zugriff erlauben?", "%s: allow access?"), m);
         int yes = dlg_confirm(t, s);
         if (!x->d || x->d->gone || x->id != id)
@@ -210,7 +234,14 @@ int fsx_stat(const char *p, vfs_ent *e) {
     if (k == 0)
         return fs_ok() ? vfs_stat(p, e) : VE_NOFS;
     int o = open_(i);
-    return o ? o : dr[i].ex ? exf_stat(&dr[i].x, r, e) : fat_stat(&dr[i].v, r, e);
+    return o          ? o
+           : dr[i].iso ? iso_stat(&dr[i].c, r, e)
+           : dr[i].ex  ? exf_stat(&dr[i].x, r, e)
+                       : fat_stat(&dr[i].v, r, e);
+}
+/* a CD: nothing may be written */
+static int ro(int k, int i) {
+    return k == 2 && i >= NUSB && i < MAXD && dr[i].d && dr[i].d->cd;
 }
 /* Is the file there? Without asking the user and without opening the drive for programs: only
  * for the background picture, which falls back to the chosen background when its stick is gone */
@@ -227,7 +258,9 @@ int fsx_exists(const char *p) {
     int al = x->allowed, st = x->st;
     x->allowed = 1; /* no question, only for this look */
     int o = open_(i);
-    int ok = !o && !(x->ex ? exf_stat(&x->x, r, &e) : fat_stat(&x->v, r, &e)) && !e.dir;
+    int ok = !o &&
+             !(x->iso ? iso_stat(&x->c, r, &e) : x->ex ? exf_stat(&x->x, r, &e) : fat_stat(&x->v, r, &e)) &&
+             !e.dir;
     if (!al) {
         x->allowed = 0;
         x->st = st;
@@ -243,7 +276,10 @@ int64_t fsx_read(const char *p, void *b, u64 m) {
     if (k == 0)
         return fs_ok() ? vfs_read(p, b, m) : VE_NOFS;
     int o = open_(i);
-    return o ? o : dr[i].ex ? exf_read(&dr[i].x, r, b, m) : fat_read(&dr[i].v, r, b, m);
+    return o          ? o
+           : dr[i].iso ? iso_read(&dr[i].c, r, b, m)
+           : dr[i].ex  ? exf_read(&dr[i].x, r, b, m)
+                       : fat_read(&dr[i].v, r, b, m);
 }
 /* A part of a file: up to m bytes from offset off on */
 int64_t fsx_read_at(const char *p, void *b, u64 off, u64 m) {
@@ -256,8 +292,9 @@ int64_t fsx_read_at(const char *p, void *b, u64 off, u64 m) {
         return fs_ok() ? vfs_read_at(p, b, off, m) : VE_NOFS;
     int o = open_(i);
     return o          ? o
-           : dr[i].ex ? exf_read_at(&dr[i].x, r, b, off, m)
-                      : fat_read_at(&dr[i].v, r, b, off, m);
+           : dr[i].iso ? iso_read_at(&dr[i].c, r, b, off, m)
+           : dr[i].ex  ? exf_read_at(&dr[i].x, r, b, off, m)
+                       : fat_read_at(&dr[i].v, r, b, off, m);
 }
 int fsx_write(const char *p, const void *b, u64 l, u32 now) {
     int i, x;
@@ -267,6 +304,8 @@ int fsx_write(const char *p, const void *b, u64 l, u32 now) {
         return VE_ISDIR;
     if (k == 0)
         x = fs_ok() ? vfs_write(p, b, l, now) : VE_NOFS;
+    else if (ro(k, i))
+        return VE_DENIED;
     else {
         x = open_(i);
         if (!x)
@@ -283,6 +322,8 @@ int fsx_mkdir(const char *p, u32 now) {
         return VE_DENIED;
     if (k == 0)
         x = fs_ok() ? vfs_mkdir(p, now) : VE_NOFS;
+    else if (ro(k, i))
+        return VE_DENIED;
     else {
         x = open_(i);
         if (!x)
@@ -312,6 +353,8 @@ int fsx_remove(const char *p) {
     int k = split(p, &i, &r);
     if (k == 0)
         x = fs_ok() ? vfs_remove(p) : VE_NOFS;
+    else if (ro(k, i))
+        return VE_DENIED;
     else {
         x = open_(i);
         if (!x)
@@ -337,7 +380,7 @@ int fsx_list(const char *p, int (*cb)(const vfs_ent *, void *), void *a) {
         for (int n = 0; n < MAXD; n++)
             if (dr[n].d) {
                 memset(&e, 0, sizeof e);
-                ksnprintf(e.name, 8, "usb%d", n + 1);
+                dname(n, e.name, 8);
                 e.dir = 1;
                 if (cb(&e, a))
                     break;
@@ -346,7 +389,10 @@ int fsx_list(const char *p, int (*cb)(const vfs_ent *, void *), void *a) {
     }
     if (k == 2) {
         int o = open_(i);
-        return o ? o : dr[i].ex ? exf_list(&dr[i].x, r, cb, a) : fat_list(&dr[i].v, r, cb, a);
+        return o          ? o
+               : dr[i].iso ? iso_list(&dr[i].c, r, cb, a)
+               : dr[i].ex  ? exf_list(&dr[i].x, r, cb, a)
+                           : fat_list(&dr[i].v, r, cb, a);
     }
     if (!strcmp(p, "/")) {
         rc_t c = {cb, a};
@@ -454,6 +500,8 @@ int fsx_rename(const char *a, const char *b) {
         return VE_DENIED;
     int k = split(a, &i, &r), l = split(b, &j, &s);
     int x;
+    if (ro(k, i) || ro(l, j))
+        return VE_DENIED;
     if (k == 0 && l == 0)
         x = fs_ok() ? vfs_rename(a, b) : VE_NOFS;
     else if (k == 2 && l == 2 && i == j) {
@@ -484,7 +532,7 @@ int fsx_quiet(const char *p) {
     return i >= 0 && i < MAXD && dr[i].d && !dr[i].d->gone && dr[i].allowed && dr[i].st >= 0;
 }
 int fsx_first(char *o, int n) {
-    for (int i = 0; i < MAXD; i++)
+    for (int i = 0; i < NUSB; i++) /* only a stick: a CD cannot take files */
         if (dr[i].d) {
             ksnprintf(o, n, "/drives/usb%d", i + 1);
             return 1;
@@ -537,7 +585,7 @@ int fsx_can_format(const char *name) {
     if (i < 0)
         return VE_NOENT;
     blkdev *d = dr[i].d;
-    if (!d->usb || d == fs_device() || boot_drive(d))
+    if (!d->usb || d->cd || d == fs_device() || boot_drive(d))
         return VE_DENIED;
     return 0;
 }
@@ -560,7 +608,7 @@ const char *fsx_type(const char *name) {
     int i = drv_index(name);
     if (i < 0 || !dr[i].allowed || dr[i].st != 1)
         return 0;
-    return dr[i].ex ? "exFAT" : "FAT32";
+    return dr[i].iso ? "ISO 9660" : dr[i].ex ? "exFAT" : "FAT32";
 }
 int fsx_eject(const char *name) {
     char p[VFS_PATH];
@@ -574,5 +622,7 @@ int fsx_eject(const char *name) {
     dr[i].allowed = 0;
     dr[i].st = 0;
     fsx_gen++;
+    if (dr[i].d->cd && dr[i].d->eject && !dr[i].d->gone) /* a CD drive opens its tray */
+        dr[i].d->eject(dr[i].d);
     return 0;
 }

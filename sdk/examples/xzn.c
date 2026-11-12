@@ -1,6 +1,7 @@
 /* XZN for Violyx - a keyboard music player, the Violyx edition of Xenon-Zones.
    SPDX-License-Identifier: MIT
-   Plays MP3, OGG, FLAC and WAV. Files come from the system or USB sticks.
+   Plays MP3/MP2, OGG, FLAC and WAV, and with xzncodec.h AIFF, CAF/ALAC, WavPack, True Audio,
+   DSD, Matroska audio and AC3. Files come from the system, USB sticks or CDs.
    The player runs on in the background while other windows are on top.
    Space play/pause, Left/Right seek, Up/Down volume, N next, P previous, S stop, M mute,
    R repeat, Z shuffle, B/V balance, E equalizer, C colours, W mini player, I info,
@@ -97,6 +98,7 @@ void qsort(void *b, size_t n, size_t s,
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#include "xzncodec.h" /* AIFF, CAF/ALAC, True Audio, WavPack, DSD, Matroska, AC3 */
 #include "xznlogo.h"
 
 __asm__(
@@ -139,7 +141,8 @@ enum {
     F_MP3 = 1,
     F_OGG,
     F_FLAC,
-    F_WAV
+    F_WAV,
+    F_GEN /* one of xzncodec.h */
 };
 typedef struct {
     int vol, bal, mute, rep, shuf, scheme, cur, pos, eqon, preset, mini;
@@ -178,6 +181,35 @@ static stb_vorbis *vb;
 static drflac *fl;
 static long wav_off, wav_end;
 static int wav_bits;
+static xdec gd; /* the other formats */
+static int mp3_layer;
+/* DSD is read in parts: a window of the file */
+static char gd_path[PATHN];
+static unsigned char *gd_win;
+static long gd_wo = -1, gd_wn;
+static long gd_fetch(xdec *d, void *b, long off, long len) {
+    (void)d;
+    if (!gd_win && !(gd_win = malloc(1 << 18)))
+        return 0;
+    if (off < gd_wo || off + len > gd_wo + gd_wn) {
+        gd_wo = off & ~4095L;
+        gd_wn = 0;
+        while (gd_wn < (1 << 18)) {
+            long k = vx_read_at(gd_path, gd_win + gd_wn, (unsigned long)(gd_wo + gd_wn),
+                                (size_t)((1 << 18) - gd_wn));
+            if (k <= 0)
+                break;
+            gd_wn += k;
+        }
+        if (off < gd_wo || off >= gd_wo + gd_wn)
+            return 0;
+    }
+    long k = gd_wo + gd_wn - off;
+    if (k > len)
+        k = len;
+    memcpy(b, gd_win + (off - gd_wo), (size_t)k);
+    return k;
+}
 
 static void note_title(void);
 static int mp3_open(void) {
@@ -203,6 +235,7 @@ static int mp3_open(void) {
             if (!srate) {
                 srate = in.hz;
                 chans = in.channels;
+                mp3_layer = in.layer;
             }
             if (frames >= next && mp3_nseek < 14400) {
                 mp3_seek[mp3_nseek++] = (int)o;
@@ -315,6 +348,8 @@ static int read_src(short *o, int n) {
         }
         case F_WAV:
             return wav_read(o, n);
+        case F_GEN:
+            return gd.read(&gd, o, n);
     }
     return 0;
 }
@@ -352,6 +387,9 @@ static void seek_src(long fr) {
                 }
                 wav_off = o + 8 + fr * chans * (wav_bits / 8);
             }
+            break;
+        case F_GEN:
+            gd.seek(&gd, fr);
             break;
     }
     dec_pos = fr;
@@ -604,8 +642,13 @@ static int ends(const char *s, const char *e) {
     return 1;
 }
 static int audio_name(const char *s) {
-    return ends(s, ".mp3") || ends(s, ".ogg") || ends(s, ".oga") || ends(s, ".flac") ||
-           ends(s, ".wav");
+    static const char *const ex[] = {".mp3", ".mp2", ".mp1", ".mpa", ".ogg", ".oga", ".flac",
+                                     ".wav", ".aif", ".aiff", ".aifc", ".caf", ".wv",  ".tta",
+                                     ".dsf", ".dff", ".mka", ".ac3"};
+    for (unsigned i = 0; i < sizeof ex / sizeof ex[0]; i++)
+        if (ends(s, ex[i]))
+            return 1;
+    return 0;
 }
 static void base_name(const char *p, char *o, int n) {
     const char *b = p;
@@ -632,9 +675,39 @@ static int load_track(int i) {
     has_cover = 0;
     artist[0] = song[0] = 0;
     errmsg = 0;
+    memset(&gd, 0, sizeof gd);
+    gd_wo = -1;
+    gd_wn = 0;
+    gd_win = 0;
+    mp3_layer = 3;
     if (!strcmp(t->path, "*intro")) {
         file = intro_mp3;
         flen = intro_end - intro_mp3;
+    } else if (ends(t->path, ".dsf") || ends(t->path, ".dff")) {
+        /* DSD: only the start now, the rest while playing */
+        vx_stat_t s;
+        if (vx_stat(t->path, &s) < 0 || s.dir) {
+            errmsg = vx_english() ? "File not found" : "Datei nicht gefunden";
+            return 0;
+        }
+        xc_cpy(gd_path, t->path, PATHN);
+        unsigned char *h = malloc(65536);
+        long hn = h ? vx_read_at(t->path, h, 0, 65536) : 0;
+        gd.fetch = gd_fetch;
+        gd.n = (long)s.size;
+        if (hn <= 0 || !dsd_open(&gd, h, hn)) {
+            errmsg = vx_english() ? "Unsupported or damaged file" : "Datei defekt oder Format unbekannt";
+            return 0;
+        }
+        file = 0;
+        flen = (long)s.size;
+        fmt = F_GEN;
+        srate = gd.srate;
+        chans = gd.chans;
+        total = gd.total;
+        kbps = gd.kbps;
+        t->secs = srate ? (int)(total / srate) : 0;
+        return 1;
     } else {
         vx_stat_t s;
         if (vx_stat(t->path, &s) < 0 || s.dir || s.size > (200u << 20)) {
@@ -679,7 +752,26 @@ static int load_track(int i) {
         flen = n;
     }
     int ok = 0;
-    if (flen > 4 && !memcmp(file, "OggS", 4)) {
+    /* first the formats of xzncodec.h; Matroska may give back a stream for the others */
+    gd.f = file;
+    gd.n = flen;
+    int gr = xd_open(&gd, t->path);
+    if (gr == 2) {
+        file = gd.f;
+        flen = gd.n;
+    }
+    if (gd.title[0])
+        xc_cpy(song, gd.title, sizeof song);
+    if (gd.artist[0])
+        xc_cpy(artist, gd.artist, sizeof artist);
+    if (gr == 1) {
+        fmt = F_GEN;
+        srate = gd.srate;
+        chans = gd.chans;
+        total = gd.total;
+        kbps = gd.kbps;
+        ok = 1;
+    } else if (flen > 4 && !memcmp(file, "OggS", 4)) {
         int e;
         vb = stb_vorbis_open_memory(file, (int)flen, &e, 0);
         if (vb) {
@@ -1486,10 +1578,11 @@ static void draw_info(void) {
     tx(x + 2, y + 2, title, S->hi, S->raised, bw - 4);
     tx(x + 2, y + 3, list[shown].path, S->text, S->raised, bw - 4);
     tx(x + 2, y + 5,
-       fmt == F_MP3    ? "MP3"
+       fmt == F_MP3    ? (mp3_layer == 2 ? "MP2" : mp3_layer == 1 ? "MP1" : "MP3")
        : fmt == F_OGG  ? "Ogg Vorbis"
        : fmt == F_FLAC ? "FLAC"
        : fmt == F_WAV  ? "WAV"
+       : fmt == F_GEN  ? gd.name
                        : "-",
        S->text, S->raised, 12);
     numtxt(b, srate);
@@ -1734,12 +1827,13 @@ static void draw(long t) {
         char b[80];
         int n = 0;
         if (fmt) {
-            const char *f = fmt == F_MP3    ? "mp3"
+            const char *f = fmt == F_MP3    ? (mp3_layer == 2 ? "mp2" : mp3_layer == 1 ? "mp1" : "mp3")
                             : fmt == F_OGG  ? "ogg vorbis"
                             : fmt == F_FLAC ? "flac"
+                            : fmt == F_GEN  ? gd.name
                                             : "wav";
-            for (; *f; f++)
-                b[n++] = *f;
+            for (; *f && n < 30; f++)
+                b[n++] = *f >= 'A' && *f <= 'Z' ? (char)(*f + 32) : *f;
             b[n++] = ' ';
             numtxt(b + n, srate);
             n = (int)strlen(b);
