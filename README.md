@@ -28,12 +28,19 @@ used for the build tools.
 - Windowed text desktop, controlled entirely by keyboard, with colour schemes and screen savers
 - Web browser with HTTPS, images, tabs, bookmarks and downloads
 - Write, Files, Commands, Calculator, Calendar, Clock, Image viewer and Paint
-- XZN music player for MP3, OGG, FLAC and WAV
+- XZN music player for MP3, OGG, FLAC, WAV, AIFF, WavPack, DSD, AC3 and more
 - Games: Pong (also for two players), Invaders, Chomp, Mines, Snake, Bricks and Novastrike
 - Every program runs in its own protected memory, so a crash only ends that program
-- Install your own programs (`.vpk` files), with an [SDK](sdk/README.md) in C
-- Sound, wired network, USB sticks and SD cards (FAT32 and exFAT), English and German
+- Sound, wired network, USB sticks and SD cards (FAT32 and exFAT), CDs and DVDs, English and German
 - Installer for the entire disk or next to Windows or another system
+
+### Programming
+
+- Built-in C compiler: write a program in Write and compile it in Commands with `cc`, right on Violyx
+- [SDK](sdk/README.md) in C with one header, `violyx.h`: text grid with 256 colours, keyboard,
+  files, dialogs, network and sound
+- Programs are shared as `.vpk` packages and installed with one key press in Files
+- The examples, including Snake, Novastrike and the XZN player, come with full source code
 
 ## Try it
 
