@@ -166,6 +166,14 @@ static long t_start, base_ms; /* mix position where the track began, and its off
 static long written, flushed; /* frames written to the kernel */
 static int pend = -1;
 static long pend_at, pend_base;
+/* What the screen shows about the track you hear. With gapless playing the next track is
+ * already loaded (fmt, srate ... are its values) while the last one still plays. */
+typedef struct {
+    char nm[16];
+    int srate, chans, kbps;
+    long total;
+} tinfo;
+static tinfo si, pi_;
 static const unsigned char *file;
 static long flen;
 
@@ -835,6 +843,22 @@ static void set_title(int i) {
     }
 }
 /* Starts track i. gapless keeps what is already in the stream */
+static void snap(tinfo *t) {
+    const char *f = fmt == F_MP3    ? (mp3_layer == 2 ? "MP2" : mp3_layer == 1 ? "MP1" : "MP3")
+                    : fmt == F_OGG  ? "Ogg Vorbis"
+                    : fmt == F_FLAC ? "FLAC"
+                    : fmt == F_WAV  ? "WAV"
+                    : fmt == F_GEN  ? gd.name
+                                    : "";
+    int k = 0;
+    for (; f && f[k] && k < 15; k++)
+        t->nm[k] = f[k];
+    t->nm[k] = 0;
+    t->srate = srate;
+    t->chans = chans;
+    t->kbps = kbps;
+    t->total = total;
+}
 static void play(int i, long start_ms, int gapless) {
     resume_ms = 0;
     if (i < 0 || i >= nt)
@@ -845,6 +869,7 @@ static void play(int i, long start_ms, int gapless) {
     if (!load_track(i)) {
         playing = 0;
         shown = i;
+        memset(&si, 0, sizeof si);
         title[0] = 0;
         base_name(list[i].name, title, 70);
         if (!gapless)
@@ -868,10 +893,12 @@ static void play(int i, long start_ms, int gapless) {
         shown = i;
         set_title(i);
         pend = -1;
+        snap(&si);
     } else {
         pend = i;
         pend_at = written;
         pend_base = 0;
+        snap(&pi_);
     }
     playing = 1;
     st.cur = i;
@@ -956,6 +983,7 @@ static void pump(void) {
         shown = pend;
         set_title(pend);
         pend = -1;
+        si = pi_;
     }
 }
 
@@ -1577,20 +1605,13 @@ static void draw_info(void) {
         return;
     tx(x + 2, y + 2, title, S->hi, S->raised, bw - 4);
     tx(x + 2, y + 3, list[shown].path, S->text, S->raised, bw - 4);
-    tx(x + 2, y + 5,
-       fmt == F_MP3    ? (mp3_layer == 2 ? "MP2" : mp3_layer == 1 ? "MP1" : "MP3")
-       : fmt == F_OGG  ? "Ogg Vorbis"
-       : fmt == F_FLAC ? "FLAC"
-       : fmt == F_WAV  ? "WAV"
-       : fmt == F_GEN  ? gd.name
-                       : "-",
-       S->text, S->raised, 12);
-    numtxt(b, srate);
+    tx(x + 2, y + 5, si.nm[0] ? si.nm : "-", S->text, S->raised, 12);
+    numtxt(b, si.srate);
     int k = (int)strlen(b);
     memcpy(b + k, " Hz", 4);
     tx(x + 14, y + 5, b, S->text, S->raised, 12);
-    tx(x + 26, y + 5, chans > 1 ? "Stereo" : "Mono", S->text, S->raised, 8);
-    numtxt(b, kbps);
+    tx(x + 26, y + 5, si.chans > 1 ? "Stereo" : "Mono", S->text, S->raised, 8);
+    numtxt(b, si.kbps);
     k = (int)strlen(b);
     memcpy(b + k, " kbit/s", 8);
     tx(x + 34, y + 5, b, S->text, S->raised, 14);
@@ -1654,7 +1675,7 @@ static void draw_marquee(int x, int y, int w) {
 }
 static void draw_transport(int y, int mini) {
     char t[10], u[10];
-    long ms = now_ms(), len = srate ? total / srate : 0;
+    long ms = now_ms(), len = si.srate ? si.total / si.srate : 0;
     mmss(t, ms / 1000);
     mmss(u, len);
     int x = 1;
@@ -1695,7 +1716,7 @@ static void draw_mini(void) {
             vx_paint(mx + i, 0, p < n ? s[p] : ' ', S->hi, S->bg);
         }
     }
-    long ms = now_ms(), len = srate ? total / srate : 0;
+    long ms = now_ms(), len = si.srate ? si.total / si.srate : 0;
     mmss(t, ms / 1000);
     mmss(u, len);
     fillr(1, 1, 15, 1, S->bg);
@@ -1725,7 +1746,7 @@ static void draw_mini(void) {
     draw_seek(3);
 }
 static void draw_seek(int y) {
-    long ms = now_ms(), len = srate ? total * 1000 / srate : 0;
+    long ms = now_ms(), len = si.srate ? si.total * 1000 / si.srate : 0;
     int p = len ? (int)(ms * W / len) : 0;
     for (int i = 0; i < W; i++)
         vx_paint(i, y,
@@ -1826,22 +1847,18 @@ static void draw(long t) {
     } else {
         char b[80];
         int n = 0;
-        if (fmt) {
-            const char *f = fmt == F_MP3    ? (mp3_layer == 2 ? "mp2" : mp3_layer == 1 ? "mp1" : "mp3")
-                            : fmt == F_OGG  ? "ogg vorbis"
-                            : fmt == F_FLAC ? "flac"
-                            : fmt == F_GEN  ? gd.name
-                                            : "wav";
+        if (fmt && si.nm[0]) {
+            const char *f = si.nm;
             for (; *f && n < 30; f++)
                 b[n++] = *f >= 'A' && *f <= 'Z' ? (char)(*f + 32) : *f;
             b[n++] = ' ';
-            numtxt(b + n, srate);
+            numtxt(b + n, si.srate);
             n = (int)strlen(b);
             b[n++] = ' ';
             b[n++] = 'H';
             b[n++] = 'z';
             b[n++] = ' ';
-            const char *ch_ = chans > 1 ? "stereo" : "mono";
+            const char *ch_ = si.chans > 1 ? "stereo" : "mono";
             for (; *ch_; ch_++)
                 b[n++] = *ch_;
         }

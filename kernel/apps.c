@@ -372,7 +372,7 @@ static void lp_draw(void) {
         if (!inst && progs[i].fn == app_xzn) {
             for (int r = 0; r < 3; r++)
                 for (int c = 0; c < 6; c++)
-                    gput(tx + 4 + c, ty + 1 + r, 250, xzn_icon, 24, c, r);
+                    gput(tx + 4 + c, ty + 1 + r, 251, xzn_icon, 24, c, r); /* 250 is the background */
         } else
             for (int r = 0; r < 3; r++) {
                 const char *ic = inst ? ipr[i - NP].icon[r] : progs[i].ic[r];

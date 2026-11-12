@@ -103,7 +103,8 @@ static inline void px(u8 *d, u32 c) {
         memcpy(d, &c, fbb);
 }
 /* Picture cells: with bit 31 set, a cell holds no character but a 4x8-pixel piece of a picture.
- * Windows, dialogs and shadows keep working as usual, only the drawing of the cell differs. */
+ * Windows, dialogs and shadows keep working as usual, only the drawing of the cell differs.
+ * Ids 1-249 go to programs (gfx_newid), 250 is the background picture, 251 the XZN icon. */
 #define GN 32
 static struct {
     u8 id;
@@ -127,9 +128,11 @@ static int gslot(u8 id, const u8 *px, int stride) {
     int i;
     if (gn < GN)
         i = gn++;
-    else {
-        i = gnext;
-        gnext = (gnext + 1) % GN;
+    else { /* the oldest goes, but never the fixed ids of the system (background, icons) */
+        do {
+            i = gnext;
+            gnext = (gnext + 1) % GN;
+        } while (gt[i].id >= 250);
     }
     gt[i].id = id;
     gt[i].px = px;

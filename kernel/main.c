@@ -241,7 +241,9 @@ int cfg_wall, cfg_lang = 1;
 typedef struct {
     u32 magic;
     int off, wall, lang, kbd, vol, out, scheme, saver, swait;
+    int seen; /* 1: the keyboard help was shown once, at the very first start */
 } cfg_t;
+static int cfg_seen;
 #define CFG_NAME "/system/config"
 static u32 to_secs(const rtc_t *t) {
     int y = t->year, m = t->mon;
@@ -311,7 +313,7 @@ void rtc_set(const rtc_t *t) {
 }
 int cfg_save(void) {
     cfg_t c = {0x32464356,  time_off,    cfg_wall,       cfg_lang,      cfg_kbd,
-               cfg_vol + 1, cfg_out + 1, cfg_scheme + 1, cfg_saver + 1, cfg_swait + 1};
+               cfg_vol + 1, cfg_out + 1, cfg_scheme + 1, cfg_saver + 1, cfg_swait + 1, cfg_seen};
     return fs_ok() ? vfs_write(CFG_NAME, &c, sizeof c, fs_now()) : -1;
 }
 void cfg_load(void) {
@@ -334,6 +336,7 @@ void cfg_load(void) {
             cfg_wall = c.wall;
         cfg_lang = c.lang == 1;
         cfg_kbd = c.kbd == 1;
+        cfg_seen = c.seen == 1;
     }
 }
 /* Orderly end before restart or power off: a message, the sound fades out, every drive empties
@@ -470,6 +473,10 @@ void kmain(void) {
     ui_init();
     net_init();
     ui_splash();
-    app_help();
+    if (!cfg_seen) { /* the keyboard help only at the first start; F1 brings it back */
+        app_help();
+        cfg_seen = 1;
+        cfg_save();
+    }
     ui_run();
 }

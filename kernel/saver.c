@@ -5,6 +5,7 @@
 #include <string.h>
 #include "os.h"
 #include "sintab.h"
+#include "sevenseg.h"
 
 int cfg_saver, cfg_swait = 2; /* screen saver (0 off) and waiting time (index into saver_min) */
 const int saver_min[SWAITS] = {1, 2, 3, 5, 10, 15, 30};
@@ -289,67 +290,19 @@ static void wire_draw(u32 ms) {
         rect(px[i] - 1, py[i] - 1, 3, 3, pz[i] < -40 ? C_GLOW : C_LAV);
 }
 
-/* ---------- 3: digital clock of seven-segment digits ---------- */
-static const u8 segs[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
-/* one segment: beveled ends like on a real display */
-static void seg(int x, int y, int len, int th, int vert, u8 c) {
-    for (int i = 0; i < len; i++) {
-        int edge = i < th / 2 ? i : len - 1 - i < th / 2 ? len - 1 - i : th / 2;
-        int w = edge * 2 + 1 > th ? th : edge * 2 + 1;
-        int o = (th - w) / 2;
-        if (vert)
-            rect(x + o, y + i, w, 1, c);
-        else
-            rect(x + i, y + o, 1, w, c);
-    }
-}
-static void digit(int x, int y, int w, int h, int d, u8 on, u8 off) {
-    int t = w / 5 < 2 ? 2 : w / 5, g = t / 3 + 1, hh = (h - t) / 2;
-    u8 m = d < 0 ? 0 : segs[d];
-    seg(x + g, y, w - 2 * g, t, 0, m & 1 ? on : off);           /* a */
-    seg(x + w - t, y + g, hh - g, t, 1, m & 2 ? on : off);      /* b */
-    seg(x + w - t, y + hh + g, hh - g, t, 1, m & 4 ? on : off); /* c */
-    seg(x + g, y + 2 * hh, w - 2 * g, t, 0, m & 8 ? on : off);  /* d */
-    seg(x, y + hh + g, hh - g, t, 1, m & 16 ? on : off);        /* e */
-    seg(x, y + g, hh - g, t, 1, m & 32 ? on : off);             /* f */
-    seg(x + g, y + hh, w - 2 * g, t, 0, m & 64 ? on : off);     /* g */
-}
+/* ---------- 3: digital clock of seven-segment digits (sevenseg.h) ---------- */
 static void seven_draw(u32 ms) {
     memset(buf, C_VOID, (u64)pw * ph);
     rtc_t t;
     rtc_read(&t);
-    int dw = pw / 9, dh = dw * 2, sw = dw / 2, sh = dh / 2, gap = dw / 4;
-    int tw = 4 * dw + 3 * gap + dw / 2 + 2 * gap + 2 * sw + gap / 2;
+    int dw = pw / 9, dh = dw * 2, tw = ss_width(dw);
     /* the clock wanders a little every minute, so nothing burns in */
     u32 r = (u32)(t.h * 60 + t.m) * 2654435761u;
     int mx = pw - tw, my = ph - dh;
     int x = mx > 0 ? (int)(rnd(&r) % (u32)(mx / 2 + 1)) + mx / 4 : 0,
         y = my > 0 ? (int)(rnd(&r) % (u32)(my / 2 + 1)) + my / 4 : 0;
-    u8 on = C_NEON, off = C_RAISE;
-    digit(x, y, dw, dh, t.h / 10, on, off);
-    digit(x + dw + gap, y, dw, dh, t.h % 10, on, off);
-    int cx = x + 2 * dw + 2 * gap, th = dw / 5 < 2 ? 2 : dw / 5;
-    u8 col = t.s % 2 ? off : on; /* the colon blinks */
-    rect(cx, y + dh / 3 - th / 2, th, th, col);
-    rect(cx, y + dh * 2 / 3 - th / 2, th, th, col);
-    int mx2 = cx + th + gap;
-    digit(mx2, y, dw, dh, t.m / 10, on, off);
-    digit(mx2 + dw + gap, y, dw, dh, t.m % 10, on, off);
-    int sx = mx2 + 2 * dw + 2 * gap;
-    digit(sx, y + dh - sh, sw, sh, t.s / 10, C_LAV, off);
-    digit(sx + sw + gap / 2, y + dh - sh, sw, sh, t.s % 10, C_LAV, off);
-    /* the date in small digits below */
-    int qw = dw / 3, qh = qw * 2, qg = qw / 3, qx = x, qy = y + dh + dh / 4;
-    off = C_PANEL;
-    int v[8] = {t.day / 10, t.day % 10,         -2,         t.mon / 10, t.mon % 10,
-                -2,         (t.year / 10) % 10, t.year % 10};
-    for (int i = 0; i < 8; i++) {
-        if (v[i] == -2)
-            rect(qx, qy + qh - 2, 2, 2, C_LAV);
-        else
-            digit(qx, qy, qw, qh, v[i], C_LAV, off);
-        qx += v[i] == -2 ? qg + 3 : qw + qg;
-    }
+    ssbuf s = {buf, pw, ph};
+    ss_clock(&s, &t, x, y, dw, C_PANEL, C_NEON, C_RAISE, C_LAV);
     (void)ms;
 }
 

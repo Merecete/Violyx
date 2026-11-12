@@ -143,11 +143,13 @@ void cd_poll(void) {
     int changed = 0;
     for (int i = 0; i < MAXCD; i++) {
         cdrive *c = cds[i];
-        if (!c || ticks < c->next || c->dead >= 5)
+        if (!c || ticks < c->next)
             continue;
-        c->next = ticks + 200;
         int r = cd_ready(c);
         c->dead = r < 0 ? c->dead + 1 : 0;
+        /* a drive that does not answer is asked less often, but never given up: some take
+         * many seconds after power-on or after a disc went in */
+        c->next = ticks + (c->dead >= 5 ? 1000 : 200);
         if (c->dev && r > 0) { /* taken out or changed */
             blk_gone(c->dev);
             c->dev = 0;

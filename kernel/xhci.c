@@ -13,7 +13,8 @@ typedef struct {
 #define MAXK 4
 struct msc;
 typedef struct ud {
-    int kind, slot, tried, hn, speed, depth, rport, tts, ttp, vid, pid, cls;
+    int kind, slot, tried, hn, speed, depth, rport, tts, ttp, vid, pid, cls, step;
+    char ifs[28]; /* the interfaces as class/subclass/protocol, for the usb command */
     u32 route;
     struct msc *m;
     ring ep0;
@@ -48,7 +49,12 @@ static hc_t *UH = &hcs[0];
 #define pt     (UH->pt)
 typedef struct {
     hc_t *h;
-    int slot, dci;
+    int slot, dci, len; /* len: bytes asked for per report (the endpoint's packet size) */
+    int halted;         /* the endpoint stopped after an error: reset in usb_hotplug */
+    /* the report as its descriptor says, for keyboards that keep sending it in boot protocol
+     * (N-key rollover): bit positions after the report id */
+    int rid, modoff, arroff, arrn, arrsz, nbm;
+    int bmoff[4], bmmin[4], bmn[4];
     ring r;
     u8 *rep;
     u8 last[8];
@@ -66,6 +72,8 @@ static u64 rep_at;
 #define EVN    256
 #define PS(n)  (*(volatile u32 *)(op + 0x400 + (n) * 0x10))
 static int want, waitport, cur_kind, cur_slot, cur_hn, cur_vid, cur_pid, cur_cls;
+static int cur_step; /* how far setting a device up came: 1 slot ... 6 running */
+static char cur_ifs[28];
 static void *cur_m;
 static int usb_ch; /* a drive came or went: the folder /drives is updated */
 static ring cur_ep0;
@@ -106,6 +114,107 @@ static int ev_next(trb *o) {
     return 1;
 }
 static void kb_event(trb *e);
+/* The parts of a HID report descriptor that matter for a keyboard (usage page 7) */
+static void hid_layout(kb_t *k, const u8 *d, int n) {
+    int page = 0, size = 0, count = 0, id = 0, umin = -1, umax = -1, nus = 0, us0 = -1;
+    int off = 0, kid = -1;
+    k->modoff = k->arroff = -1;
+    k->nbm = 0;
+    for (int i = 0; i < n;) {
+        u8 b = d[i++];
+        if (b == 0xFE) { /* long item */
+            if (i + 1 >= n)
+                break;
+            i += 2 + d[i];
+            continue;
+        }
+        int sz = b & 3 ? 1 << ((b & 3) - 1) : 0, type = (b >> 2) & 3, tag = b >> 4;
+        if (i + sz > n)
+            break;
+        u32 v = 0;
+        for (int j = 0; j < sz; j++)
+            v |= (u32)d[i + j] << (8 * j);
+        i += sz;
+        if (type == 1) { /* global */
+            if (tag == 0)
+                page = (int)v;
+            else if (tag == 7)
+                size = (int)v;
+            else if (tag == 9)
+                count = (int)v;
+            else if (tag == 8) {
+                id = (int)v;
+                off = 0;
+            }
+        } else if (type == 2) { /* local */
+            if (tag == 0) {
+                if (!nus++)
+                    us0 = (int)(v & 0xFFFF);
+            } else if (tag == 1)
+                umin = (int)(v & 0xFFFF);
+            else if (tag == 2)
+                umax = (int)(v & 0xFFFF);
+        } else if (type == 0) { /* main */
+            if (tag == 8 && page == 7 && !(v & 1) && size > 0 && count > 0 &&
+                (kid < 0 || kid == id)) {
+                int lo = umin >= 0 ? umin : us0;
+                if (v & 2) { /* variables: modifiers or a bitmap of keys */
+                    if (lo == 0xE0 && size == 1)
+                        k->modoff = off;
+                    else if (size == 1 && k->nbm < 4 && lo >= 0) {
+                        k->bmoff[k->nbm] = off;
+                        k->bmmin[k->nbm] = lo;
+                        k->bmn[k->nbm] = count;
+                        k->nbm++;
+                    }
+                } else if (k->arroff < 0) { /* an array of pressed keys */
+                    k->arroff = off;
+                    k->arrn = count;
+                    k->arrsz = size;
+                }
+                kid = id;
+            }
+            if (tag == 8)
+                off += size * count;
+            umin = umax = us0 = -1;
+            nus = 0;
+        }
+    }
+    (void)umax;
+    k->rid = kid > 0 ? kid : 0;
+}
+static int hbit(const u8 *r, int len, int bit) {
+    return bit / 8 < len ? r[bit / 8] >> (bit % 8) & 1 : 0;
+}
+/* A report in the descriptor's own form, made into the 8 bytes of the boot protocol */
+static int hid_boot(const kb_t *k, const u8 *r, int len, u8 *o) {
+    if (k->rid) {
+        if (len < 1 || r[0] != k->rid)
+            return 0;
+        r++;
+        len--;
+    }
+    memset(o, 0, 8);
+    if (k->modoff >= 0)
+        for (int b = 0; b < 8; b++)
+            o[0] |= (u8)(hbit(r, len, k->modoff + b) << b);
+    int n = 2;
+    if (k->arroff >= 0 && k->arrsz == 8)
+        for (int i = 0; i < k->arrn && n < 8; i++) {
+            int bit = k->arroff + i * 8;
+            u8 u = bit / 8 < len ? r[bit / 8] : 0;
+            if (u && u < 0xE0)
+                o[n++] = u;
+        }
+    for (int m = 0; m < k->nbm; m++)
+        for (int i = 0; i < k->bmn[m] && n < 8; i++)
+            if (hbit(r, len, k->bmoff[m] + i)) {
+                int u = k->bmmin[m] + i;
+                if (u > 0 && u < 0xE0)
+                    o[n++] = (u8)u;
+            }
+    return k->modoff >= 0 || k->arroff >= 0 || k->nbm;
+}
 #define URN 1024
 #define UFN 32
 typedef struct {
@@ -183,6 +292,7 @@ typedef struct msc {
     u8 *buf, *big; /* big: 64 KiB that do not cross a 64 KiB boundary, for one TRB */
     u8 *cbw;
     u32 tag;
+    int atapi; /* subclass 2 or 5 (CD drives, old floppies): commands always 12 bytes */
     mlun_t L[MLUN];
 } msc_t;
 #define NMSC 8
@@ -245,8 +355,10 @@ static int scsi_b(msc_t *m, const u8 *cdb, int cl, u32 len, int in, u8 *buf) {
     *(u32 *)(c + 8) = len;
     c[12] = in ? 0x80 : 0;
     c[13] = (u8)m->lun;
-    c[14] = cl;
     memcpy(c + 15, cdb, cl);
+    if (m->atapi && cl < 12)
+        cl = 12; /* the rest stays zero */
+    c[14] = cl;
     int cc = 0;
     if (bulk(m, 0, c, 31, &cc)) {
         unstall(m, 0);
@@ -421,6 +533,11 @@ static void ep0_reset(msc_t *m) {
     u64 q = phys(&m->ep0.t[m->ep0.i]) | m->ep0.cy;
     command(q, q >> 32, 0, (16 << 10) | (m->slot << 24) | (1 << 16));
 }
+static void ep0_reset_slot(int slot, ring *r) {
+    command(0, 0, 0, (14 << 10) | ((u32)slot << 24) | (1 << 16));
+    u64 q = phys(&r->t[r->i]) | r->cy;
+    command(q, q >> 32, 0, (16 << 10) | ((u32)slot << 24) | (1 << 16));
+}
 static void msc_start(msc_t *m, int ifn) {
     u8 inq[6] = {0x12, 0, 0, 0, 36, 0};
     /* GET MAX LUN: card readers have one drive per slot */
@@ -439,7 +556,12 @@ static void msc_start(msc_t *m, int ifn) {
         L->n = (u8)i;
         m->lun = i;
         L->mdl[0] = 0;
-        if (scsi(m, inq, 6, 36, 1))
+        int q = scsi(m, inq, 6, 36, 1);
+        if (q) { /* some drives (CD drives above all) need a moment after they were plugged in */
+            udelay(500000);
+            q = scsi(m, inq, 6, 36, 1);
+        }
+        if (q)
             continue;
         L->ok = (m->buf[0] & 0x1F) == 0; /* a direct access drive */
         L->rmb = m->buf[1] >> 7;
@@ -974,13 +1096,22 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     IC(2)[2] = p | 1;
     IC(2)[3] = p >> 32;
     IC(2)[4] = 8;
+    cur_step = 1;
     if (command(phys(ictx), phys(ictx) >> 32, 0, (11 << 10) | (slot << 24)) < 0)
         return;
+    cur_step = 2;
     static u8 *d;
     if (!d)
         d = dma_alloc(4096);
-    if (ctrl(slot, &ep0, 0x80 | (6 << 8), 0x100, 0, 8, d))
-        return;
+    /* the device may take its time after it got its address (USB allows 2 ms, some need more) */
+    udelay(10000);
+    if (ctrl(slot, &ep0, 0x80 | (6 << 8), 0x100, 0, 8, d)) {
+        ep0_reset_slot(slot, &ep0);
+        udelay(100000);
+        if (ctrl(slot, &ep0, 0x80 | (6 << 8), 0x100, 0, 8, d))
+            return;
+    }
+    cur_step = 3;
     int real = speed == 4 ? 1 << d[7] : d[7];
     if (real && real != mps) {
         memset(ictx, 0, 33 * csz);
@@ -1003,13 +1134,25 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
         tl = 4096;
     if (ctrl(slot, &ep0, 0x80 | (6 << 8), 0x200, 0, tl, d))
         return;
+    cur_step = 4;
+    { /* the interfaces, for the usb command */
+        int n = 0;
+        cur_ifs[0] = 0;
+        for (int o = 0; o + 8 < tl && d[o] && n < 22; o += d[o])
+            if (d[o + 1] == 4 && !d[o + 3]) /* alternate setting 0 */
+                n += ksnprintf(cur_ifs + n, (int)sizeof cur_ifs - n, "%s%d/%d/%d", n ? " " : "",
+                               d[o + 5], d[o + 6], d[o + 7]);
+    }
     int cfgv = d[5];
-    int ifn = -1, epa = 0, epi = 0, eps = 8, cur = 0;
+    int ifn = -1, epa = 0, epi = 0, eps = 8, cur = 0, boot = 0;
     for (int o = 0; o + 1 < tl && d[o]; o += d[o]) {
         if (d[o + 1] == 4) {
-            cur = d[o + 5] == 3 && d[o + 6] == 1 && d[o + 7] == 1;
-            if (cur && ifn < 0)
+            /* a keyboard: HID with protocol 1, best with the boot subclass */
+            cur = d[o + 5] == 3 && d[o + 7] == 1 && !d[o + 3] && ifn < 0;
+            if (cur) {
                 ifn = d[o + 2];
+                boot = d[o + 6] == 1;
+            }
         } else if (d[o + 1] == 5 && cur && (d[o + 2] & 0x80) && (d[o + 3] & 3) == 3 && !epa) {
             epa = d[o + 2] & 15;
             eps = d[o + 4] | d[o + 5] << 8;
@@ -1047,12 +1190,16 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
         return;
     }
     /* USB storage: class 8, SCSI, bulk-only */
-    int msi = -1, mi = 0, mo = 0, mpi = 0, mpo = 0, bi = 0, bo = 0, in_ms = 0, last = 0;
+    /* subclass 6 is SCSI; CD/DVD drives often say 2 (ATAPI) or 5 (SFF-8070i) */
+    int msi = -1, mi = 0, mo = 0, mpi = 0, mpo = 0, bi = 0, bo = 0, in_ms = 0, last = 0, msub = 6;
     for (int o = 0; o + 1 < tl && d[o]; o += d[o]) {
         if (d[o + 1] == 4) {
-            in_ms = d[o + 5] == 8 && d[o + 6] == 6 && d[o + 7] == 0x50;
-            if (in_ms && msi < 0)
+            in_ms = d[o + 5] == 8 && (d[o + 6] == 6 || d[o + 6] == 2 || d[o + 6] == 5) &&
+                    d[o + 7] == 0x50;
+            if (in_ms && msi < 0) {
                 msi = d[o + 2];
+                msub = d[o + 6];
+            }
             last = 0;
         } else if (d[o + 1] == 5 && in_ms && (d[o + 3] & 3) == 2) {
             int n = d[o + 2] & 15, m = d[o + 4] | d[o + 5] << 8;
@@ -1092,6 +1239,7 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
         m->big = dma_alloc(2 << 16);
         m->big = (u8 *)(((u64)m->big + 0xFFFF) & ~0xFFFFull);
         m->cbw = dma_alloc(64);
+        m->atapi = msub != 6;
         int top = m->in > m->out ? m->in : m->out;
         memset(ictx, 0, 33 * csz);
         IC(0)[1] = 1 | (1u << m->in) | (1u << m->out);
@@ -1118,8 +1266,20 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
         return;
     if (ctrl(slot, &ep0, 0 | (9 << 8), cfgv, 0, 0, 0))
         return;
-    ctrl(slot, &ep0, 0x21 | (0x0B << 8), 0, ifn, 0, 0);
-    ctrl(slot, &ep0, 0x21 | (0x0A << 8), 0, ifn, 0, 0);
+    cur_step = 5;
+    /* As every PC does it: the report descriptor first (some keyboards stay silent without),
+     * then boot protocol and no repeat by the keyboard. A STALL of these is not an error. */
+    u8 *hd = d; /* the configuration is read, d is free again */
+    int hdn = 0;
+    memset(hd, 0, 1024);
+    if (ctrl(slot, &ep0, 0x81 | (6 << 8), 0x2200, (u16)ifn, 1024, hd))
+        ep0_reset_slot(slot, &ep0);
+    else
+        hdn = 1024; /* the rest is zero, which ends the parsing harmlessly */
+    if (boot && ctrl(slot, &ep0, 0x21 | (0x0B << 8), 0, ifn, 0, 0))
+        ep0_reset_slot(slot, &ep0);
+    if (ctrl(slot, &ep0, 0x21 | (0x0A << 8), 0, ifn, 0, 0))
+        ep0_reset_slot(slot, &ep0);
     kb_t *k = &kb[usb_keyboards];
     memset(k, 0, sizeof *k);
     k->h = UH;
@@ -1127,6 +1287,10 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     k->dci = epa * 2 + 1;
     ring_new(&k->r, 32);
     k->rep = dma_alloc(64);
+    /* gaming keyboards send up to 64 bytes even in boot protocol; asking for less makes the
+     * controller report babble and stop the endpoint */
+    k->len = eps < 8 ? 8 : eps > 64 ? 64 : eps;
+    hid_layout(k, hd, hdn);
     int iv = speed >= 3 ? (epi ? epi - 1 : 0) : 3 + log2i(epi ? epi : 1);
     if (iv > 15)
         iv = 15;
@@ -1140,14 +1304,15 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     u64 q = phys(k->r.t);
     e[2] = q | 1;
     e[3] = q >> 32;
-    e[4] = 8 | (8u << 16);
+    e[4] = (u32)k->len | ((u32)k->len << 16);
     if (command(phys(ictx), phys(ictx) >> 32, 0, (12 << 10) | (slot << 24)) < 0)
         return;
     q = phys(k->rep);
-    put_trb(&k->r, q, q >> 32, 8, (1 << 10) | (1 << 5));
+    put_trb(&k->r, q, q >> 32, (u32)k->len, (1 << 10) | (1 << 5));
     DB(slot) = k->dci;
     usb_keyboards++;
     cur_kind = 1;
+    cur_step = 6;
 }
 /* Bookkeeping for plugging and unplugging, also behind hubs */
 static ud_t kids[48];
@@ -1196,6 +1361,8 @@ static void dev_gone(ud_t *q) {
     q->m = 0;
     q->hn = 0;
     q->cls = q->vid = q->pid = 0;
+    q->ifs[0] = 0;
+    q->step = 0;
     usb_ch = 1;
 }
 static void hub_poll(ud_t *q);
@@ -1206,7 +1373,11 @@ static void dev_attach(ud_t *q, int rport, int speed, u32 route, int tts, int tt
     cur_hn = 0;
     cur_vid = cur_pid = 0;
     cur_cls = -1;
+    cur_step = 0;
+    cur_ifs[0] = 0;
     usb_dev(rport, speed, route, tts, ttp, depth);
+    q->step = cur_step;
+    strlcpy_(q->ifs, cur_ifs, sizeof q->ifs);
     q->kind = cur_kind;
     q->slot = cur_slot;
     q->m = cur_m;
@@ -1318,6 +1489,18 @@ void usb_hotplug(void) {
     u64 f = irq_off();
     hc_t *sv = UH;
     usb_ch = 0;
+    for (int i = 0; i < usb_keyboards; i++) /* a keyboard endpoint that stopped */
+        if (kb[i].halted) {
+            kb_t *k = &kb[i];
+            UH = k->h;
+            k->halted = 0;
+            command(0, 0, 0, (14u << 10) | ((u32)k->dci << 16) | ((u32)k->slot << 24));
+            u64 q = phys(&k->r.t[k->r.i]) | k->r.cy; /* go on where the ring stands */
+            command((u32)q, q >> 32, 0, (16u << 10) | ((u32)k->dci << 16) | ((u32)k->slot << 24));
+            q = phys(k->rep);
+            put_trb(&k->r, q, q >> 32, (u32)k->len, (1 << 10) | (1 << 5));
+            DB(k->slot) = k->dci;
+        }
     for (int c = 0; c < nhc; c++) {
         UH = &hcs[c];
         if (!ready)
@@ -1359,6 +1542,14 @@ static void ud_line(ud_t *q, const char *pre, void (*cb)(const char *, void *), 
     ksnprintf(l, 72, "%s %s %s %04x:%04x cl%d", pre, ud_name(q), ud_sp(q->speed), q->vid, q->pid,
               q->cls);
     cb(l, a);
+    /* interfaces, and for what did not work: how far it came */
+    if (!q->kind)
+        ksnprintf(l, 72, TR("%s   if %s  Schritt %d", "%s   if %s  step %d"), pre,
+                  q->ifs[0] ? q->ifs : "-", q->step);
+    else
+        ksnprintf(l, 72, "%s   if %s", pre, q->ifs);
+    if (q->ifs[0] || !q->kind)
+        cb(l, a);
     for (int i = 1; i < 16; i++)
         if (q->kid[i]) {
             char p[24];
@@ -1612,11 +1803,19 @@ static void kb_event(trb *e) {
     for (int i = 0; i < usb_keyboards; i++)
         if (kb[i].h == UH && kb[i].slot == s) {
             kb_t *k = &kb[i];
-            u32 cc = e->c >> 24;
-            if (cc == 1 || cc == 13)
-                report(k, k->rep);
+            u32 cc = e->c >> 24, got = (u32)k->len - (e->c & 0xFFFFFF);
+            if (cc == 1 || cc == 13) {
+                u8 b8[8];
+                if (got == 8)
+                    report(k, k->rep); /* boot protocol, as asked */
+                else if (got > 0 && got <= (u32)k->len && hid_boot(k, k->rep, (int)got, b8))
+                    report(k, b8); /* the keyboard kept its own form (N-key rollover) */
+            } else {
+                k->halted = 1; /* babble, stall or transfer error: usb_hotplug starts it again */
+                return;
+            }
             u64 q = phys(k->rep);
-            put_trb(&k->r, q, q >> 32, 8, (1 << 10) | (1 << 5));
+            put_trb(&k->r, q, q >> 32, (u32)k->len, (1 << 10) | (1 << 5));
             DB(s) = k->dci;
         }
 }
