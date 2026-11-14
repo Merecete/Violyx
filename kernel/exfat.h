@@ -16,6 +16,8 @@ typedef struct {
     uint32_t cc_first, cc_idx, cc_clus; /* last position in a FAT chain */
     uint32_t bm_c;                      /* bitmap: cluster bm_ci of its chain */
     uint64_t bm_ci;
+    uint32_t ap_first, ap_last; /* end of the file appended to last */
+    uint64_t ap_len;
     int ok;
 } exfvol;
 int exf_mount(exfvol *v, const vfs_dev *d);
@@ -23,6 +25,7 @@ int exf_stat(exfvol *v, const char *p, vfs_ent *e);
 int64_t exf_read(exfvol *v, const char *p, void *b, uint64_t max);
 int64_t exf_read_at(exfvol *v, const char *p, void *b, uint64_t off, uint64_t max);
 int exf_write(exfvol *v, const char *p, const void *b, uint64_t len, uint32_t now);
+int exf_append(exfvol *v, const char *p, const void *b, uint64_t len, uint32_t now);
 int exf_mkdir(exfvol *v, const char *p, uint32_t now);
 int exf_remove(exfvol *v, const char *p);
 int exf_rename(exfvol *v, const char *a, const char *b);

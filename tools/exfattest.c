@@ -142,8 +142,24 @@ int main(int ac, char **av) {
         for (int it = 0; it < iters; it++) {
             char p[600], q[600];
             rp(p);
-            int i = find(p), op = rand() % 10;
-            if (op < 5) {
+            int i = find(p), op = rand() % 13;
+            if (op >= 10 && i >= 0 && !M[i].dir) { /* append */
+            uint64_t l = rand() % 8 == 0 ? (uint64_t)(rand() % 400000) : (uint64_t)(rand() % 9000);
+            unsigned char *d = malloc(l + 1);
+            for (uint64_t k = 0; k < l; k++)
+                d[k] = (unsigned char)(rand() >> 3);
+            int r = exf_append(&V, p, d, l, 1700000000 + it);
+            if (r && r != VE_NOSPC) {
+                printf("append %d %s\n", r, p);
+                abort();
+            }
+            if (!r) {
+                M[i].d = realloc(M[i].d, M[i].l + l + 1);
+                memcpy(M[i].d + M[i].l, d, l);
+                M[i].l += l;
+            }
+            free(d);
+        } else if (op < 5) {
                 uint64_t l = rand() % 20 == 0  ? rand() % 3000000
                              : rand() % 3 == 0 ? 0
                                                : rand() % 20000;

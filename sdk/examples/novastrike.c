@@ -1,5 +1,5 @@
 /* Novastrike - a vertically scrolling shooter for Violyx.
-   SPDX-License-Identifier: MIT
+   SPDX-License-Identifier: BSD-3-Clause
    Arrows or WASD fly, Space fires, X raises the shield, C fires a nova that clears the
    screen, P pauses, M switches the music. Destroy a whole wave for a coin and a chance
    of a crystal. Crystals: W weapon, S shield, N nova.

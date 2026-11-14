@@ -1,5 +1,5 @@
 /* Bricks - a block breaking game for Violyx.
-   SPDX-License-Identifier: MIT
+   SPDX-License-Identifier: BSD-3-Clause
    Left/Right or A/D move the paddle, Space launches the ball, P pauses, M switches the music.
    Hit the ball with the paddle edge to speed it up: a fast ball smashes through several bricks.
    16 levels with tough bricks (two hits) and solid ones that never break; after the last level the

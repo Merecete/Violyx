@@ -141,6 +141,19 @@ static inline long vx_read_at(const char *p, void *b, unsigned long off, size_t 
     unsigned long q[3] = {(unsigned long)b, off, n};
     return vx_sys(26, (long)p, (long)q, 0);
 }
+/* Opens the tray of a CD drive: "cd1", "cd2" ... */
+static inline long vx_eject_cd(const char *drive) {
+    return vx_sys(30, 8, (long)drive, 0);
+}
+/* Adds n bytes (at most 1 MB per call) to the end of an existing file. Big files are written in
+ * parts: vx_write the first part, then vx_append the others. */
+static inline long vx_append(const char *p, const void *b, size_t n) {
+    return vx_sys(31, (long)p, (long)b, (long)n);
+}
+/* Free bytes on the drive of a path, or -1 when Violyx does not know (USB drives) */
+static inline long vx_free(const char *p) {
+    return vx_sys(32, (long)p, 0, 0);
+}
 static inline long vx_stat(const char *p, vx_stat_t *s) {
     return vx_sys(13, (long)p, (long)s, 0);
 }

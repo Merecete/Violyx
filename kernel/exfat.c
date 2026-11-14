@@ -227,6 +227,7 @@ static u32 alloc(exfvol *v) {
 }
 /* Gives back the clusters of a file or directory */
 static void cfree(exfvol *v, u32 first, u64 len, int nofat) {
+    v->ap_first = 0;
     if (!cvalid(v, first))
         return;
     if (nofat) {
@@ -1100,6 +1101,194 @@ int exf_write(exfvol *v, const char *p, const void *b, u64 len, u32 now) {
     r = add(v, &dir, &self, e, k);
     if (r)
         cfree(v, first, len, nofat);
+    return wend(v, r);
+}
+/* Writes into cluster c from byte in on, at most len bytes; returns how many or < 0 */
+static int64_t cwrite(exfvol *v, u32 c, u32 in, const u8 *b, u64 len) {
+    static u8 s[512];
+    u64 cs = csize(v), o = 0, s0 = c2s(v, c);
+    if (len > cs - in)
+        len = cs - in;
+    while (o < len) {
+        u32 i = (in + (u32)o) / 512, k = (in + (u32)o) % 512;
+        if (!k && len - o >= 1024) {
+            u64 run = (len - o) / 512;
+            if (run > v->spc - i)
+                run = v->spc - i;
+            if (wsn(v, s0 + i, (u32)run, b + o))
+                return VE_IO;
+            o += run * 512;
+            continue;
+        }
+        u64 n = 512 - k < len - o ? 512 - k : len - o;
+        if (k) {
+            if (rs(v, s0 + i, s))
+                return VE_IO;
+        } else if (n < 512)
+            memset(s, 0, 512);
+        memcpy(s + k, b + o, n);
+        if (ws(v, s0 + i, s))
+            return VE_IO;
+        o += n;
+    }
+    return (int64_t)len;
+}
+/* Adds len bytes to the end of an existing file. A file in one piece stays in one piece while the
+ * clusters after it are free, otherwise it gets a FAT chain. The entry set changes last. */
+int exf_append(exfvol *v, const char *p, const void *buf, u64 len, u32 now) {
+    static xset f, ps;
+    xdir par;
+    int root;
+    int r = lookup(v, p, &f, &par, &ps, &root);
+    if (r)
+        return r;
+    if (root || (attr(&f) & 0x10))
+        return VE_ISDIR;
+    if (attr(&f) & 1)
+        return VE_DENIED;
+    if (!len)
+        return 0;
+    xdir d;
+    sdir(&f, &d);
+    u64 cs = csize(v), size = d.len;
+    u64 have = d.first ? (size + cs - 1) / cs : 0, need = (size + len + cs - 1) / cs;
+    if (need > v->clusters)
+        return VE_NOSPC;
+    if (d.first &&
+        (!cvalid(v, d.first) || (have && d.nofat && !cvalid(v, d.first + (u32)(have - 1)))))
+        return VE_IO;
+    r = wbegin(v);
+    if (r)
+        return r;
+    const u8 *b = buf;
+    u32 last = 0;
+    int nofat = d.nofat;
+    if (have) {
+        if (nofat)
+            last = d.first + (u32)(have - 1);
+        else if (v->ap_first == d.first && v->ap_len == size)
+            last = v->ap_last;
+        else {
+            last = d.first;
+            for (u64 g = 0; g + 1 < have; g++) {
+                u32 n = fget(v, last);
+                if (!cvalid(v, n) || g > v->clusters)
+                    return wend(v, VE_IO);
+                last = n;
+            }
+        }
+    }
+    u64 o = 0, used = size ? (size - 1) % cs + 1 : 0;
+    if (last && used < cs) {
+        int64_t n = cwrite(v, last, (u32)used, b, len);
+        if (n < 0)
+            return wend(v, (int)n);
+        o = (u64)n;
+    }
+    u32 first = d.first, nfirst = 0, prev = last;
+    u64 add = need > have ? need - have : 0, got = 0;
+    if (add && !have) { /* an empty file: like exf_write, in one piece if possible */
+        if (first && cvalid(v, first))
+            cfree(v, first, 0, nofat); /* a cluster without data */
+        first = run_alloc(v, add);
+        nofat = first != 0;
+        if (nofat) {
+            nfirst = first;
+            got = add;
+        } else
+            first = 0;
+    } else if (add && nofat) {
+        /* the clusters right after the file: are they all free? */
+        u64 k = 0;
+        for (; k < add; k++) {
+            u32 c = last + 1 + (u32)k;
+            int bt = cvalid(v, c) ? bmget(v, c) : 1;
+            if (bt < 0)
+                return wend(v, VE_IO);
+            if (bt)
+                break;
+        }
+        if (k == add) {
+            for (k = 0; k < add; k++)
+                if (bmset(v, last + 1 + (u32)k, 1))
+                    return wend(v, VE_IO);
+            nfirst = last + 1;
+            got = add;
+        } else { /* no: the file gets a FAT chain from here on */
+            for (u64 i = 0; i + 1 < have; i++)
+                if (fput(v, first + (u32)i, first + (u32)i + 1))
+                    return wend(v, VE_IO);
+            if (fput(v, last, 0xFFFFFFFFu))
+                return wend(v, VE_IO);
+            nofat = 0;
+        }
+    }
+    if (got) { /* a run in one piece */
+        for (u64 i = 0; i < got && o < len; i++) {
+            int64_t n = cwrite(v, nfirst + (u32)i, 0, b + o, len - o);
+            if (n < 0) {
+                r = (int)n;
+                goto fail;
+            }
+            o += (u64)n;
+        }
+        prev = nfirst + (u32)(got - 1);
+    }
+    while (o < len) {
+        u32 c = alloc(v);
+        if (!c) {
+            r = VE_NOSPC;
+            goto fail;
+        }
+        if (!nfirst)
+            nfirst = c;
+        if (!first)
+            first = c;
+        if (prev && prev != c && fput(v, prev, c)) {
+            if (c != nfirst)
+                cfree(v, c, 0, 0);
+            r = VE_IO;
+            goto fail;
+        }
+        prev = c;
+        int64_t n = cwrite(v, c, 0, b + o, len - o);
+        if (n < 0) {
+            r = (int)n;
+            goto fail;
+        }
+        o += (u64)n;
+    }
+    sync_(v);
+    {
+        u8 *x = f.e[1];
+        x[1] = (u8)(1 | (nofat ? 2 : 0));
+        W64(x, 8, size + len);
+        W32(x, 20, first);
+        W64(x, 24, size + len);
+        u32 t = ts(now);
+        W32(f.e[0], 12, t);
+        W32(f.e[0], 16, t);
+        f.e[0][22] = f.e[0][23] = 0;
+        W16(f.e[0], 4, attr(&f) | 0x20);
+        W16(f.e[0], 2, setsum(f.e, f.n));
+        if (put_ent(v, f.sec[1], f.off[1], f.e[1]) || put_ent(v, f.sec[0], f.off[0], f.e[0])) {
+            r = VE_IO;
+            goto fail;
+        }
+    }
+    v->ap_first = first;
+    v->ap_len = size + len;
+    v->ap_last = prev;
+    return wend(v, 0);
+fail:
+    v->ap_first = 0;
+    if (got)
+        cfree(v, nfirst, got * cs, 1);
+    else if (nfirst) {
+        if (last && !nofat)
+            fput(v, last, 0xFFFFFFFFu);
+        cfree(v, nfirst, 0, 0);
+    }
     return wend(v, r);
 }
 int exf_mkdir(exfvol *v, const char *p, u32 now) {

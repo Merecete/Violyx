@@ -662,6 +662,58 @@ int vfs_write(const char *path, const void *buf, u64 len, u32 now) {
     dev.fl();
     return 0;
 }
+/* Adds len bytes to the end of an existing file. Data and blocks first, the new size last: after a
+ * power failure the file has its old size or the new one. */
+int vfs_append(const char *path, const void *buf, u64 len, u32 now) {
+    if (!mounted)
+        return VE_IO;
+    u32 n;
+    int r = lookup(path, &n);
+    if (r)
+        return r;
+    inode i;
+    if (iget(n, &i))
+        return VE_IO;
+    if (i.type == T_DIR)
+        return VE_ISDIR;
+    if (i.size + len > (u64)(NDIR + PB + (u64)PB * PB) * BS)
+        return VE_NOSPC;
+    if ((len / BS + 1) * 102 / 100 + 4 > freeblk)
+        return VE_NOSPC;
+    static u8 t[BS];
+    u64 o = 0;
+    while (o < len) {
+        u64 at = i.size + o, in = at % BS;
+        u32 b = bmap(&i, at / BS, 1);
+        if (!b) {
+            iput(n, &i); /* blocks already taken stay with the file, past its size */
+            return VE_NOSPC;
+        }
+        u64 c = BS - in < len - o ? BS - in : len - o;
+        if (in) {
+            u8 *p = bget(b);
+            if (!p) {
+                iput(n, &i);
+                return VE_IO;
+            }
+            memcpy(t, p, BS);
+        } else
+            memset(t, 0, BS);
+        memcpy(t + in, (const u8 *)buf + o, c);
+        if (bput(b, t)) {
+            iput(n, &i);
+            return VE_IO;
+        }
+        o += c;
+    }
+    dev.fl();
+    i.size += len;
+    i.mtime = now;
+    if (iput(n, &i))
+        return VE_IO;
+    dev.fl();
+    return 0;
+}
 int vfs_mkdir(const char *path, u32 now) {
     if (!mounted)
         return VE_IO;

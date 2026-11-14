@@ -201,9 +201,25 @@ int main(int c, char **v) {
     for (int it = 0; it < iters; it++) {
         char p[200], q[200];
         rnd_path(p, 0);
-        int op = rand() % 10;
+        int op = rand() % 13;
         int i = mfind(p);
-        if (op < 5) {
+        if (op >= 10 && i >= 0 && !M[i].dir) { /* append */
+            uint64_t l = rand() % 8 == 0 ? (uint64_t)(rand() % 400000) : (uint64_t)(rand() % 9000);
+            unsigned char *d = malloc(l + 1);
+            for (uint64_t k = 0; k < l; k++)
+                d[k] = (unsigned char)(rand() >> 3);
+            int r = vfs_append(p, d, l, it);
+            if (r && r != VE_NOSPC) {
+                printf("append %d %s\n", r, p);
+                abort();
+            }
+            if (!r) {
+                M[i].d = realloc(M[i].d, M[i].l + l + 1);
+                memcpy(M[i].d + M[i].l, d, l);
+                M[i].l += l;
+            }
+            free(d);
+        } else if (op < 5) {
             uint64_t l = rand() % 40 == 0  ? (uint64_t)(rand() % 12000000)
                          : rand() % 4 == 0 ? rand() % 300000
                                            : rand() % 9000;

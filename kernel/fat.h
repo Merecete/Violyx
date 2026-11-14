@@ -8,6 +8,7 @@ typedef struct {
     int fsdirty;
     uint32_t cs;
     uint32_t cc_first, cc_idx, cc_clus; /* last position in a cluster chain */
+    uint32_t ap_first, ap_size, ap_last; /* end of the file appended to last */
     uint8_t buf[512];
     int ok;
 } fatvol;
@@ -16,6 +17,7 @@ int fat_stat(fatvol *v, const char *p, vfs_ent *e);
 int64_t fat_read(fatvol *v, const char *p, void *b, uint64_t max);
 int64_t fat_read_at(fatvol *v, const char *p, void *b, uint64_t off, uint64_t max);
 int fat_write(fatvol *v, const char *p, const void *b, uint64_t len, uint32_t now);
+int fat_append(fatvol *v, const char *p, const void *b, uint64_t len, uint32_t now);
 int fat_mkdir(fatvol *v, const char *p, uint32_t now);
 int fat_remove(fatvol *v, const char *p);
 int fat_rename(fatvol *v, const char *a, const char *b);

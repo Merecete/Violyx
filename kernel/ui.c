@@ -597,26 +597,166 @@ void win_menu(win_t *w, const char *name, const char *items) {
     strlcpy_(w->aname, name, 20);
     strlcpy_(w->amenu, items, sizeof w->amenu);
 }
-/* Info window for a program: name, version of the system, copyright */
-static void about_prog(const char *name) {
-    int x, y;
-    char t[40], v[24];
-    ksnprintf(t, 40, "Info - %s", name);
-redraw:
-    dlg_box(t, 40, 9, &x, &y);
-    text(x + 20 - (int)strlen(name) / 2, y + 2, AT(C_RAISE, C_NEON), name);
-    ksnprintf(v, 24, "Version %s", VERSION);
-    text(x + 20 - (int)strlen(v) / 2, y + 4, A_DLG, v);
-    text(x + 11, y + 5, A_DLG, "(c) 2026 Merecete");
-    text(x + 14, y + 7, A_SEL, " [ Enter ] ");
-    cx = -1;
-    present();
+#include "licdata.h"
+/* The licences: of Violyx, of XZN and of every component inside. Left/Right changes the text,
+ * Up/Down and Page Up/Down scroll, Esc goes back. */
+static void dlg_license(int d) {
+    static u32 ls[1200], le[1200];
+    int top = 0, cur = -1, n = 0;
     for (;;) {
+        int bw = W - 6, bh = H - 4, tw = bw - 4, rows = bh - 4, x, y;
+        if (d < 0)
+            d = lic_nfiles - 1;
+        if (d >= lic_nfiles)
+            d = 0;
+        static char rb[40000];
+        static u32 rn;
+        const char *src = lic_files[d].path;
+        if (cur != d) {
+            cur = d;
+            top = 0;
+            n = 0;
+            /* the texts are broken at 80 columns: lines of one paragraph are joined again */
+            const char *t = lic_files[d].data;
+            u32 len = lic_files[d].len, ln = 0;
+            rn = 0;
+            for (u32 i = 0; i < len && rn < sizeof rb - 1; i++) {
+                char c = t[i];
+                if (c == '\r')
+                    continue;
+                if (c != '\n') {
+                    rb[rn++] = c;
+                    ln++;
+                    continue;
+                }
+                u32 j = i + 1;
+                while (j < len && t[j] == ' ')
+                    j++;
+                char nx = j < len ? t[j] : '\n', pv = rn ? rb[rn - 1] : '.';
+                int join = ln >= 50 && ((nx >= 'a' && nx <= 'z') ||
+                                        (pv != '.' && pv != ':' && pv != ';' &&
+                                         ((nx >= 'A' && nx <= 'Z') || nx == '(' || nx == '"')));
+                if (join) {
+                    rb[rn++] = ' ';
+                    i = j - 1;
+                    ln = 50; /* the joined line counts as long */
+                } else {
+                    rb[rn++] = '\n';
+                    ln = 0;
+                }
+            }
+            /* lines that fit the box: broken at spaces */
+            u32 p = 0;
+            while (p < rn && n < 1200) {
+                u32 s = p, sp = 0;
+                int col = 0;
+                while (p < rn && rb[p] != '\n') {
+                    if (((u8)rb[p] & 0xC0) != 0x80) {
+                        if (col == tw)
+                            break;
+                        col++;
+                    }
+                    if (rb[p] == ' ')
+                        sp = p;
+                    p++;
+                }
+                u32 e = p;
+                if (p < rn && rb[p] != '\n' && sp > s) {
+                    e = sp; /* the word that did not fit goes to the next line */
+                    p = sp + 1;
+                } else if (p < rn && rb[p] == '\n')
+                    p++;
+                ls[n] = s;
+                le[n] = e;
+                n++;
+            }
+        }
+        if (top > n - rows)
+            top = n - rows;
+        if (top < 0)
+            top = 0;
+        char t[60];
+        ksnprintf(t, 60, "%s (%d/%d)", src, d + 1, lic_nfiles);
+        dlg_box(TR("Lizenzen", "Licences"), bw, bh, &x, &y);
+        text(x + 2, y + 1, AT(C_RAISE, C_NEON), t);
+        for (int r = 0; r < rows && top + r < n; r++) {
+            char b[256];
+            int k = 0;
+            for (u32 i = ls[top + r]; i < le[top + r] && k < 250; i++) {
+                char c = rb[i];
+                if (c == '\r')
+                    continue;
+                b[k++] = c == '\t' ? ' ' : c;
+            }
+            b[k] = 0;
+            text(x + 2, y + 2 + r, A_DLG, b);
+        }
+        text(x + 2, y + bh - 2, A_DLG,
+             TR("Links/Rechts: anderer Text   Hoch/Runter/Bild: blättern   Esc: zurück",
+                "Left/Right: other text   Up/Down/Page: scroll   Esc: back"));
+        cx = -1;
+        present();
         key_t k;
         if (!ui_wait(&k))
-            goto redraw;
+            continue;
+        switch (k.key) {
+            case K_ESC:
+            case K_ENTER:
+                return;
+            case K_LEFT:
+                d--;
+                break;
+            case K_RIGHT:
+            case K_TAB:
+                d++;
+                break;
+            case K_UP:
+                top--;
+                break;
+            case K_DOWN:
+                top++;
+                break;
+            case K_PGUP:
+                top -= rows - 1;
+                break;
+            case K_PGDN:
+                top += rows - 1;
+                break;
+            case K_HOME:
+                top = 0;
+                break;
+            case K_END:
+                top = n;
+                break;
+        }
+    }
+}
+/* Info window for a program: name, version of the system, copyright, licence */
+static void about_prog(win_t *w, const char *name) {
+    int x, y, own = prog_builtin(w);
+    char t[40], v[24];
+    ksnprintf(t, 40, "Info - %s", name);
+    for (;;) {
+        dlg_box(t, 40, own ? 11 : 9, &x, &y);
+        text(x + 20 - (int)strlen(name) / 2, y + 2, AT(C_RAISE, C_NEON), name);
+        ksnprintf(v, 24, "Version %s", VERSION);
+        text(x + 20 - (int)strlen(v) / 2, y + 4, A_DLG, v);
+        if (own) {
+            text(x + 11, y + 5, A_DLG, "(c) 2026 Merecete");
+            text(x + 6, y + 6, A_DLG, TR("Lizenz: BSD-3-Clause", "Licence: BSD-3-Clause"));
+            text(x + 4, y + 8, A_SEL, TR(" [ L ] Lizenzen ", " [ L ] Licences "));
+            text(x + 23, y + 8, A_SEL, " [ Enter ] ");
+        } else
+            text(x + 14, y + 7, A_SEL, " [ Enter ] ");
+        cx = -1;
+        present();
+        key_t k;
+        if (!ui_wait(&k))
+            continue;
         if (k.key == K_ENTER || k.key == K_ESC)
             return;
+        if (own && (k.key == 'l' || k.key == 'L'))
+            dlg_license(0);
     }
 }
 static int mx(int i) {
@@ -658,7 +798,7 @@ static void prog_pick(int i) {
         if (*q == '|')
             k++;
     if (*q == '*') {
-        about_prog(w->aname[0] ? w->aname : w->title);
+        about_prog(w, w->aname[0] ? w->aname : w->title);
         return;
     }
     if (w && w->app->key) {
@@ -748,11 +888,22 @@ void ui_render(void) {
 /* Waits for a key like key_wait, but returns 0 early when a program in the background has drawn
  * something new (at most 25 times a second): menus and dialogs then draw themselves again, so XZN
  * and other programs keep moving underneath. */
+static u64 tick_sec; /* the second the windows last got their tick */
+static void tick_all(void) {
+    if (ticks / 100 == tick_sec || prog_active())
+        return;
+    tick_sec = ticks / 100;
+    for (int i = 0; i < nw; i++)
+        if (z[i]->app->tick)
+            z[i]->app->tick(z[i]);
+    prog_dirty = 1;
+}
 int ui_wait(key_t *k) {
     u64 t = ticks + 4;
     for (;;) {
         if (key_poll(k))
             return 1;
+        tick_all(); /* the clock keeps running while a menu is open */
         if (prog_dirty && ticks >= t)
             return 0;
         idle();
@@ -1302,26 +1453,35 @@ static int ulen(const char *s) {
 }
 void dlg_about(void) {
     const int w = 64;
-    int x, y;
-    dlg_box("Info", w, 11, &x, &y);
-    char v[20];
-    ksnprintf(v, 20, "Version %s", VERSION);
-    const char *l[] = {"Violyx",
-                       v,
-                       "",
-                       TR("Ein 64-Bit-Betriebssystem für x86-PCs, nur per Tastatur,",
-                          "A keyboard-only 64-bit operating system for x86 PCs,"),
-                       TR("mit einem Retro-Textdesktop in leuchtendem Violett.",
-                          "with a retro text desktop in glowing violet."),
-                       "",
-                       "(c) 2026 Merecete"};
-    for (int i = 0; i < 7; i++) /* every line centred inside the frame */
-        text(x + (w - ulen(l[i])) / 2, y + 2 + i, i ? A_DLG : AT(C_RAISE, C_NEON), l[i]);
-    ui_show();
     for (;;) {
-        key_t k = key_wait();
+        int x, y;
+        dlg_box("Info", w, 14, &x, &y);
+        char v[20];
+        ksnprintf(v, 20, "Version %s", VERSION);
+        const char *l[] = {"Violyx",
+                           v,
+                           "",
+                           TR("Ein 64-Bit-Betriebssystem für x86-PCs, nur per Tastatur,",
+                              "A keyboard-only 64-bit operating system for x86 PCs,"),
+                           TR("mit einem Retro-Textdesktop in leuchtendem Violett.",
+                              "with a retro text desktop in glowing violet."),
+                           "",
+                           "(c) 2026 Merecete",
+                           TR("Lizenz: BSD-3-Clause, XZN: MIT", "Licence: BSD-3-Clause, XZN: MIT")};
+        for (int i = 0; i < 8; i++) /* every line centred inside the frame */
+            text(x + (w - ulen(l[i])) / 2, y + 2 + i, i ? A_DLG : AT(C_RAISE, C_NEON), l[i]);
+        const char *b1 = TR(" [ L ] Lizenzen ", " [ L ] Licences ");
+        text(x + w / 2 - ulen(b1) - 1, y + 11, A_SEL, b1);
+        text(x + w / 2 + 1, y + 11, A_SEL, " [ Enter ] ");
+        cx = -1;
+        present();
+        key_t k;
+        if (!ui_wait(&k))
+            continue;
         if (k.key == K_ENTER || k.key == K_ESC)
             return;
+        if (k.key == 'l' || k.key == 'L')
+            dlg_license(0);
     }
 }
 int dlg_savechoice(void) {
@@ -1478,7 +1638,7 @@ static int win_key(key_t k) {
 }
 int ui_keys_free;
 void ui_run(void) {
-    u64 last = 0, nf = 0, input = ticks;
+    u64 nf = 0, input = ticks;
     for (;;) {
         ui_render();
         present();
@@ -1504,12 +1664,8 @@ void ui_run(void) {
                 ui_render();
                 present();
             }
-            u64 t = ticks / 100;
-            if (t != last) {
-                last = t;
-                for (int i = 0; i < nw; i++)
-                    if (z[i]->app->tick)
-                        z[i]->app->tick(z[i]);
+            if (ticks / 100 != tick_sec) {
+                tick_all();
                 ui_render();
                 present();
             }

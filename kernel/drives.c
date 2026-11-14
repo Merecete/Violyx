@@ -3,16 +3,17 @@
 #include "exfat.h"
 #include "format.h"
 #include "iso9660.h"
+#include "cdda.h"
 /* Drives: puts USB disks and CDs under /drives on top of VioFS. Rules: only USB devices and CD/DVD
- * drives appear here, never internal disks. CDs are read only. Violyx asks before the first access, and until then not a single sector of the
- * stick is read. The prompt sits here on purpose, in one central place, so no program can get
- * around it. */
+ * drives appear here, never internal disks. CDs are read only. Violyx asks before the first access,
+ * and until then not a single sector of the stick is read. The prompt sits here on purpose, in one
+ * central place, so no program can get around it. */
 #define NUSB 8 /* usb1 .. usb8, then cd1 .. cd4 */
 #define MAXD 12
 typedef struct {
     blkdev *d;
     u32 id;
-    int allowed, st, ex, iso; /* ex: the drive uses exFAT, iso: a CD with ISO 9660 */
+    int allowed, st, ex, iso, cda; /* ex: exFAT, iso: a CD with ISO 9660, cda: an audio CD */
     fatvol v;
     exfvol x;
     isovol c;
@@ -95,6 +96,11 @@ static const u8 BASIC[16] = {0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
 static int find_fat(drv_t *x) {
     static u8 s[512], h[512];
     x->iso = 0;
+    x->cda = 0;
+    if (cur->cd && cur->audio) { /* an audio CD: its tracks as WAV files */
+        x->cda = 1;
+        return 0;
+    }
     if (cur->cd) { /* a CD or DVD: ISO 9660 over the whole disc */
         vfs_dev v = {t_rd, t_wr, t_fl, 0, cur->sectors, cur->rdn ? t_rdn : 0, 0};
         int r = iso_mount(&x->c, &v);
@@ -156,7 +162,10 @@ static void dname(int i, char *o, int n) {
 static void desc(drv_t *x, char *o, int n) {
     u64 mb = x->d->sectors / 2048;
     const char *m = x->d->model[0] ? x->d->model : x->d->cd ? "CD/DVD" : "USB";
-    const char *t = x->allowed && x->st == 1 ? (x->iso ? ", ISO 9660" : x->ex ? ", exFAT" : ", FAT32")
+    const char *t = x->allowed && x->st == 1 ? (x->cda   ? ", Audio-CD"
+                                                : x->iso ? ", ISO 9660"
+                                                : x->ex  ? ", exFAT"
+                                                         : ", FAT32")
                                              : "";
     if (mb >= 2048)
         ksnprintf(o, n, "%s, %ld GB%s", m, mb / 1024, t);
@@ -234,7 +243,8 @@ int fsx_stat(const char *p, vfs_ent *e) {
     if (k == 0)
         return fs_ok() ? vfs_stat(p, e) : VE_NOFS;
     int o = open_(i);
-    return o          ? o
+    return o           ? o
+           : dr[i].cda ? cda_stat(dr[i].d->audio, r, e)
            : dr[i].iso ? iso_stat(&dr[i].c, r, e)
            : dr[i].ex  ? exf_stat(&dr[i].x, r, e)
                        : fat_stat(&dr[i].v, r, e);
@@ -259,7 +269,10 @@ int fsx_exists(const char *p) {
     x->allowed = 1; /* no question, only for this look */
     int o = open_(i);
     int ok = !o &&
-             !(x->iso ? iso_stat(&x->c, r, &e) : x->ex ? exf_stat(&x->x, r, &e) : fat_stat(&x->v, r, &e)) &&
+             !(x->cda   ? cda_stat(x->d->audio, r, &e)
+               : x->iso ? iso_stat(&x->c, r, &e)
+               : x->ex  ? exf_stat(&x->x, r, &e)
+                        : fat_stat(&x->v, r, &e)) &&
              !e.dir;
     if (!al) {
         x->allowed = 0;
@@ -276,7 +289,8 @@ int64_t fsx_read(const char *p, void *b, u64 m) {
     if (k == 0)
         return fs_ok() ? vfs_read(p, b, m) : VE_NOFS;
     int o = open_(i);
-    return o          ? o
+    return o           ? o
+           : dr[i].cda ? cda_read_at(dr[i].d->audio, r, b, 0, m)
            : dr[i].iso ? iso_read(&dr[i].c, r, b, m)
            : dr[i].ex  ? exf_read(&dr[i].x, r, b, m)
                        : fat_read(&dr[i].v, r, b, m);
@@ -291,7 +305,8 @@ int64_t fsx_read_at(const char *p, void *b, u64 off, u64 m) {
     if (k == 0)
         return fs_ok() ? vfs_read_at(p, b, off, m) : VE_NOFS;
     int o = open_(i);
-    return o          ? o
+    return o           ? o
+           : dr[i].cda ? cda_read_at(dr[i].d->audio, r, b, off, m)
            : dr[i].iso ? iso_read_at(&dr[i].c, r, b, off, m)
            : dr[i].ex  ? exf_read_at(&dr[i].x, r, b, off, m)
                        : fat_read_at(&dr[i].v, r, b, off, m);
@@ -310,6 +325,36 @@ int fsx_write(const char *p, const void *b, u64 l, u32 now) {
         x = open_(i);
         if (!x)
             x = dr[i].ex ? exf_write(&dr[i].x, r, b, l, now) : fat_write(&dr[i].v, r, b, l, now);
+    }
+    fsx_gen++;
+    return x;
+}
+/* Free bytes on the drive of p; -1 when not known (FAT and exFAT drives are not counted) */
+int64_t fsx_free(const char *p) {
+    int i;
+    const char *r;
+    if (split(p, &i, &r) || !fs_ok())
+        return -1;
+    u64 t, f;
+    u32 n;
+    vfs_usage(&t, &f, &n);
+    return (int64_t)f;
+}
+/* Adds l bytes to the end of an existing file */
+int fsx_append(const char *p, const void *b, u64 l, u32 now) {
+    int i, x;
+    const char *r;
+    int k = split(p, &i, &r);
+    if (k == 1)
+        return VE_ISDIR;
+    if (k == 0)
+        x = fs_ok() ? vfs_append(p, b, l, now) : VE_NOFS;
+    else if (ro(k, i))
+        return VE_DENIED;
+    else {
+        x = open_(i);
+        if (!x)
+            x = dr[i].ex ? exf_append(&dr[i].x, r, b, l, now) : fat_append(&dr[i].v, r, b, l, now);
     }
     fsx_gen++;
     return x;
@@ -389,7 +434,8 @@ int fsx_list(const char *p, int (*cb)(const vfs_ent *, void *), void *a) {
     }
     if (k == 2) {
         int o = open_(i);
-        return o          ? o
+        return o           ? o
+               : dr[i].cda ? cda_list(dr[i].d->audio, r, cb, a)
                : dr[i].iso ? iso_list(&dr[i].c, r, cb, a)
                : dr[i].ex  ? exf_list(&dr[i].x, r, cb, a)
                            : fat_list(&dr[i].v, r, cb, a);
@@ -446,6 +492,7 @@ static int under(const char *a, const char *b) {
     size_t l = strlen(a);
     return strlen(b) >= l && !memcmp(a, b, l) && (!b[l] || b[l] == '/');
 }
+#define CPART (1u << 20)
 int fsx_copy(const char *a, const char *b) {
     if (under(a, b))
         return VE_INVAL;
@@ -484,13 +531,25 @@ int fsx_copy(const char *a, const char *b) {
         kfree(it);
         return r;
     }
-    u64 sz = e.size;
-    char *m = kmalloc(sz + 1);
+    /* in parts of 1 MB: any size fits, however little memory there is */
+    u64 sz = e.size, part = sz < CPART ? sz : CPART, o = 0;
+    char *m = kmalloc(part + 1);
     if (!m)
         return VE_NOSPC;
-    int64_t n = fsx_read(a, m, sz);
-    r = n < 0 ? (int)n : fsx_write(b, m, (u64)n, fs_now());
+    u32 now = fs_now();
+    do {
+        u64 want = sz - o < part ? sz - o : part;
+        int64_t n = want ? fsx_read_at(a, m, o, want) : 0;
+        if (n < 0 || (u64)n != want) {
+            r = n < 0 ? (int)n : VE_IO;
+            break;
+        }
+        r = o ? fsx_append(b, m, (u64)n, now) : fsx_write(b, m, (u64)n, now);
+        o += (u64)n;
+    } while (!r && o < sz);
     kfree(m);
+    if (r && o)
+        fsx_remove(b); /* no half copies */
     return r;
 }
 int fsx_rename(const char *a, const char *b) {
@@ -608,7 +667,7 @@ const char *fsx_type(const char *name) {
     int i = drv_index(name);
     if (i < 0 || !dr[i].allowed || dr[i].st != 1)
         return 0;
-    return dr[i].iso ? "ISO 9660" : dr[i].ex ? "exFAT" : "FAT32";
+    return dr[i].cda ? "Audio-CD" : dr[i].iso ? "ISO 9660" : dr[i].ex ? "exFAT" : "FAT32";
 }
 int fsx_eject(const char *name) {
     char p[VFS_PATH];

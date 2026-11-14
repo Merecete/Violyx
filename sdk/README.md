@@ -14,8 +14,9 @@ make APP=examples/snake NAME=snake TITLE=Snake VPKFLAGS='--cols 60 --rows 19 --i
 The package ends up in `build/snake.vpk`. Copy it to a stick, open `/drives/usb1` in Files and
 press Enter on it. The program then appears in the Programs overview (F2). Delete it there with Del.
 
-`make apps` builds every example. The source of all examples is in `examples/` under the MIT
-License, so you can read, change and share it:
+`make apps` builds every example. The source of all examples is in `examples/` under the BSD
+3-Clause License (XZN under the MIT License, see `examples/LICENSE-XZN`), so you can read, change
+and share it:
 
 | App | Source |
 |---|---|
@@ -43,6 +44,8 @@ current size, so read them once per frame as Bricks and Novastrike do.
 - Large files: `vx_read_at(name, buffer, offset, size)` reads up to 512 KB from any offset.
   Reading a big file in such parts keeps the rest of the system running smoothly, as XZN does
   when it loads a track.
+- Writing large files: `vx_write` the first part, then `vx_append(name, buffer, size)` adds up to
+  1 MB at a time to the end. XZN writes its CD rips this way.
 
 The whole API is in `violyx.h`. Installed programs are not sandboxed from your personal files in
 `/home`, so only install programs you trust.

@@ -42,6 +42,7 @@ int vfs_stat(const char *path, vfs_ent *e);
 int64_t vfs_read(const char *path, void *buf, uint64_t max);
 int64_t vfs_read_at(const char *path, void *buf, uint64_t off, uint64_t max);
 int vfs_write(const char *path, const void *buf, uint64_t len, uint32_t now);
+int vfs_append(const char *path, const void *buf, uint64_t len, uint32_t now);
 int vfs_mkdir(const char *path, uint32_t now);
 int vfs_remove(const char *path);
 int vfs_rename(const char *from, const char *to);

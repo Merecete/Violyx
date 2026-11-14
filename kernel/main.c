@@ -464,6 +464,10 @@ void kmain(void) {
             e1000_init(&d[i]);
     }
     ide_probe();
+#ifdef FAKECD
+    void cd_fake(void);
+    cd_fake();
+#endif
     if (modreq.response && modreq.response->module_count)
         install_set_image(modreq.response->modules[0]->address, modreq.response->modules[0]->size);
     fs_init();

@@ -123,6 +123,7 @@ static u32 calloc_(fatvol *v) {
     return 0;
 }
 static void cfree(fatvol *v, u32 c) {
+    v->ap_first = 0;
     for (u32 g = 0; cvalid(v, c) && g <= v->clusters; g++) {
         u32 n = get(v, c);
         put(v, c, 0);
@@ -865,6 +866,141 @@ int fat_write(fatvol *v, const char *p, const void *b, u64 len, u32 now) {
     r = add(v, dir, nm, l, 0x20, first, (u32)len, now, 0);
     if (r && first)
         cfree(v, first);
+    return r;
+}
+/* Writes into cluster c from byte in on, at most len bytes; returns how many or < 0 */
+static int64_t cwrite(fatvol *v, u32 c, u32 in, const u8 *b, u64 len) {
+    static u8 s[512];
+    u64 cb = (u64)v->spc * 512, o = 0;
+    u32 s0 = c2s(v, c);
+    if (len > cb - in)
+        len = cb - in;
+    while (o < len) {
+        u32 i = (in + (u32)o) / 512, k = (in + (u32)o) % 512;
+        if (!k && len - o >= 1024) {
+            u64 run = (len - o) / 512;
+            if (run > v->spc - i)
+                run = v->spc - i;
+            if (wsn(v, s0 + i, (u32)run, b + o))
+                return VE_IO;
+            o += run * 512;
+            continue;
+        }
+        u64 n = 512 - k < len - o ? 512 - k : len - o;
+        if (k || n < 512) {
+            if (k && rs(v, s0 + i, s))
+                return VE_IO;
+            if (!k)
+                memset(s, 0, 512);
+        }
+        memcpy(s + k, b + o, n);
+        if (ws(v, s0 + i, s))
+            return VE_IO;
+        o += n;
+    }
+    return (int64_t)len;
+}
+/* Adds len bytes to the end of an existing file: the free rest of its last cluster first, then
+ * new clusters. The size in the directory entry changes last. */
+int fat_append(fatvol *v, const char *p, const void *buf, u64 len, u32 now) {
+    dent d;
+    u32 par;
+    int root;
+    int r = lookup(v, p, &d, &par, &root);
+    if (r)
+        return r;
+    if (root || (d.e[11] & 0x10))
+        return VE_ISDIR;
+    if (d.e[11] & 1)
+        return VE_DENIED;
+    u64 size = R32(d.e, 28), cb = (u64)v->spc * 512;
+    if (size + len > 0xFFFFFFFFull)
+        return VE_NOSPC;
+    if (!len)
+        return 0;
+    u32 first = ecl(d.e), last = 0;
+    if (first && size) {
+        /* the cluster that holds the last byte; the previous append usually knows it */
+        u64 want = (size - 1) / cb;
+        if (v->ap_first == first && v->ap_size == size)
+            last = v->ap_last;
+        else {
+            last = first;
+            for (u64 g = 0; g < want; g++) {
+                if (!cvalid(v, last) || g > v->clusters)
+                    return VE_IO;
+                last = get(v, last);
+            }
+        }
+        if (!cvalid(v, last))
+            return VE_IO;
+    } else if (first) {
+        if (!cvalid(v, first))
+            return VE_IO;
+        last = first; /* an empty file that already has a cluster */
+    }
+    const u8 *b = buf;
+    u64 o = 0, used = size ? (size - 1) % cb + 1 : 0;
+    if (last && used < cb) {
+        int64_t n = cwrite(v, last, (u32)used, b, len);
+        if (n < 0)
+            return (int)n;
+        o = (u64)n;
+    }
+    u32 nfirst = 0, prev = last;
+    while (o < len) {
+        u32 c = calloc_(v);
+        if (!c) {
+            r = VE_NOSPC;
+            goto fail;
+        }
+        if (!nfirst)
+            nfirst = c;
+        if (prev && put(v, prev, c)) {
+            if (c != nfirst)
+                put(v, c, 0);
+            r = VE_IO;
+            goto fail;
+        }
+        prev = c;
+        int64_t n = cwrite(v, c, 0, b + o, len - o);
+        if (n < 0) {
+            r = (int)n;
+            goto fail;
+        }
+        o += (u64)n;
+    }
+    v->d.fl();
+    static u8 t[512];
+    if (rs(v, d.sec, t)) {
+        r = VE_IO;
+        goto fail;
+    }
+    u8 *e = t + d.off;
+    if (!first) {
+        W16(e, 20, nfirst >> 16);
+        W16(e, 26, nfirst & 0xFFFF);
+        first = nfirst;
+    }
+    W32(e, 28, (u32)(size + len));
+    dostime(now, e, 22, 24);
+    e[11] |= 0x20;
+    if (ws(v, d.sec, t)) {
+        r = VE_IO;
+        goto fail;
+    }
+    v->d.fl();
+    v->ap_first = first;
+    v->ap_size = (u32)(size + len);
+    v->ap_last = prev;
+    return 0;
+fail:
+    /* the file keeps its old size and chain; the new clusters are freed again */
+    if (last && nfirst)
+        put(v, last, 0x0FFFFFFFu);
+    if (nfirst)
+        cfree(v, nfirst);
+    v->ap_first = 0;
     return r;
 }
 int fat_mkdir(fatvol *v, const char *p, u32 now) {

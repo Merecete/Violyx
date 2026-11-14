@@ -1,8 +1,9 @@
 # Third-Party Notices
 
-Violyx itself is released under the MIT License (see `LICENSE`). The components below
-keep their own licenses. Their notices must be included when Violyx is redistributed,
-including as a prebuilt image.
+Violyx itself is released under the BSD 3-Clause License (see `LICENSE`), XZN under the MIT
+License (see `sdk/examples/LICENSE-XZN`). The components below keep their own licenses. Their
+notices must be included when Violyx is redistributed, including as a prebuilt image: Violyx
+carries all of them and shows them under System > About Violyx > L.
 
 | Component | Purpose | License | License text |
 |---|---|---|---|
@@ -17,5 +18,7 @@ including as a prebuilt image.
 | dr_flac (David Reid) | FLAC decoding in XZN | MIT-0 or Public Domain | End of `third_party/dr_flac/dr_flac.h` |
 | Xenon-Zones (Merecete) | Design and intro sample of XZN (`sdk/assets/xzn-intro.mp3`) | MIT | https://github.com/Merecete/XZN |
 | Mozilla root certificates (via certifi) | Trusted certificate authorities | MPL-2.0 | `third_party/cacert/LICENSE-certifi.txt` |
-| OpenBSD `rge` driver | Realtek RTL8125/8126 network support (`kernel/rge.c`, `kernel/rge_reg.h`, adapted, no Realtek firmware included) | ISC | File header |
+| OpenBSD `rge` driver | Realtek RTL8125/8126 network support (`kernel/rge.c`, `kernel/rge_reg.h`, adapted, no Realtek firmware included) | ISC | `third_party/rge/LICENSE` (from the file header) |
 | Spleen 8x16 | System font | BSD-2-Clause | `third_party/spleen/LICENSE` |
+| chibicc (Rui Ueyama) | C compiler `cc` (`system/cc/chibicc`, adapted, and its headers in `system/cc/include-cc`) | MIT | `system/cc/chibicc/LICENSE` |
+| ATSC A/52 tables | Two number tables of the AC3 decoder in XZN (`latab`, `hth` in `sdk/examples/xzncodec.h`), taken from the public AC-3 standard | Data from a public standard | ATSC A/52:2018 |

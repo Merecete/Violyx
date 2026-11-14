@@ -12,7 +12,7 @@ MBSRC   = $(wildcard $(MB)/library/*.c)
 MBOBJ   = $(patsubst $(MB)/library/%.c,build/mb/%.o,$(MBSRC))
 CACERTS ?= third_party/cacert/cacert.pem
 INC     = -Ikernel/lwip_port -Ikernel/libc -I$(LW)/include -I$(MB)/include -Ikernel/mbed_port -DMBEDTLS_CONFIG_FILE='"violyx_tls_config.h"'
-OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/str.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/sound.o build/install.o build/viofs.o build/vfsname.o build/fat.o build/exfat.o build/format.o build/drives.o build/iso9660.o build/cdrom.o build/clock.o build/saver.o build/prog.o build/rge.o build/wall.o build/efi.o $(LWOBJ)
+OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/str.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/sound.o build/install.o build/viofs.o build/vfsname.o build/fat.o build/exfat.o build/format.o build/drives.o build/iso9660.o build/cdda.o build/cdrom.o build/clock.o build/saver.o build/prog.o build/rge.o build/wall.o build/efi.o $(LWOBJ)
 all: build/violyx.img build/violyx.iso build/violyx.vdi
 build/font.h: tools/mkfont.py
 	@mkdir -p build
@@ -155,6 +155,13 @@ build/upcase.h: tools/mkupcase.py
 	python3 tools/mkupcase.py $@
 build/fat.o: build/cp437.h kernel/fat.h kernel/viofs.h
 build/iso9660.o: build/cp437.h kernel/iso9660.h kernel/viofs.h
+build/cdda.o: build/cp437.h kernel/cdda.h kernel/viofs.h
+# the licence texts, shown under System > About Violyx > L
+LICFILES = LICENSE sdk/examples/LICENSE-XZN THIRD-PARTY-NOTICES.md third_party/limine/LICENSE third_party/limine/3RDPARTY.md third_party/lwip/COPYING third_party/mbedtls/LICENSE third_party/stb/LICENSE third_party/minimp3/LICENSE third_party/cacert/LICENSE-certifi.txt third_party/rge/LICENSE third_party/spleen/LICENSE system/cc/chibicc/LICENSE
+build/licdata.h: $(LICFILES) tools/mkccdata.py
+	@mkdir -p build
+	python3 tools/mkccdata.py $@ --name=lic 'Violyx: BSD-3-Clause=LICENSE' 'XZN: MIT=sdk/examples/LICENSE-XZN' 'Third-party components=THIRD-PARTY-NOTICES.md' 'Limine=third_party/limine/LICENSE' 'Limine: included parts=third_party/limine/3RDPARTY.md' 'lwIP=third_party/lwip/COPYING' 'Mbed TLS=third_party/mbedtls/LICENSE' 'stb_image, stb_vorbis=third_party/stb/LICENSE' 'minimp3=third_party/minimp3/LICENSE' 'Root certificates (certifi)=third_party/cacert/LICENSE-certifi.txt' 'Realtek driver (OpenBSD rge)=third_party/rge/LICENSE' 'Spleen font=third_party/spleen/LICENSE' 'chibicc=system/cc/chibicc/LICENSE'
+build/ui.o: build/licdata.h
 build/drives.o: kernel/iso9660.h
 build/exfat.o: build/cp437.h kernel/exfat.h kernel/viofs.h
 build/format.o: build/cp437.h build/upcase.h kernel/format.h kernel/viofs.h

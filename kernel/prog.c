@@ -242,11 +242,11 @@ typedef struct {
         u8 gid;
     } im[NIMG]; /* pictures for pixel cells, slot 0 is the one of vx_image */
     u64 imbytes;
-    int sys; /* built-in system program: whole file system, system services */
-    int lim; /* built-in program that reads foreign data (web pages, pictures): only the folders
-                of a normal program; L_NET internet without asking, L_INST may install */
-    u64 hash;                     /* of the package: the internet permission belongs to it */
-    int cl_n;                     /* refused requests to close, for the forced end */
+    int sys;  /* built-in system program: whole file system, system services */
+    int lim;  /* built-in program that reads foreign data (web pages, pictures): only the folders
+                 of a normal program; L_NET internet without asking, L_INST may install */
+    u64 hash; /* of the package: the internet permission belongs to it */
+    int cl_n; /* refused requests to close, for the forced end */
     u64 cl_t;
     int net;                      /* 1 may use the network, -1 refused for this run */
     int bi;                       /* index in the built-in table or -1 */
@@ -258,8 +258,8 @@ typedef struct {
 } proc_t;
 #define L_NET  1
 #define L_INST 2
-#define L_LIM  4 /* marks a limited built-in program */
-#define L_RO   8 /* may only read */
+#define L_LIM  4  /* marks a limited built-in program */
+#define L_RO   8  /* may only read */
 #define L_WALL 16 /* may set a picture as background */
 #define L_ARGS 32 /* the argument is a command line: "/home/a.c -o b.vpk" (the compiler) */
 #define L_RUN  64 /* may start a package it can read (the compiler, after building it) */
@@ -418,7 +418,7 @@ static int ubuf(proc_t *p, u64 a, u8 **b, u64 *n) {
     return 1;
 }
 /* ---------- System dialogs for programs ---------- */
-#define DLGMAX 1280 /* longest input: addresses in the browser */
+#define DLGMAX 1280   /* longest input: addresses in the browser */
 static u64 dlg_ticks; /* time programs spent in dialogs of the system */
 static long sys_dialog(proc_t *p, u64 kind, u64 a) {
     static char t[64], m[256], io[DLGMAX];
@@ -736,6 +736,22 @@ void proc_syscall(regs *r) {
             v = (long)cw_ << 16 | ch_;
             break;
         }
+        case 32: /* free space on the drive of a path */
+            v = upath(p, a, pa) ? fsx_free(pa) : VE_DENIED;
+            break;
+        case 31: /* append to the end of an existing file, in parts of up to 1 MB */
+            if (!upath(p, a, pa)) {
+                v = VE_DENIED;
+                break;
+            }
+            if (c > (1u << 20) || !uok(p, b, c, 0)) {
+                v = VE_INVAL;
+                break;
+            }
+            __asm__("sti");
+            v = fsx_append(pa, (void *)b, c, fs_now());
+            __asm__("cli");
+            break;
         case 26: { /* part of a file: b points to {buffer, offset, length} */
             u64 q[3];
             if (!upath(p, a, pa)) {
@@ -767,7 +783,7 @@ void proc_syscall(regs *r) {
                 for (char *q = t; *q; q++)
                     if ((u8)*q < 32 || (u8)*q > 126)
                         *q = '?';
-                strlcpy_(p->w->amenu, t, 120);              /* programs keep the old limit */
+                strlcpy_(p->w->amenu, t, 120); /* programs keep the old limit */
                 if ((p->sys || p->lim) && ustr(p, a, p->w->amenu, 200)) /* built-in: UTF-8 */
                     for (char *q = p->w->amenu; *q; q++)
                         if ((u8)*q < 32)
@@ -1152,6 +1168,10 @@ static int pw_close(win_t *w) {
     }
     return 1;
 }
+/* 1 while a program runs: its dialogs must not start other programs */
+int prog_active(void) {
+    return cur != 0;
+}
 void prog_bg(void) {
     if (cur)
         return;
@@ -1188,6 +1208,13 @@ static void pw_free(win_t *w) {
     kfree(p);
 }
 static const app_t pw_app = {pw_draw, pw_key, pw_step, pw_close, pw_free, pw_step};
+/* 1 for windows of Violyx itself: the kernel's, the system programs' and the built-in packages' */
+int prog_builtin(win_t *w) {
+    if (w->app != &pw_app)
+        return 1;
+    proc_t *p = w->st;
+    return p->sys || p->bi >= 0;
+}
 int prog_wants(win_t *w, int key) {
     if (w->app != &pw_app)
         return 0;
@@ -1640,9 +1667,10 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
     long v = VE_DENIED;
     /* open, argument, home folder and the simple states are there for every program */
     if (!p->sys && op != 0 && op != 1 && !(op == 14 && b == 0) && !(op == 13 && b <= 1) &&
-        !(op == 4 && (p->lim & L_INST)) && /* the browser installs, the kernel asks first */
+        !(op == 4 && (p->lim & L_INST)) &&  /* the browser installs, the kernel asks first */
         !(op == 18 && (p->lim & L_WALL)) && /* the image viewer sets the background */
-        !(op == 6 && (p->lim & L_RUN)))     /* the compiler starts what it built */
+        !(op == 6 && (p->lim & L_RUN)) &&   /* the compiler starts what it built */
+        op != 8)                            /* opening a CD tray: see there */
         return VE_DENIED;
     __asm__("sti");
     switch (op) {
@@ -1752,8 +1780,13 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
         case 7:
             v = ustr(p, b, t, 24) ? prog_uninstall(t) : VE_INVAL;
             break;
-        case 8:
-            v = ustr(p, b, t, 16) ? fsx_eject(t) : VE_INVAL;
+        case 8: /* any program may open a CD tray (XZN does), only system programs unplug sticks */
+            if (!ustr(p, b, t, 16))
+                v = VE_INVAL;
+            else if (!p->sys && (t[0] != 'c' || t[1] != 'd'))
+                v = VE_DENIED;
+            else
+                v = fsx_eject(t);
             break;
         case 9:
             if (ustr(p, b, t, 16)) {

@@ -2862,3 +2862,139 @@ static int xd_open(xdec *d, const char *path) {
     d->bits = 0;
     return 0;
 }
+
+/* ---------- WAV in parts: big files and the tracks of audio CDs ---------- */
+/* ISO 8859-1 (the usual text of WAV tags) to the characters of Violyx */
+static void wav_latin(char *o, const xu8 *p, long l) {
+    int k = 0;
+    for (long i = 0; i < l && k < 69 && p[i]; i++) {
+        int c = p[i];
+        c = c < 0x80    ? c
+            : c == 0xE4 ? 0x84
+            : c == 0xF6 ? 0x94
+            : c == 0xFC ? 0x81
+            : c == 0xC4 ? 0x8E
+            : c == 0xD6 ? 0x99
+            : c == 0xDC ? 0x9A
+            : c == 0xDF ? 0xE1
+            : c == 0xE9 ? 0x82
+            : c == 0xE8 ? 0x8A
+            : c == 0xE1 ? 0xA0
+            : c == 0xE0 ? 0x85
+                        : '?';
+        if (c >= 32 || c < 0)
+            o[k++] = (char)c;
+    }
+    while (k && o[k - 1] == ' ')
+        k--;
+    o[k] = 0;
+}
+/* Title and artist from LIST INFO (INAM, IART); also the album (IPRD) when album is given */
+static void wav_tags(const xu8 *h, long n, char *title, char *artist, char *album) {
+    long o = 12;
+    while (o + 8 <= n) {
+        long l = (long)xc_le32(h + o + 4);
+        if (l < 0)
+            break;
+        if (!memcmp(h + o, "LIST", 4) && o + 12 <= n && !memcmp(h + o + 8, "INFO", 4)) {
+            long q = o + 12, e = o + 8 + l;
+            if (e > n)
+                e = n;
+            while (q + 8 <= e) {
+                long sl = (long)xc_le32(h + q + 4);
+                if (sl < 0 || q + 8 + sl > e)
+                    break;
+                if (!memcmp(h + q, "INAM", 4) && title && !title[0])
+                    wav_latin(title, h + q + 8, sl);
+                if (!memcmp(h + q, "IART", 4) && artist && !artist[0])
+                    wav_latin(artist, h + q + 8, sl);
+                if (!memcmp(h + q, "IPRD", 4) && album && !album[0])
+                    wav_latin(album, h + q + 8, sl);
+                q += 8 + sl + (sl & 1);
+            }
+        }
+        if (!memcmp(h + o, "data", 4) || l > n)
+            break;
+        o += 8 + l + (l & 1);
+    }
+}
+typedef struct {
+    long off, beg, end;
+    int bs, ch;
+} xwavs;
+static int wavs_read(xdec *d, short *o, int n) {
+    xwavs *s = d->s;
+    static xu8 b[4096 * 6];
+    int fs = s->bs * s->ch, g = 0;
+    while (g < n) {
+        long want = (long)(n - g) * fs;
+        if (want > (long)sizeof b)
+            want = (long)sizeof b / fs * fs;
+        if (want > s->end - s->off)
+            want = (s->end - s->off) / fs * fs;
+        if (want <= 0)
+            break;
+        long k = d->fetch(d, b, s->off, want) / fs * fs;
+        if (k <= 0)
+            break;
+        for (long i = 0; i < k / fs; i++, g++)
+            for (int c = 0; c < 2; c++) {
+                const xu8 *p = b + i * fs + (c < s->ch ? c : 0) * s->bs;
+                o[g * 2 + c] = s->bs == 1 ? (short)((p[0] - 128) << 8)
+                                          : (short)(p[s->bs - 2] | p[s->bs - 1] << 8);
+            }
+        s->off += k;
+    }
+    return g;
+}
+static void wavs_seek(xdec *d, long fr) {
+    xwavs *s = d->s;
+    s->off = s->beg + fr * s->bs * s->ch;
+    if (s->off > s->end)
+        s->off = s->end;
+}
+/* h: the start of the file (the header must be in it), d->n its size, d->fetch the rest */
+static int wavs_open(xdec *d, const xu8 *h, long hn) {
+    if (hn < 44 || memcmp(h, "RIFF", 4) || memcmp(h + 8, "WAVE", 4))
+        return 0;
+    xwavs *s = malloc(sizeof *s);
+    if (!s)
+        return 0;
+    memset(s, 0, sizeof *s);
+    long o = 12;
+    int rate = 0;
+    while (o + 8 <= hn) {
+        long l = (long)xc_le32(h + o + 4);
+        if (l < 0)
+            break;
+        if (!memcmp(h + o, "fmt ", 4) && l >= 16 && o + 24 <= hn) {
+            int tag = h[o + 8] | h[o + 9] << 8, bits = h[o + 22];
+            s->ch = h[o + 10];
+            rate = (int)xc_le32(h + o + 12);
+            s->bs = bits / 8;
+            if ((tag != 1 && tag != 0xFFFE) || s->ch < 1 || s->ch > 2 ||
+                (bits != 8 && bits != 16 && bits != 24) || rate < 4000 || rate > 192000)
+                return 0;
+        }
+        if (!memcmp(h + o, "data", 4)) {
+            if (!s->bs)
+                return 0;
+            s->beg = s->off = o + 8;
+            s->end = s->beg + l;
+            if (s->end > d->n)
+                s->end = d->n;
+            d->s = s;
+            d->srate = rate;
+            d->chans = s->ch;
+            d->total = (s->end - s->beg) / (s->bs * s->ch);
+            d->kbps = rate * s->ch * s->bs * 8 / 1000;
+            d->name = "WAV";
+            d->read = wavs_read;
+            d->seek = wavs_seek;
+            wav_tags(h, hn, d->title, d->artist, 0);
+            return 1;
+        }
+        o += 8 + l + (l & 1);
+    }
+    return 0;
+}

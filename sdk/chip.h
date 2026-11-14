@@ -1,5 +1,5 @@
 /* Small chiptune player for Violyx programs.
-   SPDX-License-Identifier: MIT
+   SPDX-License-Identifier: BSD-3-Clause
    A song has up to three parts written as text, one token per step:
      lead, bass: note and octave like c4 f#3 bb2, "." is a rest, "-" holds the note
      drums:      one letter per step: k kick, s snare, h hi-hat, . rest

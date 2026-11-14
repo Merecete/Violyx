@@ -100,6 +100,7 @@ void qsort(void *b, size_t n, size_t s,
 #include "stb_image.h"
 #include "xzncodec.h" /* AIFF, CAF/ALAC, True Audio, WavPack, DSD, Matroska, AC3 */
 #include "xznlogo.h"
+#include "xznflac.h" /* CD rips */
 
 __asm__(
     ".section .rodata\n.globl intro_mp3\n.globl intro_end\nintro_mp3:\n.incbin \"assets/xzn-intro.mp3\"\nintro_end:\n.text\n");
@@ -133,8 +134,10 @@ typedef struct {
     char path[PATHN], name[NAMEN];
     int secs;
 } track;
-static track list[MAXT];
+static track list[MAXT + 1]; /* list[MAXT]: the CD track playing from the CD window */
 static int nt, cur = -1, sel, top_, shown = -1;
+static int cdmode, cd_play = -1; /* playing from the CD window, its track */
+static int cd_next(int dir);
 static long resume_ms; /* where the remembered track goes on after starting XZN */
 static int order[MAXT];
 enum {
@@ -157,7 +160,9 @@ enum {
     O_INFO,
     O_ADD,
     O_FIND,
-    O_ABOUT
+    O_ABOUT,
+    O_LIC,
+    O_CD
 };
 static const char *errmsg = 0;
 static char title[140], artist[70], song[70];
@@ -650,9 +655,9 @@ static int ends(const char *s, const char *e) {
     return 1;
 }
 static int audio_name(const char *s) {
-    static const char *const ex[] = {".mp3", ".mp2", ".mp1", ".mpa", ".ogg", ".oga", ".flac",
-                                     ".wav", ".aif", ".aiff", ".aifc", ".caf", ".wv",  ".tta",
-                                     ".dsf", ".dff", ".mka", ".ac3"};
+    static const char *const ex[] = {".mp3",  ".mp2", ".mp1", ".mpa",  ".ogg",  ".oga",
+                                     ".flac", ".wav", ".aif", ".aiff", ".aifc", ".caf",
+                                     ".wv",   ".tta", ".dsf", ".dff",  ".mka",  ".ac3"};
     for (unsigned i = 0; i < sizeof ex / sizeof ex[0]; i++)
         if (ends(s, ex[i]))
             return 1;
@@ -671,6 +676,48 @@ static void base_name(const char *p, char *o, int n) {
 static void save_list(void);
 static void draw(long t);
 static void numtxt(char *o, long v);
+/* WAV files are read while playing when they are big or come from a CD: no waiting */
+static int stream_wav(const char *p) {
+    vx_stat_t s;
+    if (!ends(p, ".wav") || vx_stat(p, &s) < 0 || s.dir)
+        return 0;
+    return s.size > (24u << 20) || !memcmp(p, "/drives/cd", 10);
+}
+/* title and artist from the Vorbis comments of a FLAC file */
+static void flac_tags(void) {
+    long o = 4;
+    for (int b = 0; b < 64 && o + 4 <= flen; b++) {
+        int last = file[o] & 0x80, type = file[o] & 0x7F;
+        long l = (long)file[o + 1] << 16 | file[o + 2] << 8 | file[o + 3];
+        o += 4;
+        if (o + l > flen)
+            return;
+        if (type == 4 && l >= 8) {
+            const unsigned char *p = file + o, *e = p + l;
+            long vl = (long)xc_le32(p);
+            if (vl < 0 || vl > l - 8)
+                return;
+            p += 4 + vl;
+            long n = (long)xc_le32(p);
+            p += 4;
+            for (long i = 0; i < n && p + 4 <= e; i++) {
+                long cl = (long)xc_le32(p);
+                p += 4;
+                if (cl < 0 || cl > e - p)
+                    return;
+                if (cl > 6 && !song[0] && !memcmp(p, "TITLE=", 6))
+                    mka_str(song, p + 6, cl - 6);
+                if (cl > 7 && !artist[0] && !memcmp(p, "ARTIST=", 7))
+                    mka_str(artist, p + 7, cl - 7);
+                p += cl;
+            }
+            return;
+        }
+        if (last)
+            return;
+        o += l;
+    }
+}
 static int load_track(int i) {
     track *t = &list[i];
     hp = hb;
@@ -691,8 +738,8 @@ static int load_track(int i) {
     if (!strcmp(t->path, "*intro")) {
         file = intro_mp3;
         flen = intro_end - intro_mp3;
-    } else if (ends(t->path, ".dsf") || ends(t->path, ".dff")) {
-        /* DSD: only the start now, the rest while playing */
+    } else if (ends(t->path, ".dsf") || ends(t->path, ".dff") || stream_wav(t->path)) {
+        /* DSD, big WAV files and audio CDs: only the start now, the rest while playing */
         vx_stat_t s;
         if (vx_stat(t->path, &s) < 0 || s.dir) {
             errmsg = vx_english() ? "File not found" : "Datei nicht gefunden";
@@ -703,10 +750,17 @@ static int load_track(int i) {
         long hn = h ? vx_read_at(t->path, h, 0, 65536) : 0;
         gd.fetch = gd_fetch;
         gd.n = (long)s.size;
-        if (hn <= 0 || !dsd_open(&gd, h, hn)) {
-            errmsg = vx_english() ? "Unsupported or damaged file" : "Datei defekt oder Format unbekannt";
+        int wv = ends(t->path, ".wav");
+        if (hn <= 0 || !(wv ? wavs_open(&gd, h, hn) : dsd_open(&gd, h, hn))) {
+            errmsg =
+                vx_english() ? "Unsupported or damaged file" : "Datei defekt oder Format unbekannt";
             return 0;
         }
+        free(h);
+        if (gd.title[0])
+            xc_cpy(song, gd.title, sizeof song);
+        if (gd.artist[0])
+            xc_cpy(artist, gd.artist, sizeof artist);
         file = 0;
         flen = (long)s.size;
         fmt = F_GEN;
@@ -792,6 +846,7 @@ static int load_track(int i) {
             ok = chans >= 1;
         }
     } else if (flen > 4 && !memcmp(file, "fLaC", 4)) {
+        flac_tags();
         fl = drflac_open_memory(file, (size_t)flen, 0);
         if (fl) {
             srate = (int)fl->sampleRate;
@@ -803,8 +858,10 @@ static int load_track(int i) {
         }
     } else if (flen > 4 && !memcmp(file, "RIFF", 4)) {
         ok = wav_open();
-        if (ok)
+        if (ok) {
             fmt = F_WAV;
+            wav_tags(file, flen, song, artist, 0);
+        }
     } else {
         read_id3();
         ok = mp3_open();
@@ -844,7 +901,9 @@ static void set_title(int i) {
 }
 /* Starts track i. gapless keeps what is already in the stream */
 static void snap(tinfo *t) {
-    const char *f = fmt == F_MP3    ? (mp3_layer == 2 ? "MP2" : mp3_layer == 1 ? "MP1" : "MP3")
+    const char *f = fmt == F_MP3    ? (mp3_layer == 2   ? "MP2"
+                                       : mp3_layer == 1 ? "MP1"
+                                                        : "MP3")
                     : fmt == F_OGG  ? "Ogg Vorbis"
                     : fmt == F_FLAC ? "FLAC"
                     : fmt == F_WAV  ? "WAV"
@@ -861,8 +920,10 @@ static void snap(tinfo *t) {
 }
 static void play(int i, long start_ms, int gapless) {
     resume_ms = 0;
-    if (i < 0 || i >= nt)
+    if (i < 0 || (i >= nt && i != MAXT))
         return;
+    if (i < nt)
+        cdmode = 0;
     int prev_shown = shown;
     (void)prev_shown;
     cur = i;
@@ -901,8 +962,10 @@ static void play(int i, long start_ms, int gapless) {
         snap(&pi_);
     }
     playing = 1;
-    st.cur = i;
-    save_list();
+    if (i < nt) {
+        st.cur = i;
+        save_list();
+    }
 }
 static long now_ms(void) {
     if (!playing && !fmt)
@@ -938,6 +1001,8 @@ static void stop_(void) {
     base_ms = 0;
 }
 static int pick_next(int dir) {
+    if (cdmode)
+        return cd_next(dir);
     if (!nt)
         return -1;
     if (st.shuf)
@@ -957,7 +1022,7 @@ static void next_track(int dir, int auto_) {
         return;
     }
     play(n, 0, auto_);
-    if (n >= top_ + 8)
+    if (n < nt && n >= top_ + 8)
         top_ = n - 2;
 }
 static void pump(void) {
@@ -1361,6 +1426,707 @@ static void add_folder(const char *dir, int depth) {
         p += l + 1;
     }
 }
+/* ---------- ripping an audio CD to FLAC or WAV ---------- */
+static void set_overlay(int o);
+#define RIPN 99
+static char rp_src[PATHN], rp_name[RIPN][NAMEN], rp_album[70], rp_artist[70], rp_dir[PATHN];
+static char rp_tg[9][12], rp_out[PATHN];
+static const char *rp_msg;
+static int rp_n, rp_fmt, rp_tgt, rp_ntg, rp_state, rp_i, rp_open_; /* rp_fmt: 0 FLAC, 1 WAV */
+static int rp_pick[RIPN], rp_cnt, rp_k, rp_eject; /* tracks to rip, how many, the k-th now */
+static long rp_pos, rp_size, rp_hlen, rp_on, rp_done, rp_all, rp_t0;
+static unsigned rp_fno;
+static unsigned char rp_obuf[1 << 20], rp_ibuf[XF_BLOCK * 4 * 16];
+enum {
+    R_SETUP,
+    R_RUN,
+    R_DONE,
+    R_ERR
+};
+/* the characters FAT and exFAT do not allow in names are left out */
+static void rp_clean(char *o, const char *s, int max) {
+    int k = 0;
+    for (; *s && k < max - 1; s++) {
+        char c = *s;
+        if (c == '/' || c == '\\' || c == ':' || c == '|')
+            c = '-';
+        if (c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || (unsigned char)c < 32)
+            continue;
+        if (c == ' ' && (!k || o[k - 1] == ' '))
+            continue;
+        o[k++] = c;
+    }
+    while (k && (o[k - 1] == ' ' || o[k - 1] == '.'))
+        k--;
+    o[k] = 0;
+}
+static void cd_eject_now(void);
+static void rp_open(const char *dir) {
+    rp_n = rp_state = rp_tgt = rp_ntg = 0;
+    rp_album[0] = rp_artist[0] = 0;
+    rp_msg = 0;
+    xc_cpy(rp_src, dir, PATHN);
+    static char b[8192];
+    long n = vx_list(dir, b, sizeof b);
+    for (char *p = b; n > 0 && p < b + n && rp_n < RIPN;) {
+        int l = (int)strlen(p);
+        if (ends(p, ".wav"))
+            xc_cpy(rp_name[rp_n++], p, NAMEN);
+        p += l + 1;
+    }
+    if (rp_n) { /* album and artist from the first track (CD-Text) */
+        char f[PATHN], t[70] = "";
+        join(f, dir, rp_name[0]);
+        long k = vx_read_at(f, rp_ibuf, 0, 2048);
+        if (k > 0)
+            wav_tags(rp_ibuf, k, t, rp_artist, rp_album);
+    }
+    xc_cpy(rp_tg[rp_ntg++], "home", 12);
+    n = vx_list("/drives", b, sizeof b);
+    for (char *p = b; n > 0 && p < b + n && rp_ntg < 9;) {
+        int l = (int)strlen(p);
+        if (!memcmp(p, "usb", 3) && l < 12) {
+            xc_cpy(rp_tg[rp_ntg], p, 12);
+            if (l && rp_tg[rp_ntg][l - 1] == '/')
+                rp_tg[rp_ntg][l - 1] = 0;
+            rp_ntg++;
+        }
+        p += l + 1;
+    }
+}
+/* the folder for the rip: Music/Artist - Album, a number added if it is there already */
+static void rp_folder(char *o) {
+    char base[PATHN], nm[140];
+    const char *mus = vx_english() ? "Music" : "Musik";
+    if (rp_tgt)
+        join(base, "/drives", rp_tg[rp_tgt]);
+    else
+        xc_cpy(base, "/home", PATHN);
+    join(base, base, mus);
+    if (rp_artist[0] && rp_album[0]) {
+        int k = 0;
+        for (const char *a = rp_artist; *a && k < 60; a++)
+            nm[k++] = *a;
+        for (const char *a = " - "; *a; a++)
+            nm[k++] = *a;
+        for (const char *a = rp_album; *a && k < 130; a++)
+            nm[k++] = *a;
+        nm[k] = 0;
+    } else
+        xc_cpy(nm, rp_album[0] ? rp_album : "Audio-CD", 70);
+    char c[80];
+    rp_clean(c, nm, 70);
+    if (!c[0])
+        xc_cpy(c, "Audio-CD", 80);
+    join(o, base, c);
+    vx_stat_t s;
+    for (int i = 2; i < 100 && vx_stat(o, &s) >= 0; i++) {
+        char t[90];
+        int k = (int)strlen(c);
+        memcpy(t, c, (size_t)k);
+        t[k++] = ' ';
+        numtxt(t + k, i);
+        join(o, base, t);
+    }
+}
+static void rp_fail(const char *de, const char *en) {
+    rp_msg = vx_english() ? en : de;
+    rp_state = R_ERR;
+    if (rp_open_)
+        vx_remove(rp_out); /* no half track */
+    rp_open_ = 0;
+}
+static void rp_start(void) {
+    rp_folder(rp_dir);
+    char base[PATHN];
+    xc_cpy(base, rp_dir, PATHN);
+    int l = (int)strlen(base);
+    while (l && base[l - 1] != '/')
+        l--;
+    base[l ? l - 1 : 0] = 0;
+    rp_all = rp_done = rp_cnt = rp_k = 0;
+    for (int i = 0; i < rp_n; i++) {
+        if (!rp_pick[i])
+            continue;
+        rp_cnt++;
+        char f[PATHN];
+        vx_stat_t s;
+        join(f, rp_src, rp_name[i]);
+        if (vx_stat(f, &s) >= 0)
+            rp_all += (long)s.size;
+    }
+    /* enough room? FLAC needs about 60 to 70 percent of the CD */
+    long fr = vx_free(base[0] ? base : "/home"), need = rp_fmt ? rp_all : rp_all / 10 * 7;
+    if (fr >= 0 && fr < need + (2l << 20)) {
+        static char m[120];
+        char a[16], b[16];
+        numtxt(a, fr >> 20);
+        numtxt(b, need >> 20);
+        const char *p[5] = {vx_english() ? "Not enough room: " : "Zu wenig Platz: ", a,
+                            vx_english() ? " MB free, about " : " MB frei, etwa ", b,
+                            vx_english() ? " MB needed. Z: other drive"
+                                         : " MB noetig. Z: anderes Ziel"};
+        int k = 0;
+        for (int i = 0; i < 5; i++)
+            for (const char *c = p[i]; *c && k < 118; c++)
+                m[k++] = *c;
+        m[k] = 0;
+        rp_open_ = 0;
+        rp_msg = m;
+        rp_state = R_ERR;
+        return;
+    }
+    vx_mkdir(base);
+    if (vx_mkdir(rp_dir) < 0) {
+        rp_fail("Ordner kann nicht angelegt werden", "Cannot create the folder");
+        return;
+    }
+    rp_open_ = 0;
+    for (rp_i = 0; rp_i < rp_n && !rp_pick[rp_i]; rp_i++)
+        ;
+    rp_state = R_RUN;
+    rp_t0 = vx_ms();
+}
+static int rp_flush(void) {
+    long r = rp_on ? vx_append(rp_out, rp_obuf, (size_t)rp_on) : 0;
+    if (r < 0) {
+        if (r == VX_FULL)
+            rp_fail("Ziel ist voll. Z waehlt einen USB-Stick", "The drive is full. Z: USB stick");
+        else
+            rp_fail("Schreiben fehlgeschlagen", "Writing failed");
+        return 0;
+    }
+    rp_on = 0;
+    return 1;
+}
+/* the next track: its header and the tags */
+static int rp_begin(void) {
+    char f[PATHN], title[70] = "", art[70] = "", alb[70] = "";
+    vx_stat_t s;
+    join(f, rp_src, rp_name[rp_i]);
+    long k = vx_stat(f, &s) >= 0 ? vx_read_at(f, rp_ibuf, 0, 4096) : -1;
+    if (k < 44) {
+        rp_fail("CD kann nicht gelesen werden", "Cannot read the CD");
+        return 0;
+    }
+    rp_size = (long)s.size;
+    rp_hlen = 0;
+    for (long o = 12; o + 8 <= k;) { /* where the sound starts */
+        long l = (long)xc_le32(rp_ibuf + o + 4);
+        if (!memcmp(rp_ibuf + o, "data", 4)) {
+            rp_hlen = o + 8;
+            break;
+        }
+        if (l < 0)
+            break;
+        o += 8 + l + (l & 1);
+    }
+    if (!rp_hlen) {
+        rp_fail("CD kann nicht gelesen werden", "Cannot read the CD");
+        return 0;
+    }
+    wav_tags(rp_ibuf, k, title, art, alb);
+    char nm[NAMEN + 8];
+    xc_cpy(nm, rp_name[rp_i], NAMEN);
+    int l = (int)strlen(nm);
+    if (l > 4)
+        nm[l - 4] = 0;
+    char cl[NAMEN + 8];
+    rp_clean(cl, nm, NAMEN);
+    l = (int)strlen(cl);
+    memcpy(cl + l, rp_fmt ? ".wav" : ".flac", rp_fmt ? 5 : 6);
+    join(rp_out, rp_dir, cl);
+    rp_on = 0;
+    if (rp_fmt) { /* WAV: the header of the CD, with its tags */
+        memcpy(rp_obuf, rp_ibuf, (size_t)rp_hlen);
+        rp_on = rp_hlen;
+    } else {
+        static char tg[5][90];
+        const char *key[5] = {"TITLE=", "ARTIST=", "ALBUM=", "TRACKNUMBER=", "ALBUMARTIST="};
+        const char *val[5] = {title, art[0] ? art : rp_artist, alb[0] ? alb : rp_album, "",
+                              rp_artist};
+        char nr[8];
+        numtxt(nr, rp_i + 1);
+        val[3] = nr;
+        const char *tp[5];
+        for (int i = 0; i < 5; i++) {
+            int n = 0;
+            for (const char *a = key[i]; *a; a++)
+                tg[i][n++] = *a;
+            for (const char *a = val[i]; *a && n < 88; a++)
+                tg[i][n++] = *a;
+            tg[i][n] = 0;
+            tp[i] = tg[i];
+        }
+        rp_on = xf_head(rp_obuf, (uint64_t)((rp_size - rp_hlen) / 4), tp, 5);
+        rp_fno = 0;
+    }
+    if (vx_write(rp_out, rp_obuf, (size_t)rp_on) < 0) {
+        rp_fail("Schreiben fehlgeschlagen", "Writing failed");
+        return 0;
+    }
+    rp_on = 0;
+    rp_open_ = 1;
+    rp_pos = rp_hlen;
+    return 1;
+}
+/* a piece of work, about 40 ms: reading the CD sets the pace */
+static void rp_step(void) {
+    long until = vx_ms() + 40;
+    while (rp_state == R_RUN && vx_ms() < until) {
+        if (!rp_open_ && !rp_begin())
+            return;
+        char f[PATHN];
+        join(f, rp_src, rp_name[rp_i]);
+        long want = rp_size - rp_pos, got = 0;
+        if (want > (long)sizeof rp_ibuf)
+            want = (long)sizeof rp_ibuf;
+        while (got < want) {
+            long k =
+                vx_read_at(f, rp_ibuf + got, (unsigned long)(rp_pos + got), (size_t)(want - got));
+            if (k <= 0)
+                break;
+            got += k;
+        }
+        if (got < want) {
+            rp_fail("Lesefehler: CD entnommen?", "Read error: CD taken out?");
+            return;
+        }
+        if (rp_fmt) {
+            memcpy(rp_obuf + rp_on, rp_ibuf, (size_t)got);
+            rp_on += got;
+        } else
+            for (long o = 0; o < got; o += XF_BLOCK * 4) {
+                int nfr = (int)((got - o) / 4 < XF_BLOCK ? (got - o) / 4 : XF_BLOCK);
+                if (nfr <= 0)
+                    break;
+                rp_on += xf_frame(rp_obuf + rp_on, (const int16_t *)(rp_ibuf + o), nfr, rp_fno++);
+            }
+        rp_pos += got;
+        rp_done += got;
+        int end = rp_pos >= rp_size;
+        if ((rp_on > (long)sizeof rp_obuf - (long)sizeof rp_ibuf - XF_FRAME * 16 || end) &&
+            !rp_flush())
+            return;
+        if (end) {
+            rp_open_ = 0;
+            rp_k++;
+            while (++rp_i < rp_n && !rp_pick[rp_i])
+                ;
+            if (rp_i >= rp_n) {
+                rp_state = R_DONE;
+                if (rp_eject)
+                    cd_eject_now();
+                return;
+            }
+        }
+    }
+}
+/* ---------- the CD window (D or the CD button): play and rip an audio CD ---------- */
+static char cd_dir[24], cd_tt[RIPN][70], cd_ta[RIPN][70], cd_sig[80], cd_drv[512];
+static int cd_has, cd_sel, cd_top, cd_mark[RIPN], cd_secs[RIPN];
+static long cd_chk;
+static const char *cd_msg;
+static long cd_sig_read(char *o) { /* the table of contents: changes with the disc */
+    char f[PATHN];
+    join(f, cd_dir, "cdtoc.txt");
+    long n = vx_read(f, o, 79);
+    o[n > 0 ? n : 0] = 0;
+    return n;
+}
+/* looks for an audio CD in all drives: the first one with "cdtoc.txt" */
+static void cd_scan(void) {
+    if (rp_state == R_RUN)
+        return;
+    cd_has = 0;
+    cd_dir[0] = 0;
+    cd_sel = cd_top = 0;
+    cd_msg = 0;
+    memset(cd_mark, 0, sizeof cd_mark);
+    static char b[512], c[4096];
+    long n = vx_list("/drives", b, sizeof b);
+    for (char *p = b; n > 0 && p < b + n && !cd_dir[0];) {
+        int l = (int)strlen(p);
+        if (!memcmp(p, "cd", 2) && l < 8) {
+            char d[24], nm[8];
+            xc_cpy(nm, p, 8);
+            if (nm[l - 1] == '/')
+                nm[l - 1] = 0;
+            join(d, "/drives", nm);
+            long m = vx_list(d, c, sizeof c);
+            for (char *q = c; m > 0 && q < c + m; q += strlen(q) + 1)
+                if (!strcmp(q, "cdtoc.txt"))
+                    xc_cpy(cd_dir, d, 24);
+        }
+        p += l + 1;
+    }
+    if (!cd_dir[0])
+        return;
+    rp_open(cd_dir);
+    for (int i = 0; i < rp_n; i++) {
+        char f[PATHN];
+        vx_stat_t s;
+        join(f, cd_dir, rp_name[i]);
+        cd_secs[i] = vx_stat(f, &s) >= 0 ? (int)(s.size / 176400) : 0;
+        cd_tt[i][0] = cd_ta[i][0] = 0;
+        long k = vx_read_at(f, rp_ibuf, 0, 1024);
+        if (k > 0)
+            wav_tags(rp_ibuf, k, cd_tt[i], cd_ta[i], 0);
+        if (!cd_tt[i][0]) { /* no CD-Text: the file name without .wav */
+            xc_cpy(cd_tt[i], rp_name[i], 70);
+            int l = (int)strlen(cd_tt[i]);
+            if (l > 4)
+                cd_tt[i][l - 4] = 0;
+        }
+    }
+    cd_sig_read(cd_sig);
+    cd_has = rp_n > 0;
+}
+static void cd_set(int i) {
+    track *t = &list[MAXT];
+    join(t->path, cd_dir, rp_name[i]);
+    xc_cpy(t->name, rp_name[i], NAMEN);
+    t->secs = cd_secs[i];
+    cd_play = i;
+}
+static void cd_playtrack(int i) {
+    if (!cd_has || i < 0 || i >= rp_n)
+        return;
+    cd_set(i);
+    cdmode = 1;
+    play(MAXT, 0, 0);
+}
+/* the next CD track for N, P and the end of a track; MAXT or -1 */
+static int cd_next(int dir) {
+    if (!cd_has || !rp_n)
+        return -1;
+    int n = st.shuf ? (int)vx_random(rp_n) : cd_play + dir;
+    if (n >= rp_n) {
+        if (!st.rep)
+            return -1;
+        n = 0;
+    }
+    if (n < 0)
+        n = 0;
+    cd_set(n);
+    return MAXT;
+}
+static void cd_eject_now(void) {
+    if (!cd_dir[0])
+        return;
+    if (cdmode) {
+        stop_();
+        cdmode = 0;
+        cd_play = -1;
+        shown = cur = -1;
+        title[0] = 0;
+    }
+    vx_eject_cd(cd_dir + 8);
+    cd_has = 0;
+    cd_msg = vx_english() ? "Tray opened" : "Laufwerk geoeffnet";
+}
+/* every three seconds while the window is open: a new disc, or the disc gone */
+static void cd_tick(void) {
+    if (overlay != O_CD || rp_state == R_RUN || vx_ms() - cd_chk < 3000)
+        return;
+    cd_chk = vx_ms();
+    if (cd_has) {
+        char t[80];
+        if (cd_sig_read(t) <= 0 || strcmp(t, cd_sig))
+            cd_scan();
+        return;
+    }
+    static char b[512];
+    long n = vx_list("/drives", b, sizeof b);
+    if (n < 0)
+        n = 0;
+    b[n < (long)sizeof b ? n : (long)sizeof b - 1] = 0;
+    for (long i = 0; i < n; i++)
+        if (!b[i])
+            b[i] = ' ';
+    if (strcmp(b, cd_drv)) { /* drives came or went: look once, so a "no" is not asked again */
+        xc_cpy(cd_drv, b, sizeof cd_drv);
+        cd_scan();
+    }
+}
+static void cd_open(void) {
+    set_overlay(O_CD);
+    if (rp_state != R_RUN)
+        cd_scan();
+    static char b[512];
+    long n = vx_list("/drives", b, sizeof b);
+    for (long i = 0; i < n; i++)
+        if (!b[i])
+            b[i] = ' ';
+    b[n > 0 ? (n < (long)sizeof b ? n : (long)sizeof b - 1) : 0] = 0;
+    xc_cpy(cd_drv, b, sizeof cd_drv);
+    cd_chk = vx_ms();
+    if (cd_play >= 0 && cdmode)
+        cd_sel = cd_play;
+}
+static void cd_key(int k) {
+    int run = rp_state == R_RUN;
+    if (k == VK_ESC || k == 'd' || k == 'D') {
+        set_overlay(O_NONE);
+        return;
+    }
+    if (k >= 'A' && k <= 'Z')
+        k += 32;
+    switch (k) {
+        case VK_UP:
+            if (cd_sel > 0)
+                cd_sel--;
+            return;
+        case VK_DOWN:
+            if (cd_sel < rp_n - 1)
+                cd_sel++;
+            return;
+        case VK_PGUP:
+            cd_sel = cd_sel > 8 ? cd_sel - 8 : 0;
+            return;
+        case VK_PGDN:
+            cd_sel = cd_sel + 8 < rp_n ? cd_sel + 8 : rp_n - 1;
+            return;
+        case VK_HOME:
+            cd_sel = 0;
+            return;
+        case VK_END:
+            cd_sel = rp_n - 1;
+            return;
+        case VK_ENTER:
+            if (cd_has && !run)
+                cd_playtrack(cd_sel);
+            return;
+        case ' ':
+            if (cd_has && !run) {
+                cd_mark[cd_sel] = !cd_mark[cd_sel];
+                if (cd_sel < rp_n - 1)
+                    cd_sel++;
+            }
+            return;
+        case 'r': { /* rip: the marked tracks, or all of them */
+            if (!cd_has || run)
+                return;
+            int any = 0;
+            for (int i = 0; i < rp_n; i++)
+                any |= cd_mark[i];
+            for (int i = 0; i < rp_n; i++)
+                rp_pick[i] = any ? cd_mark[i] : 1;
+            if (cdmode && playing) /* the drive cannot do both at full speed */
+                stop_();
+            rp_start();
+            return;
+        }
+        case 'x':
+            if (run)
+                rp_fail("Abgebrochen", "Cancelled");
+            return;
+        case 'f':
+            if (!run)
+                rp_fmt = !rp_fmt;
+            return;
+        case 'z':
+            if (!run && rp_ntg)
+                rp_tgt = (rp_tgt + 1) % rp_ntg;
+            return;
+        case 'a':
+            rp_eject = !rp_eject;
+            return;
+        case 'e':
+            if (!run)
+                cd_eject_now();
+            return;
+        case 's':
+            if (cdmode)
+                stop_();
+            return;
+        case 'l':
+            if (!run) {
+                cd_scan();
+                if (!cd_has)
+                    cd_msg = vx_english() ? "No audio CD found" : "Keine Audio-CD gefunden";
+            }
+            return;
+        case 'o': /* the rip into the playlist */
+            if (rp_state == R_DONE && rp_dir[0]) {
+                int was = nt;
+                add_folder(rp_dir, 0);
+                if (nt != was)
+                    save_list();
+                cd_msg = vx_english() ? "Added to the playlist" : "Zur Playlist hinzugefuegt";
+            }
+            return;
+    }
+}
+static void draw_cd(void) {
+    int en = vx_english(), rows = H - 8;
+    char b[160];
+    fillr(1, 0, W - 2, H, S->raised);
+    tx(3, 0, "XZN-CD", S->lcd, S->raised, 12);
+    if (cd_dir[0])
+        tx(W - 8, 0, cd_dir + 8, S->dim, S->raised, 5);
+    fillr(2, 1, W - 4, 1, S->panel);
+    if (cd_has) {
+        int k = 0;
+        const char *al = rp_album[0] ? rp_album : en ? "Audio CD" : "Audio-CD";
+        if (rp_artist[0]) {
+            for (const char *a = rp_artist; *a && k < 60; a++)
+                b[k++] = *a;
+            for (const char *a = " - "; *a; a++)
+                b[k++] = *a;
+        }
+        for (const char *a = al; *a && k < 120; a++)
+            b[k++] = *a;
+        if (!rp_album[0])
+            for (const char *a = en ? "  (no CD-Text)" : "  (kein CD-Text)"; *a; a++)
+                b[k++] = *a;
+        b[k] = 0;
+        tx(3, 1, b, S->hi, S->panel, W - 6);
+    } else
+        tx(3, 1, en ? "No audio CD" : "Keine Audio-CD", S->dim, S->panel, W - 6);
+    /* the tracks */
+    if (cd_sel < cd_top)
+        cd_top = cd_sel;
+    if (cd_sel >= cd_top + rows)
+        cd_top = cd_sel - rows + 1;
+    fillr(2, 2, W - 4, rows, S->bg);
+    if (!cd_has) {
+        tx(4, 3,
+           en ? "Put an audio CD into the drive. XZN finds it by itself."
+              : "Lege eine Audio-CD ins Laufwerk. XZN findet sie von selbst.",
+           S->dim, S->bg, W - 8);
+        tx(4, 4, en ? "L looks again now." : "L sucht sofort noch einmal.", S->dim, S->bg, W - 8);
+    }
+    for (int r = 0; cd_has && r < rows && cd_top + r < rp_n; r++) {
+        int i = cd_top + r, y = 2 + r, me = i == cd_sel, now = cdmode && i == cd_play;
+        int bg = me ? S->bar2 : S->bg, fg = me ? 16 : now ? S->lcd : S->text;
+        fillr(2, y, W - 4, 1, bg);
+        vx_paint(3, y, now ? (char)0x10 : cd_mark[i] ? (char)0xFB : ' ', me ? 16 : S->lcd, bg);
+        char t[12];
+        numtxt(t, i + 1);
+        if (i < 9) {
+            t[1] = t[0];
+            t[0] = '0';
+            t[2] = 0;
+        }
+        tx(5, y, t, me ? 16 : S->dim, bg, 2);
+        mmss(t, cd_secs[i]);
+        tx(9, y, t, me ? 16 : S->dim, bg, 6);
+        int k = 0;
+        for (const char *a = cd_tt[i]; *a && k < 90; a++)
+            b[k++] = *a;
+        if (cd_ta[i][0] && strcmp(cd_ta[i], rp_artist)) {
+            for (const char *a = "  \xfa  "; *a; a++)
+                b[k++] = *a;
+            for (const char *a = cd_ta[i]; *a && k < 150; a++)
+                b[k++] = *a;
+        }
+        b[k] = 0;
+        tx(16, y, b, fg, bg, W - 19);
+    }
+    /* settings */
+    int y = 2 + rows;
+    fillr(2, y, W - 4, 4, S->raised);
+    tx(3, y, "Format", S->dim, S->raised, 6);
+    tx(10, y, rp_fmt ? "WAV " : "FLAC", S->hi, S->raised, 4);
+
+    char f[PATHN];
+    if (rp_state == R_RUN || rp_state == R_DONE)
+        xc_cpy(f, rp_dir, PATHN);
+    else if (cd_has)
+        rp_folder(f);
+    else
+        f[0] = 0;
+    int ax = W - 22;
+    if (f[0]) {
+        tx(16, y, en ? "Save to" : "Ziel", S->dim, S->raised, 7);
+        tx(en ? 24 : 21, y, f, S->text, S->raised, W - (en ? 27 : 24));
+    }
+    y++;
+    if (rp_state != R_ERR) { /* an error message gets the whole line */
+        tx(ax, y + 1, rp_eject ? "[x]" : "[ ]", S->hi, S->raised, 3);
+        tx(ax + 4, y + 1, en ? "A eject at end" : "A Auswurf am Ende", S->dim, S->raised, 17);
+    }
+    /* progress and state */
+    int marked = 0;
+    for (int i = 0; i < rp_n; i++)
+        marked += cd_mark[i];
+    if (rp_state == R_RUN || rp_state == R_DONE) {
+        int pct = rp_state == R_DONE ? 100 : rp_all ? (int)((long long)rp_done * 100 / rp_all) : 0;
+        int w = W - 6, fw = w * pct / 100;
+        fillr(3, y, fw, 1, S->lcd);
+        fillr(3 + fw, y, w - fw, 1, S->panel);
+        int k = 0;
+        const char *a =
+            rp_state == R_DONE ? (en ? "Done: " : "Fertig: ") : (en ? "Ripping " : "Rippe ");
+        for (; *a; a++)
+            b[k++] = *a;
+        numtxt(b + k, rp_state == R_DONE ? rp_cnt : rp_k + 1);
+        k = (int)strlen(b);
+        for (a = en ? " of " : " von "; *a; a++)
+            b[k++] = *a;
+        numtxt(b + k, rp_cnt);
+        k = (int)strlen(b);
+        b[k++] = ' ';
+        b[k++] = ' ';
+        numtxt(b + k, pct);
+        k = (int)strlen(b);
+        b[k++] = '%';
+        long sec = (vx_ms() - rp_t0) / 1000;
+        if (rp_state == R_RUN && sec > 2 && rp_done) { /* speed against playing the CD */
+            for (a = "   "; *a; a++)
+                b[k++] = *a;
+            numtxt(b + k, (long)((long long)rp_done / 176400 / sec));
+            k = (int)strlen(b);
+            b[k++] = 'x';
+        }
+        if (rp_state == R_RUN && rp_i < rp_n) {
+            for (a = "   "; *a; a++)
+                b[k++] = *a;
+            for (a = cd_tt[rp_i]; *a && k < 150; a++)
+                b[k++] = *a;
+        }
+        b[k] = 0;
+        tx(3, y + 1, b, S->lcd, S->raised, ax - 4);
+    } else {
+        fillr(3, y, W - 6, 1, S->panel);
+        const char *m = cd_msg;
+        if (rp_state == R_ERR)
+            m = rp_msg;
+        else if (!m && cdmode && playing) {
+            int k = 0;
+            for (const char *a = en ? "Playing the CD in XZN (" : "Spielt die CD in XZN ("; *a; a++)
+                b[k++] = *a;
+            numtxt(b + k, rp_n);
+            k = (int)strlen(b);
+            for (const char *a = en ? " tracks)" : " Titel)"; *a; a++)
+                b[k++] = *a;
+            b[k] = 0;
+            m = b;
+        } else if (!m && cd_has) {
+            int k = 0;
+            numtxt(b, marked ? marked : rp_n);
+            k = (int)strlen(b);
+            for (const char *a = marked ? (en ? " marked for ripping" : " zum Rippen markiert")
+                                        : (en ? " tracks" : " Titel");
+                 *a; a++)
+                b[k++] = *a;
+            b[k] = 0;
+            m = b;
+        }
+        tx(3, y + 1, m ? m : "", rp_state == R_ERR ? S->hi : S->dim, S->raised,
+           rp_state == R_ERR ? W - 6 : ax - 4);
+    }
+    const char *h =
+        rp_state == R_RUN ? (en ? "X cancel  A eject when done  Esc close (ripping goes on)"
+                                : "X abbrechen  A Auswurf am Ende  Esc schliessen (rippt weiter)")
+        : rp_state == R_DONE
+            ? (en ? "Enter play  R rip  O rip to playlist  E eject  L look again  Esc close"
+                  : "Enter spielen  R rippen  O Rip in Playlist  E Auswerfen  L neu  Esc zu")
+            : (en ? "Enter play  Space mark  R rip  F format  Z save to  E eject  Esc close"
+                  : "Enter spielen  Leer markieren  R rippen  F Format  Z Ziel  E Auswurf  Esc");
+    tx(3, H - 1, h, S->dim, S->raised, W - 6);
+}
 static void pk_key(int k) {
     int vis = H - 6;
     if (k == VK_UP && pk_sel)
@@ -1531,6 +2297,8 @@ static void draw_help(void) {
                                      "Entf  Titel entfernen",
                                      "X  Liste leeren",
                                      "/  Suchen",
+                                     "AUDIO-CD",
+                                     "D  CD-Fenster: spielen, rippen",
                                      0};
     static const char *const en[] = {"PLAYBACK",
                                      "Space  Play / Pause",
@@ -1554,12 +2322,14 @@ static void draw_help(void) {
                                      "Del  Remove track",
                                      "X  Clear list",
                                      "/  Search",
+                                     "AUDIO CD",
+                                     "D  CD window: play, rip",
                                      0};
     const char *const *t = vx_english() ? en : de;
     fillr(1, 0, W - 2, H, S->raised);
     tx(3, 0, vx_english() ? "KEYS  (F1, H or Esc closes)" : "TASTEN  (F1, H oder Esc schliesst)",
        S->lcd, S->raised, 40);
-    int x = 3, y = 1, half_ = W >= 70 ? 11 : 99, n = 0;
+    int x = 3, y = 1, half_ = W >= 70 ? 12 : 99, n = 0;
     for (int i = 0; t[i]; i++, n++) {
         if (n == half_) {
             x = W / 2;
@@ -1571,6 +2341,35 @@ static void draw_help(void) {
 }
 /* Info window like in XZN on other systems, a little slimmer */
 static int banner_rows;
+static const char *const xzn_mit[] = {
+    "MIT License",
+    "Copyright (c) 2026 Merecete",
+    "Permission is hereby granted, free of charge, to any person obtaining",
+    "a copy of this software and associated documentation files (the",
+    "\"Software\"), to deal in the Software without restriction, including",
+    "without limitation the rights to use, copy, modify, merge, publish,",
+    "distribute, sublicense, and/or sell copies of the Software, and to",
+    "permit persons to whom the Software is furnished to do so, subject to",
+    "the following conditions:",
+    "The above copyright notice and this permission notice shall be",
+    "included in all copies or substantial portions of the Software.",
+    "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,",
+    "EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF",
+    "MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.",
+    "IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY",
+    "CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,",
+    "TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE",
+    "SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+    0};
+/* the licence of XZN, L in the Info window */
+static void draw_lic(void) {
+    fillr(1, 0, W - 2, H, S->panel);
+    fillr(1, 0, W - 2, 1, S->bar1);
+    tx(3, 0, vx_english() ? "XZN - licence (any key goes back)" : "XZN - Lizenz (Taste: zurueck)",
+       231, S->bar1, W - 6);
+    for (int i = 0; xzn_mit[i] && i + 2 < H; i++)
+        tx(3, i + 1, xzn_mit[i], i ? S->text : S->lcd, S->panel, W - 6);
+}
 static void draw_about(void) {
     int bw = W - 4 < 60 ? W - 4 : 60, bh = 17, x = (W - bw) / 2, y = (H - bh) / 2;
     if (y < 0)
@@ -1591,6 +2390,8 @@ static void draw_about(void) {
     tx(x + 2, y + 12, "Violyx Version", S->dim, S->panel, bw - 4);
     tx(x + 2, y + 13, "(c) 2026 Merecete", S->dim, S->panel, bw - 4);
     tx(x + 2, y + 14, "Released under the MIT License.", S->dim, S->panel, bw - 4);
+    const char *l = vx_english() ? "L Licence" : "L Lizenz";
+    button(x + 2, y + 15, l, 0);
     const char *c = vx_english() ? "Close" : "Schliessen";
     button(x + bw - (int)strlen(c) - 5, y + 15, c, 1);
 }
@@ -1649,7 +2450,19 @@ static long scroll_t;
 static void draw_marquee(int x, int y, int w) {
     char b[200];
     int n = 0;
-    if (nt && shown >= 0) {
+    if (shown == MAXT) {
+        b[n++] = '[';
+        b[n++] = 'C';
+        b[n++] = 'D';
+        b[n++] = ' ';
+        numtxt(b + n, cd_play + 1);
+        n = (int)strlen(b);
+        b[n++] = '/';
+        numtxt(b + n, rp_n);
+        n = (int)strlen(b);
+        b[n++] = ']';
+        b[n++] = ' ';
+    } else if (nt && shown >= 0) {
         b[n++] = '[';
         numtxt(b + n, shown + 1);
         n = (int)strlen(b);
@@ -1689,7 +2502,8 @@ static void draw_transport(int y, int mini) {
     x += button(x, y, "[]", !playing && !fmt);
     x += button(x, y, ">|", 0);
     if (!mini) {
-        int r = W - 15;
+        int r = W - 20;
+        r += button(r, y, "CD", cdmode || overlay == O_CD);
         static const char *const rp[3] = {"REP:OFF", "REP:ALL", "REP:ONE"};
         r += button(r, y, rp[st.rep], st.rep != 0) + 0;
         button(r, y, vx_english() ? "RND" : "ZUF", st.shuf);
@@ -1783,7 +2597,7 @@ static void draw_list(int y, int rows) {
             top_ = sel;
         if (sel >= top_ + rows)
             top_ = sel - rows + 1;
-    } else if (shown >= 0 && !(shown >= top_ && shown < top_ + rows)) {
+    } else if (shown >= 0 && shown < nt && !(shown >= top_ && shown < top_ + rows)) {
         top_ = shown - rows / 2;
     }
     if (top_ > nt - rows)
@@ -1864,8 +2678,8 @@ static void draw(long t) {
         }
         b[n] = 0;
         tx(1, y, b, S->dim, S->raised, W / 2);
-        const char *h =
-            vx_english() ? "F1 keys  A add  Tab list  E EQ" : "F1 Tasten  A hinzu  Tab Liste  E EQ";
+        const char *h = vx_english() ? "F1 keys  A add  D CD  Tab list  E EQ"
+                                     : "F1 Tasten  A hinzu  D CD  Tab Liste  E EQ";
         tx(W - (int)strlen(h) - 1, y, h, S->dim, S->raised, W);
     }
     if (overlay == O_EQ)
@@ -1874,10 +2688,14 @@ static void draw(long t) {
         draw_help();
     if (overlay == O_ABOUT)
         draw_about();
+    if (overlay == O_LIC)
+        draw_lic();
     if (overlay == O_INFO)
         draw_info();
     if (overlay == O_ADD)
         draw_picker();
+    if (overlay == O_CD)
+        draw_cd();
     vx_show();
 }
 static void set_overlay(int o) {
@@ -1962,6 +2780,18 @@ static void key(int full) {
             pk_key(k);
         return;
     }
+    if (overlay == O_CD) {
+        cd_key(k);
+        return;
+    }
+    if (overlay == O_ABOUT && (k == 'l' || k == 'L')) {
+        set_overlay(O_LIC);
+        return;
+    }
+    if (overlay == O_LIC) {
+        set_overlay(O_ABOUT);
+        return;
+    }
     if (overlay != O_NONE) {
         set_overlay(O_NONE);
         return;
@@ -2005,7 +2835,7 @@ static void key(int full) {
                         stop_();
                     memmove(&list[sel], &list[sel + 1], sizeof(track) * (size_t)(nt - sel - 1));
                     nt--;
-                    if (cur > sel) {
+                    if (cur > sel && cur < MAXT) {
                         cur--;
                         shown--;
                     } else if (cur == sel) {
@@ -2107,6 +2937,10 @@ static void key(int full) {
         case VK_F1:
             set_overlay(O_HELP);
             break;
+        case 'd':
+        case 'D':
+            cd_open();
+            break;
         case 'i':
         case 'I':
             set_overlay(O_INFO);
@@ -2137,7 +2971,7 @@ static void key(int full) {
             break;
         case VK_TAB:
             focus_list = !focus_list;
-            if (focus_list && shown >= 0)
+            if (focus_list && shown >= 0 && shown < nt)
                 sel = shown;
             break;
     }
@@ -2188,6 +3022,9 @@ int main(void) {
         while ((full = vx_sys(3, 0, 0, 0)) >= 0)
             key((int)full);
         pump();
+        if (rp_state == R_RUN)
+            rp_step();
+        cd_tick();
         long now = vx_ms();
         if (now >= next) {
             next = now + 66;
@@ -2199,7 +3036,7 @@ int main(void) {
             if (playing)
                 save_state();
         }
-        vx_wait(playing ? 20 : 60);
+        vx_wait(rp_state == R_RUN ? 1 : playing ? 20 : 60);
     }
 }
 #ifdef HOSTTEST

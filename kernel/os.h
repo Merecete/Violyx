@@ -143,6 +143,7 @@ typedef struct blkdev {
     int (*wrn)(struct blkdev *, u64, u32, const void *);
     int cd;                           /* a CD or DVD: read only, not a disk for installing */
     int (*eject)(struct blkdev *);    /* optional: opens the tray */
+    struct cdda *audio;               /* an audio CD: its tracks (cdda.h) */
 } blkdev;
 void blk_shutdown(int off);
 blkdev *blk_register(const char *name, u64 sectors, void *p, int (*rd)(blkdev *, u64, void *),
@@ -161,6 +162,11 @@ typedef struct cdrive {
     int dead, usb;
     u8 *cbuf;    /* read ahead: blocks cblk .. cblk+ccnt-1 */
     u32 cblk, ccnt;
+    struct cdda *a; /* an audio CD is in */
+    u32 errs;       /* audio sectors that could not be read and became silence */
+    u8 *abuf;       /* audio read ahead: sectors ablk .. ablk+acnt-1, filled while idle */
+    u32 ablk, acnt, apos, astop; /* apos: last sector asked for; astop: read ahead failed here */
+    u64 aseen;      /* when a program last read audio */
 } cdrive;
 void cd_add(cdrive *c);
 void cd_remove(cdrive *c);
@@ -251,6 +257,7 @@ void snd_stream_gain(int, int);
 void snd_stream_pause(int);
 void snd_fade(void);
 void prog_bg(void);
+int prog_active(void);
 void snd_select(void);
 int snd_has_hdmi(void);
 void snd_report(void (*)(const char *, void *), void *);
@@ -274,6 +281,8 @@ int fsx_stat(const char *, vfs_ent *);
 int64_t fsx_read(const char *, void *, u64);
 int64_t fsx_read_at(const char *, void *, u64 off, u64 max);
 int fsx_write(const char *, const void *, u64, u32);
+int fsx_append(const char *, const void *, u64, u32);
+int64_t fsx_free(const char *);
 int fsx_mkdir(const char *, u32);
 int fsx_remove(const char *);
 int fsx_rename(const char *, const char *);
@@ -345,6 +354,7 @@ typedef struct win {
     char amenu[200]; /* menu of the program, items separated by |, chosen items arrive as K_MENU + n
                       */
 } win_t;
+int prog_builtin(win_t *w);
 void put(int x, int y, u8 ch, u8 attr);
 void text(int x, int y, u8 attr, const char *s);
 void fill(int x, int y, int w, int h, u8 ch, u8 attr);
