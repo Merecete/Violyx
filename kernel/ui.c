@@ -215,6 +215,19 @@ static void present(void) {
     pcy = cy;
     force = 0;
 }
+void ui_screen(u8 **f, u32 *p, u32 *bpp, u32 *rs, u32 *gs, u32 *bs, int *x, int *y, int *w,
+               int *h) {
+    *f = fb;
+    *p = fbp;
+    *bpp = fbb * 8;
+    *rs = fbr;
+    *gs = fbg;
+    *bs = fbl;
+    *x = ox;
+    *y = oy;
+    *w = W * 8 * sc;
+    *h = H * 16 * sc;
+}
 void fb_init(void *a, u32 w, u32 h, u32 p, u32 bpp, u32 rs, u32 gs, u32 bs) {
     fb = a;
     fbw = w;
@@ -600,6 +613,16 @@ void win_menu(win_t *w, const char *name, const char *items) {
 #include "licdata.h"
 /* The licences: of Violyx, of XZN and of every component inside. Left/Right changes the text,
  * Up/Down and Page Up/Down scroll, Esc goes back. */
+/* a line of a table: two spaces after its first word */
+static int cols_(const char *t, u32 n) {
+    u32 i = 0;
+    while (i < n && t[i] == ' ')
+        i++;
+    for (; i + 1 < n && t[i] != '\n'; i++)
+        if (t[i] == ' ' && t[i + 1] == ' ')
+            return 1;
+    return 0;
+}
 static void dlg_license(int d) {
     static u32 ls[1200], le[1200];
     int top = 0, cur = -1, n = 0;
@@ -618,9 +641,20 @@ static void dlg_license(int d) {
             n = 0;
             /* the texts are broken at 80 columns: lines of one paragraph are joined again */
             const char *t = lic_files[d].data;
-            u32 len = lic_files[d].len, ln = 0;
+            u32 len = lic_files[d].len, ln = 0, ls0 = 0;
             rn = 0;
             for (u32 i = 0; i < len && rn < sizeof rb - 1; i++) {
+                if (!i || t[i - 1] == '\n') { /* Markdown: no ``` lines, no # before headings */
+                    if (i + 3 <= len && t[i] == '`' && t[i + 1] == '`' && t[i + 2] == '`') {
+                        while (i < len && t[i] != '\n')
+                            i++;
+                        continue;
+                    }
+                    while (i + 1 < len && t[i] == '#' && (t[i + 1] == '#' || t[i + 1] == ' '))
+                        i++;
+                    if (i < len && t[i] == ' ' && i && t[i - 1] == '#')
+                        i++;
+                }
                 char c = t[i];
                 if (c == '\r')
                     continue;
@@ -636,6 +670,14 @@ static void dlg_license(int d) {
                 int join = ln >= 50 && ((nx >= 'a' && nx <= 'z') ||
                                         (pv != '.' && pv != ':' && pv != ';' &&
                                          ((nx >= 'A' && nx <= 'Z') || nx == '(' || nx == '"')));
+                /* tables stay as they are: lines with columns (two spaces inside), lines deep in a
+                 * column, and lines both indented by two (the descriptions in the notices) */
+                u32 ind = 0; /* the indent of this line; a deep one is the column of a table */
+                while (ls0 + ind < rn && rb[ls0 + ind] == ' ')
+                    ind++;
+                int two = (j == i + 3 && ind == 2) || ind >= 8;
+                if (join && (two || cols_(t + i + 1, len - i - 1) || cols_(rb + ls0, rn - ls0)))
+                    join = 0;
                 if (join) {
                     rb[rn++] = ' ';
                     i = j - 1;
@@ -643,6 +685,7 @@ static void dlg_license(int d) {
                 } else {
                     rb[rn++] = '\n';
                     ln = 0;
+                    ls0 = rn;
                 }
             }
             /* lines that fit the box: broken at spaces */
@@ -853,6 +896,10 @@ static void status(void) {
     char v[24];
     ksnprintf(v, 24, "VIOLYX %s", VERSION);
     text(W - (int)strlen(v) - 1, H - 1, AT(C_RAISE, C_NEON), v);
+    if (ticks < shot_until) { /* a screenshot was saved */
+        fill(0, H - 1, W - (int)strlen(v) - 2, 1, ' ', A_BAR);
+        text(1, H - 1, A_BARK, shot_note);
+    }
 }
 /* Screens that are not windows (the programs overview) register how they draw themselves, so a
  * dialog opened from them keeps them visible underneath */
@@ -909,6 +956,11 @@ int ui_wait(key_t *k) {
         if (key_poll(k))
             return 1;
         tick_all(); /* the clock keeps running while a menu is open */
+        if (shot_save() || (shot_until && ticks >= shot_until)) {
+            if (ticks >= shot_until)
+                shot_until = 0;
+            return 0; /* Print Screen in a menu or dialog: draw again for the note */
+        }
         if (prog_dirty && ticks >= t)
             return 0;
         idle();
@@ -916,8 +968,10 @@ int ui_wait(key_t *k) {
 }
 key_t key_wait(void) {
     key_t k;
-    while (!key_poll(&k))
+    while (!key_poll(&k)) {
+        shot_save();
         idle();
+    }
     return k;
 }
 static void menu(int m) {
@@ -1472,7 +1526,7 @@ void dlg_about(void) {
                               "with a retro text desktop in glowing violet."),
                            "",
                            "(c) 2026 Merecete",
-                           TR("Lizenz: BSD-3-Clause, XZN: MIT", "Licence: BSD-3-Clause, XZN: MIT")};
+                           TR("Lizenz: BSD-3-Clause", "Licence: BSD-3-Clause")};
         for (int i = 0; i < 8; i++) /* every line centred inside the frame */
             text(x + (w - ulen(l[i])) / 2, y + 2 + i, i ? A_DLG : AT(C_RAISE, C_NEON), l[i]);
         const char *b1 = TR(" [ L ] Lizenzen ", " [ L ] Licences ");
@@ -1671,6 +1725,10 @@ void ui_run(void) {
             }
             if (ticks / 100 != tick_sec) {
                 tick_all();
+                ui_render();
+                present();
+            }
+            if (shot_save()) { /* Print Screen was pressed */
                 ui_render();
                 present();
             }

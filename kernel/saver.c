@@ -295,7 +295,11 @@ static void seven_draw(u32 ms) {
     memset(buf, C_VOID, (u64)pw * ph);
     rtc_t t;
     rtc_read(&t);
-    int dw = pw / 9, dh = dw * 2, tw = ss_width(dw);
+    int dw = pw / 9;
+    if (dw > ph / 4) /* narrow screens: the date must fit below as well */
+        dw = ph / 4;
+    /* height with the date below: the digits, a gap of a quarter, the date digits */
+    int dh = dw * 2 + dw / 2 + (dw / 3) * 2, tw = ss_width(dw);
     /* the clock wanders a little every minute, so nothing burns in */
     u32 r = (u32)(t.h * 60 + t.m) * 2654435761u;
     int mx = pw - tw, my = ph - dh;

@@ -15,7 +15,7 @@ The package ends up in `build/snake.vpk`. Copy it to a stick, open `/drives/usb1
 press Enter on it. The program then appears in the Programs overview (F2). Delete it there with Del.
 
 `make apps` builds every example. The source of all examples is in `examples/` under the BSD
-3-Clause License (XZN under the MIT License, see `examples/LICENSE-XZN`), so you can read, change
+3-Clause License, XZN included, so you can read, change
 and share it:
 
 | App | Source |

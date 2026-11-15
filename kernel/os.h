@@ -111,7 +111,8 @@ enum {
     K_ESC,
     K_BS,
     K_TAB,
-    K_REBOOT
+    K_REBOOT,
+    K_PRINT /* never reaches windows: key_poll takes a screenshot (shot.c) */
 };
 #define M_SHIFT 1
 #define M_CTRL  2
@@ -373,6 +374,14 @@ win_t *win_top(void);
 int ui_can_quit(void);
 void win_title(win_t *, const char *);
 void fb_init(void *addr, u32 w, u32 h, u32 pitch, u32 bpp, u32 rs, u32 gs, u32 bs);
+/* the drawn part of the screen (the text grid) for screenshots */
+void ui_screen(u8 **fb, u32 *pitch, u32 *bpp, u32 *rs, u32 *gs, u32 *bs, int *x, int *y, int *w,
+               int *h);
+/* shot.c: Print Screen */
+void shot_take(void);
+int shot_save(void);
+extern char shot_note[100];
+extern u64 shot_until;
 void ui_panic(const char *a, const char *b);
 void ui_goodbye(const char *, const char *);
 void ui_init(void);

@@ -1,7 +1,7 @@
 /* FLAC encoder for XZN's CD rips: 16-bit stereo at 44.1 kHz, written from the published format
  * description (xiph.org). Every block tries the four stereo modes and the fixed predictors of
  * order 0 to 4, the residual is Rice coded with up to 64 partitions. Lossless, and a CD usually
- * shrinks to 55 to 70 percent. MIT License, part of Violyx. */
+ * shrinks to 55 to 70 percent. BSD-3-Clause, part of Violyx. */
 #pragma once
 #include <stdint.h>
 #define XF_BLOCK 4096

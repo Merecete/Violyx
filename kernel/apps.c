@@ -512,6 +512,7 @@ static const char *help_de[] = {"Willkommen bei Violyx!",
                                 "Esc schließt das Fenster (auch Strg+W oder Alt+F3)",
                                 "USB-Sticks (FAT32, exFAT): Ordner /drives unter F3",
                                 "Strg+Pfeile verschiebt, Umschalt+Pfeile ändert die Größe",
+                                "Druck: Screenshot, gespeichert in /home/Screenshots",
                                 "",
                                 "Im Schreibprogramm:",
                                 "Strg+S speichern   Strg+O öffnen",
@@ -527,6 +528,7 @@ static const char *help_en[] = {"Welcome to Violyx!",
                                 "Esc closes the window (also Ctrl+W or Alt+F3)",
                                 "USB sticks (FAT32, exFAT): folder /drives in F3",
                                 "Ctrl+Arrows moves, Shift+Arrows resizes",
+                                "Print Screen: screenshot, saved in /home/Screenshots",
                                 "",
                                 "In Write:",
                                 "Ctrl+S save   Ctrl+O open",
@@ -543,5 +545,5 @@ static void he_draw(win_t *w) {
 }
 static const app_t he_app = {he_draw, 0, 0, 0, 0};
 void app_help(void) {
-    win_open(TR("Hilfe", "Help"), 9, 4, 62, 16, &he_app, 0);
+    win_open(TR("Hilfe", "Help"), 9, 4, 62, 17, &he_app, 0);
 }

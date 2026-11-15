@@ -1,4 +1,4 @@
-/* More formats for XZN, all written for Violyx (MIT license, like the rest):
+/* More formats for XZN, all written for Violyx (BSD-3-Clause, like the rest):
  *   AIFF/AIFC, CAF (PCM and Apple Lossless), True Audio, WavPack, DSD (.dsf/.dff),
  *   Matroska audio (.mka) and AC3.
  * Every decoder delivers stereo frames as 16-bit samples, like the others in XZN.
@@ -1789,7 +1789,7 @@ static long mka_walk(xmka *m, long o, long e, int depth, long long parent) {
     return o;
 }
 /* Ogg pages for Vorbis */
-static xu32 ogg_crc(const xu8 *p, long n) {
+static xu32 xog_crc(const xu8 *p, long n) {
     xu32 c = 0;
     for (long i = 0; i < n; i++) {
         c ^= (xu32)p[i] << 24;
@@ -1810,7 +1810,7 @@ typedef struct {
     long long gran;
     int cont, bos;
 } xogg;
-static int ogg_flush(xogg *g, int eos) {
+static int xog_flush(xogg *g, int eos) {
     if (!g->nseg && !eos)
         return 1;
     long need = 27 + g->nseg + g->tn;
@@ -1829,7 +1829,7 @@ static int ogg_flush(xogg *g, int eos) {
     p[26] = (xu8)g->nseg;
     memcpy(p + 27, g->seg, (size_t)g->nseg);
     memcpy(p + 27 + g->nseg, g->tmp, (size_t)g->tn);
-    xu32 c = ogg_crc(p, need);
+    xu32 c = xog_crc(p, need);
     for (int i = 0; i < 4; i++)
         p[22 + i] = (xu8)(c >> (8 * i));
     g->n += need;
@@ -1840,7 +1840,7 @@ static int ogg_flush(xogg *g, int eos) {
     g->gran = -1;
     return 1;
 }
-static int ogg_packet(xogg *g, const xu8 *d, long l, long long gran, int own_page) {
+static int xog_packet(xogg *g, const xu8 *d, long l, long long gran, int own_page) {
     long done = 0;
     g->cont = 0;
     for (;;) {
@@ -1848,7 +1848,7 @@ static int ogg_packet(xogg *g, const xu8 *d, long l, long long gran, int own_pag
         if (g->nseg == 255 || g->tn + k > 60000) {
             int midpacket = done > 0 || k == 255;
             (void)midpacket;
-            if (!ogg_flush(g, 0))
+            if (!xog_flush(g, 0))
                 return 0;
             g->cont = done > 0;
         }
@@ -1860,7 +1860,7 @@ static int ogg_packet(xogg *g, const xu8 *d, long l, long long gran, int own_pag
             break;
         if (done == l) { /* a multiple of 255: an empty segment ends it */
             if (g->nseg == 255) {
-                if (!ogg_flush(g, 0))
+                if (!xog_flush(g, 0))
                     return 0;
                 g->cont = 1;
             }
@@ -1871,9 +1871,9 @@ static int ogg_packet(xogg *g, const xu8 *d, long l, long long gran, int own_pag
     g->gran = gran;
     g->cont = 0;
     if (own_page)
-        return ogg_flush(g, 0);
+        return xog_flush(g, 0);
     if (g->tn > 4000)
-        return ogg_flush(g, 0);
+        return xog_flush(g, 0);
     return 1;
 }
 /* the block sizes of the Vorbis modes, read from the end of the setup header */
@@ -1957,8 +1957,8 @@ static long mka_build_vorbis(xmka *m, xu8 **out) {
         return 0;
     g.bos = 1;
     g.gran = 0;
-    if (!ogg_packet(&g, h1, l1, 0, 1) || !ogg_packet(&g, h2, l2, 0, 0) ||
-        !ogg_packet(&g, h3, l3, 0, 1))
+    if (!xog_packet(&g, h1, l1, 0, 1) || !xog_packet(&g, h2, l2, 0, 0) ||
+        !xog_packet(&g, h3, l3, 0, 1))
         return 0;
     long long gran = 0;
     int prev = -1;
@@ -1972,10 +1972,10 @@ static long mka_build_vorbis(xmka *m, xu8 **out) {
         if (prev >= 0)
             gran += (prev + bs) / 4;
         prev = bs;
-        if (!ogg_packet(&g, d, m->pk[i].len, gran, 0))
+        if (!xog_packet(&g, d, m->pk[i].len, gran, 0))
             return 0;
     }
-    if (!ogg_flush(&g, 1))
+    if (!xog_flush(&g, 1))
         return 0;
     /* the last page closes the stream */
     *out = g.o;

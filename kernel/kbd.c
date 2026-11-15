@@ -43,11 +43,15 @@ static void push(u16 k) {
     qh = n;
 }
 int key_poll(key_t *k) {
-    if (qt == qh)
-        return 0;
-    *k = q[qt];
-    qt = (qt + 1) & 63;
-    return 1;
+    for (;;) {
+        if (qt == qh)
+            return 0;
+        *k = q[qt];
+        qt = (qt + 1) & 63;
+        if (k->key != K_PRINT)
+            return 1;
+        shot_take(); /* the screen as it is now; saved later by the main loop */
+    }
 }
 void kbd_init(void) {
     for (int i = 0; i < 64 && (inb(0x64) & 1); i++)
@@ -123,6 +127,10 @@ void kbd_in(u8 s) {
     }
     if (c == 0x45 || c == 0x46)
         return;
+    if ((e && c == 0x37) || c == 0x54) { /* Print Screen, with Alt it sends SysRq */
+        push(K_PRINT);
+        return;
+    }
     if (e) {
         u16 k = nav(c);
         if (k) {

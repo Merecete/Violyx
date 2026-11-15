@@ -1,5 +1,5 @@
 /* XZN for Violyx - a keyboard music player, the Violyx edition of Xenon-Zones.
-   SPDX-License-Identifier: MIT
+   SPDX-License-Identifier: BSD-3-Clause
    Plays MP3/MP2, OGG, FLAC and WAV, and with xzncodec.h AIFF, CAF/ALAC, WavPack, True Audio,
    DSD, Matroska audio and AC3. Files come from the system, USB sticks or CDs.
    The player runs on in the background while other windows are on top.
@@ -101,6 +101,7 @@ void qsort(void *b, size_t n, size_t s,
 #include "xzncodec.h" /* AIFF, CAF/ALAC, True Audio, WavPack, DSD, Matroska, AC3 */
 #include "xznlogo.h"
 #include "xznflac.h" /* CD rips */
+#include "xznogg.h"
 
 __asm__(
     ".section .rodata\n.globl intro_mp3\n.globl intro_end\nintro_mp3:\n.incbin \"assets/xzn-intro.mp3\"\nintro_end:\n.text\n");
@@ -1426,13 +1427,15 @@ static void add_folder(const char *dir, int depth) {
         p += l + 1;
     }
 }
-/* ---------- ripping an audio CD to FLAC or WAV ---------- */
+/* ---------- ripping an audio CD to FLAC, OGG or WAV ---------- */
 static void set_overlay(int o);
 #define RIPN 99
 static char rp_src[PATHN], rp_name[RIPN][NAMEN], rp_album[70], rp_artist[70], rp_dir[PATHN];
 static char rp_tg[9][12], rp_out[PATHN];
 static const char *rp_msg;
-static int rp_n, rp_fmt, rp_tgt, rp_ntg, rp_state, rp_i, rp_open_; /* rp_fmt: 0 FLAC, 1 WAV */
+enum { RF_FLAC, RF_WAV, RF_OGG };
+static int rp_n, rp_fmt, rp_tgt, rp_ntg, rp_state, rp_i, rp_open_; /* rp_fmt: RF_FLAC, ... */
+static xo_enc rp_ogg;
 static int rp_pick[RIPN], rp_cnt, rp_k, rp_eject; /* tracks to rip, how many, the k-th now */
 static long rp_pos, rp_size, rp_hlen, rp_on, rp_done, rp_all, rp_t0;
 static unsigned rp_fno;
@@ -1535,6 +1538,7 @@ static void rp_fail(const char *de, const char *en) {
     if (rp_open_)
         vx_remove(rp_out); /* no half track */
     rp_open_ = 0;
+    xo_end(&rp_ogg);
 }
 static void rp_start(void) {
     rp_folder(rp_dir);
@@ -1555,8 +1559,9 @@ static void rp_start(void) {
         if (vx_stat(f, &s) >= 0)
             rp_all += (long)s.size;
     }
-    /* enough room? FLAC needs about 60 to 70 percent of the CD */
-    long fr = vx_free(base[0] ? base : "/home"), need = rp_fmt ? rp_all : rp_all / 10 * 7;
+    /* enough room? FLAC needs about 60 to 70 percent of the CD, OGG about 15 */
+    long fr = vx_free(base[0] ? base : "/home"),
+         need = rp_fmt == RF_WAV ? rp_all : rp_fmt == RF_OGG ? rp_all / 6 : rp_all / 10 * 7;
     if (fr >= 0 && fr < need + (2l << 20)) {
         static char m[120];
         char a[16], b[16];
@@ -1634,10 +1639,11 @@ static int rp_begin(void) {
     char cl[NAMEN + 8];
     rp_clean(cl, nm, NAMEN);
     l = (int)strlen(cl);
-    memcpy(cl + l, rp_fmt ? ".wav" : ".flac", rp_fmt ? 5 : 6);
+    const char *ext = rp_fmt == RF_WAV ? ".wav" : rp_fmt == RF_OGG ? ".ogg" : ".flac";
+    memcpy(cl + l, ext, strlen(ext) + 1);
     join(rp_out, rp_dir, cl);
     rp_on = 0;
-    if (rp_fmt) { /* WAV: the header of the CD, with its tags */
+    if (rp_fmt == RF_WAV) { /* WAV: the header of the CD, with its tags */
         memcpy(rp_obuf, rp_ibuf, (size_t)rp_hlen);
         rp_on = rp_hlen;
     } else {
@@ -1658,7 +1664,15 @@ static int rp_begin(void) {
             tg[i][n] = 0;
             tp[i] = tg[i];
         }
-        rp_on = xf_head(rp_obuf, (uint64_t)((rp_size - rp_hlen) / 4), tp, 5);
+        if (rp_fmt == RF_OGG) {
+            rp_on = xo_begin(&rp_ogg, (uint32_t)(vx_ms() * 2654435761u + (unsigned)rp_i), tp, 5,
+                             rp_obuf);
+            if (rp_on < 0) {
+                rp_fail("OGG-Encoder startet nicht", "The OGG encoder does not start");
+                return 0;
+            }
+        } else
+            rp_on = xf_head(rp_obuf, (uint64_t)((rp_size - rp_hlen) / 4), tp, 5);
         rp_fno = 0;
     }
     if (vx_write(rp_out, rp_obuf, (size_t)rp_on) < 0) {
@@ -1678,9 +1692,10 @@ static void rp_step(void) {
             return;
         char f[PATHN];
         join(f, rp_src, rp_name[rp_i]);
-        long want = rp_size - rp_pos, got = 0;
-        if (want > (long)sizeof rp_ibuf)
-            want = (long)sizeof rp_ibuf;
+        long want = rp_size - rp_pos, got = 0,
+             most = rp_fmt == RF_OGG ? 1 << 16 : (long)sizeof rp_ibuf; /* OGG: more work */
+        if (want > most)
+            want = most;
         while (got < want) {
             long k =
                 vx_read_at(f, rp_ibuf + got, (unsigned long)(rp_pos + got), (size_t)(want - got));
@@ -1692,9 +1707,16 @@ static void rp_step(void) {
             rp_fail("Lesefehler: CD entnommen?", "Read error: CD taken out?");
             return;
         }
-        if (rp_fmt) {
+        int end = rp_pos + got >= rp_size;
+        if (rp_fmt == RF_WAV) {
             memcpy(rp_obuf + rp_on, rp_ibuf, (size_t)got);
             rp_on += got;
+        } else if (rp_fmt == RF_OGG) {
+            rp_on += xo_feed(&rp_ogg, (const int16_t *)rp_ibuf, (int)(got / 4), rp_obuf + rp_on);
+            if (end) {
+                rp_on += xo_feed(&rp_ogg, 0, 0, rp_obuf + rp_on);
+                xo_end(&rp_ogg);
+            }
         } else
             for (long o = 0; o < got; o += XF_BLOCK * 4) {
                 int nfr = (int)((got - o) / 4 < XF_BLOCK ? (got - o) / 4 : XF_BLOCK);
@@ -1704,7 +1726,6 @@ static void rp_step(void) {
             }
         rp_pos += got;
         rp_done += got;
-        int end = rp_pos >= rp_size;
         if ((rp_on > (long)sizeof rp_obuf - (long)sizeof rp_ibuf - XF_FRAME * 16 || end) &&
             !rp_flush())
             return;
@@ -1923,7 +1944,7 @@ static void cd_key(int k) {
             return;
         case 'f':
             if (!run)
-                rp_fmt = !rp_fmt;
+                rp_fmt = rp_fmt == RF_FLAC ? RF_OGG : rp_fmt == RF_OGG ? RF_WAV : RF_FLAC;
             return;
         case 'z':
             if (!run && rp_ntg)
@@ -2028,7 +2049,7 @@ static void draw_cd(void) {
     int y = 2 + rows;
     fillr(2, y, W - 4, 4, S->raised);
     tx(3, y, "Format", S->dim, S->raised, 6);
-    tx(10, y, rp_fmt ? "WAV " : "FLAC", S->hi, S->raised, 4);
+    tx(10, y, rp_fmt == RF_WAV ? "WAV " : rp_fmt == RF_OGG ? "OGG " : "FLAC", S->hi, S->raised, 4);
 
     char f[PATHN];
     if (rp_state == R_RUN || rp_state == R_DONE)
@@ -2341,34 +2362,52 @@ static void draw_help(void) {
 }
 /* Info window like in XZN on other systems, a little slimmer */
 static int banner_rows;
-static const char *const xzn_mit[] = {
-    "MIT License",
-    "Copyright (c) 2026 Merecete",
-    "Permission is hereby granted, free of charge, to any person obtaining",
-    "a copy of this software and associated documentation files (the",
-    "\"Software\"), to deal in the Software without restriction, including",
-    "without limitation the rights to use, copy, modify, merge, publish,",
-    "distribute, sublicense, and/or sell copies of the Software, and to",
-    "permit persons to whom the Software is furnished to do so, subject to",
-    "the following conditions:",
-    "The above copyright notice and this permission notice shall be",
-    "included in all copies or substantial portions of the Software.",
-    "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,",
-    "EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF",
-    "MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.",
-    "IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY",
-    "CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,",
-    "TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE",
-    "SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+static const char *const xzn_lic[] = {
+    "BSD 3-Clause License",
+    "Copyright (c) 2026, Merecete",
+    "Redistribution and use in source and binary forms, with or without",
+    "modification, are permitted provided that the following conditions",
+    "are met:",
+    "1. Redistributions of source code must retain the above copyright",
+    "   notice, this list of conditions and the following disclaimer.",
+    "2. Redistributions in binary form must reproduce the above copyright",
+    "   notice, this list of conditions and the following disclaimer in",
+    "   the documentation and/or other materials provided with the",
+    "   distribution.",
+    "3. Neither the name of the copyright holder nor the names of its",
+    "   contributors may be used to endorse or promote products derived",
+    "   from this software without specific prior written permission.",
+    "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS",
+    "\"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT",
+    "LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR",
+    "A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT",
+    "HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,",
+    "INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,",
+    "BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS",
+    "OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED",
+    "AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT",
+    "LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY",
+    "WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE",
+    "POSSIBILITY OF SUCH DAMAGE.",
     0};
 /* the licence of XZN, L in the Info window */
+static int lic_top;
+static int lic_max(void) {
+    int n = 0;
+    while (xzn_lic[n])
+        n++;
+    return n - (H - 2) > 0 ? n - (H - 2) : 0;
+}
 static void draw_lic(void) {
     fillr(1, 0, W - 2, H, S->panel);
     fillr(1, 0, W - 2, 1, S->bar1);
-    tx(3, 0, vx_english() ? "XZN - licence (any key goes back)" : "XZN - Lizenz (Taste: zurueck)",
-       231, S->bar1, W - 6);
-    for (int i = 0; xzn_mit[i] && i + 2 < H; i++)
-        tx(3, i + 1, xzn_mit[i], i ? S->text : S->lcd, S->panel, W - 6);
+    const char *t = lic_max() ? (vx_english() ? "XZN - licence (Up/Down scroll, other key: back)"
+                                              : "XZN - Lizenz (Hoch/Runter, andere Taste: zurueck)")
+                              : (vx_english() ? "XZN - licence (any key goes back)"
+                                              : "XZN - Lizenz (Taste: zurueck)");
+    tx(3, 0, t, 231, S->bar1, W - 6);
+    for (int i = 0; xzn_lic[lic_top + i] && i + 2 < H; i++)
+        tx(3, i + 1, xzn_lic[lic_top + i], lic_top + i ? S->text : S->lcd, S->panel, W - 6);
 }
 static void draw_about(void) {
     int bw = W - 4 < 60 ? W - 4 : 60, bh = 17, x = (W - bw) / 2, y = (H - bh) / 2;
@@ -2389,7 +2428,7 @@ static void draw_about(void) {
        bw - 4);
     tx(x + 2, y + 12, "Violyx Version", S->dim, S->panel, bw - 4);
     tx(x + 2, y + 13, "(c) 2026 Merecete", S->dim, S->panel, bw - 4);
-    tx(x + 2, y + 14, "Released under the MIT License.", S->dim, S->panel, bw - 4);
+    tx(x + 2, y + 14, "Released under the BSD 3-Clause License.", S->dim, S->panel, bw - 4);
     const char *l = vx_english() ? "L Licence" : "L Lizenz";
     button(x + 2, y + 15, l, 0);
     const char *c = vx_english() ? "Close" : "Schliessen";
@@ -2785,11 +2824,17 @@ static void key(int full) {
         return;
     }
     if (overlay == O_ABOUT && (k == 'l' || k == 'L')) {
+        lic_top = 0;
         set_overlay(O_LIC);
         return;
     }
     if (overlay == O_LIC) {
-        set_overlay(O_ABOUT);
+        int m = lic_max();
+        if (k == VK_UP || k == VK_DOWN || k == VK_PGUP || k == VK_PGDN) {
+            lic_top += k == VK_UP ? -1 : k == VK_DOWN ? 1 : k == VK_PGUP ? -(H - 3) : H - 3;
+            lic_top = lic_top < 0 ? 0 : lic_top > m ? m : lic_top;
+        } else
+            set_overlay(O_ABOUT);
         return;
     }
     if (overlay != O_NONE) {

@@ -1,4 +1,4 @@
-/* Programmsymbol von XZN, 24x24 Bildpunkte in 256 Farben, aus dem XZN-Logo von Merecete (MIT) */
+/* Programmsymbol von XZN, 24x24 Bildpunkte in 256 Farben, aus dem XZN-Logo von Merecete (BSD-3-Clause) */
 static const unsigned char xzn_icon[576] = {
     91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  134, 231, 231,
     189, 91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,  91,
