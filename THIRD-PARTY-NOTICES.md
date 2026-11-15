@@ -1,24 +1,63 @@
-# Third-Party Notices
+Violyx - Third-party software
+==================================================================
 
-Violyx itself is released under the BSD 3-Clause License (see `LICENSE`), XZN under the MIT
-License (see `sdk/examples/LICENSE-XZN`). The components below keep their own licenses. Their
-notices must be included when Violyx is redistributed, including as a prebuilt image: Violyx
-carries all of them and shows them under System > About Violyx > L.
+Violyx itself is released under the BSD 3-Clause License (see
+LICENSE), XZN for Violyx under the MIT License (see
+sdk/examples/LICENSE-XZN).
 
-| Component | Purpose | License | License text |
-|---|---|---|---|
-| Limine 9.x | BIOS and UEFI bootloader | BSD-2-Clause | `third_party/limine/LICENSE` |
-| Limine dependencies | Included in the Limine binaries | BSD, MIT, Zlib, Apache-2.0 WITH LLVM-exception and others | Overview in `third_party/limine/3RDPARTY.md` |
-| `kernel/limine.h` | Limine boot protocol | 0BSD | File header |
-| lwIP 2.2.1 | TCP/IP stack | BSD-3-Clause | `third_party/lwip/COPYING` |
-| Mbed TLS 3.6.7 | TLS, cryptography, certificate verification | Apache-2.0 (chosen from Apache-2.0 OR GPL-2.0-or-later) | `third_party/mbedtls/LICENSE` |
-| stb_image 2.30 (Sean Barrett) | Image and gzip decoding, in the protected helper `sdk/helpers/vxdec.c` | MIT or Public Domain | `third_party/stb/LICENSE` |
-| minimp3 (lieff) | MP3 decoding in XZN | CC0-1.0 | `third_party/minimp3/LICENSE` |
-| stb_vorbis (Sean Barrett) | Ogg Vorbis decoding in XZN | MIT or Public Domain | `third_party/stb/LICENSE` |
-| dr_flac (David Reid) | FLAC decoding in XZN | MIT-0 or Public Domain | End of `third_party/dr_flac/dr_flac.h` |
-| Xenon-Zones (Merecete) | Design and intro sample of XZN (`sdk/assets/xzn-intro.mp3`) | MIT | https://github.com/Merecete/XZN |
-| Mozilla root certificates (via certifi) | Trusted certificate authorities | MPL-2.0 | `third_party/cacert/LICENSE-certifi.txt` |
-| OpenBSD `rge` driver | Realtek RTL8125/8126 network support (`kernel/rge.c`, `kernel/rge_reg.h`, adapted, no Realtek firmware included) | ISC | `third_party/rge/LICENSE` (from the file header) |
-| Spleen 8x16 | System font | BSD-2-Clause | `third_party/spleen/LICENSE` |
-| chibicc (Rui Ueyama) | C compiler `cc` (`system/cc/chibicc`, adapted, and its headers in `system/cc/include-cc`) | MIT | `system/cc/chibicc/LICENSE` |
-| ATSC A/52 tables | Two number tables of the AC3 decoder in XZN (`latab`, `hth` in `sdk/examples/xzncodec.h`), taken from the public AC-3 standard | Data from a public standard | ATSC A/52:2018 |
+Violyx contains the following open-source components. Each one
+stays under its own license. The full license texts are in the
+source code at the paths given below, and Violyx shows all of
+them under System > About Violyx > L. Their notices must be
+included when Violyx is redistributed, also as a prebuilt image.
+
+------------------------------------------------------------------
+Component                License
+  What it does, where the license text is
+------------------------------------------------------------------
+Limine 9.x               BSD-2-Clause
+  BIOS and UEFI bootloader, third_party/limine/LICENSE
+Limine dependencies      BSD, MIT, Zlib, Apache-2.0 WITH
+                         LLVM-exception and others
+  inside the Limine binaries, third_party/limine/3RDPARTY.md
+kernel/limine.h          0BSD
+  Limine boot protocol, in the file header
+lwIP 2.2.1               BSD-3-Clause
+  TCP/IP stack, third_party/lwip/COPYING
+Mbed TLS 3.6.7           Apache-2.0 (chosen from
+                         Apache-2.0 OR GPL-2.0-or-later)
+  TLS and certificates, third_party/mbedtls/LICENSE
+stb_image 2.30           MIT or Public Domain
+  images and gzip in sdk/helpers/vxdec.c,
+  third_party/stb/LICENSE
+stb_vorbis               MIT or Public Domain
+  Ogg Vorbis in XZN, third_party/stb/LICENSE
+minimp3                  CC0-1.0
+  MP3 in XZN, third_party/minimp3/LICENSE
+dr_flac                  MIT-0 or Public Domain
+  FLAC in XZN, end of third_party/dr_flac/dr_flac.h
+Xenon-Zones              MIT
+  design and intro sample of XZN (sdk/assets/xzn-intro.mp3),
+  https://github.com/Merecete/XZN
+Mozilla root             MPL-2.0
+certificates (certifi)
+  trusted certificate authorities,
+  third_party/cacert/LICENSE-certifi.txt
+OpenBSD rge driver       ISC
+  Realtek RTL8125/8126 (kernel/rge.c, kernel/rge_reg.h,
+  adapted, no Realtek firmware), third_party/rge/LICENSE
+Spleen 8x16              BSD-2-Clause
+  system font, third_party/spleen/LICENSE
+chibicc                  MIT
+  the C compiler cc (system/cc/chibicc, adapted, and
+  system/cc/include-cc), system/cc/chibicc/LICENSE
+ATSC A/52 tables         data from a public standard
+  two number tables of the AC3 decoder in XZN (latab, hth in
+  sdk/examples/xzncodec.h), from ATSC A/52:2018
+------------------------------------------------------------------
+
+The source code of Violyx and of every component listed here is
+in the Violyx source code: https://github.com/Merecete/Violyx
+
+Patent note: some formats (for example AC3) may be covered by
+patents in some countries. Violyx only uses them to play files.
