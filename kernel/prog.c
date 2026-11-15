@@ -255,6 +255,7 @@ typedef struct {
     char arg[VFS_PATH];           /* file or address it was started with */
     char grant[NGRANT][VFS_PATH]; /* files the user chose for it in a dialog */
     int ng;
+    char ver[12], author[32]; /* from the package, for the Info window */
 } proc_t;
 #define L_NET  1
 #define L_INST 2
@@ -1215,6 +1216,18 @@ int prog_builtin(win_t *w) {
     proc_t *p = w->st;
     return p->sys || p->bi >= 0;
 }
+/* Version and author of an installed package a window belongs to; 0 for Violyx's own programs and
+ * the built-in packages, which carry the version of the system */
+const char *prog_version(win_t *w, const char **author) {
+    if (w->app != &pw_app)
+        return 0;
+    proc_t *p = w->st;
+    if (p->sys || p->bi >= 0 || !p->ver[0])
+        return 0;
+    if (author)
+        *author = p->author;
+    return p->ver;
+}
 int prog_wants(win_t *w, int key) {
     if (w->app != &pw_app)
         return 0;
@@ -1285,6 +1298,8 @@ static int load(const u8 *b, u64 n, const char *base) {
     p->r.rflags = 0x202;
     strlcpy_(p->name, h->name, 24);
     strlcpy_(p->base, base, VFS_PATH);
+    strlcpy_(p->ver, h->version, 12);
+    strlcpy_(p->author, h->author, 32);
     p->bi = -1;
     p->state = P_RUN;
     lastp = p;

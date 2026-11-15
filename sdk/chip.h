@@ -12,6 +12,7 @@
 typedef struct {
     const char *lead, *bass, *drums;
     int step_ms;
+    int soft; /* 1: quieter, with a round lead instead of the square one */
 } chip_song;
 static const chip_song *chip_cur;
 static const char *chip_p[2], *chip_d;
@@ -84,18 +85,19 @@ static void chip_part(int i, const char *start, int vol, int wave, int delay) {
 }
 static void chip_step(int delay) {
     const chip_song *c = chip_cur;
-    chip_part(0, c->lead, 26, VX_SQUARE, delay);
-    chip_part(1, c->bass, 38, VX_TRIANGLE, delay);
+    chip_part(0, c->lead, c->soft ? 22 : 26, c->soft ? VX_TRIANGLE : VX_SQUARE, delay);
+    chip_part(1, c->bass, c->soft ? 22 : 38, VX_TRIANGLE, delay);
     if (c->drums) {
         if (!*chip_d)
             chip_d = c->drums;
         char d = *chip_d++;
+        int q = c->soft ? 2 : 1;
         if (d == 'k')
-            vx_tone(70, 70, 42, VX_TRIANGLE, delay);
+            vx_tone(70, 70, 42 / q, VX_TRIANGLE, delay);
         if (d == 's')
-            vx_tone(1600, 70, 18, VX_NOISE, delay);
+            vx_tone(1600, 70, 18 / q, VX_NOISE, delay);
         if (d == 'h')
-            vx_tone(6000, 24, 7, VX_NOISE, delay);
+            vx_tone(6000, 24, 7 / q + 1, VX_NOISE, delay);
     }
 }
 static void chip_play(const chip_song *c) {

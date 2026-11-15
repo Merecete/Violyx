@@ -355,6 +355,7 @@ typedef struct win {
                       */
 } win_t;
 int prog_builtin(win_t *w);
+const char *prog_version(win_t *w, const char **author);
 void put(int x, int y, u8 ch, u8 attr);
 void text(int x, int y, u8 attr, const char *s);
 void fill(int x, int y, int w, int h, u8 ch, u8 attr);

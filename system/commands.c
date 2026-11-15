@@ -406,11 +406,30 @@ static void sh_exec(sh_t *s) {
         if (r)
             sh_err(s, r);
     } else if (!strcmp(c, "uninstall")) {
+        /* a program that came with Violyx has no app.vpk of its own: it stays, only its data
+         * (settings, playlist, best scores) can go */
+        char f[VFS_PATH], q[200];
+        vfs_ent e;
+        ksnprintf(f, VFS_PATH, "/programs/%s", a);
+        int own = *a && !fsx_stat(f, &e); /* the folder is there, */
+        ksnprintf(f, VFS_PATH, "/programs/%s/app.vpk", a);
+        own = own && fsx_stat(f, &e) != 0; /* but no package in it */
+        ksnprintf(q, sizeof q,
+                  TR("%s gehört zu Violyx und bleibt. Gelöscht werden nur seine Daten "
+                     "(Einstellungen, Rekorde, Listen). Fortfahren?",
+                     "%s is part of Violyx and stays. Only its data is deleted (settings, best "
+                     "scores, lists). Go on?"),
+                  a);
+        if (own && !dlg_confirm(TR("Daten löschen", "Delete data"), q)) {
+            sh_put(s, TR("Nichts gelöscht.", "Nothing deleted."));
+            return;
+        }
         int r = prog_uninstall(a);
         if (r)
             sh_err(s, r);
         else
-            sh_put(s, TR("Entfernt.", "Removed."));
+            sh_put(s, own ? TR("Daten gelöscht, das Programm bleibt.", "Data deleted, the program stays.")
+                          : TR("Entfernt.", "Removed."));
     } else if (!strcmp(c, "eject")) {
         if (!*a && !memcmp(s->cwd, "/drives/", 8))
             a = s->cwd + 8;

@@ -24,6 +24,7 @@ and share it:
 | Snake | `examples/snake.c` |
 | Bricks | `examples/bricks.c` |
 | Novastrike | `examples/novastrike.c` |
+| Gemfall | `examples/gemfall.c` |
 | Fetch | `examples/fetch.c` (network) |
 | XZN | `examples/xzn.c` (music player) |
 

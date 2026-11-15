@@ -734,13 +734,18 @@ static void dlg_license(int d) {
 /* Info window for a program: name, version of the system, copyright, licence */
 static void about_prog(win_t *w, const char *name) {
     int x, y, own = prog_builtin(w);
-    char t[40], v[24];
+    char t[40], v[24], c[48];
+    const char *au = 0, *pv = prog_version(w, &au);
     ksnprintf(t, 40, "Info - %s", name);
     for (;;) {
         dlg_box(t, 40, own ? 11 : 9, &x, &y);
         text(x + 20 - (int)strlen(name) / 2, y + 2, AT(C_RAISE, C_NEON), name);
-        ksnprintf(v, 24, "Version %s", VERSION);
+        ksnprintf(v, 24, "Version %s", pv ? pv : VERSION);
         text(x + 20 - (int)strlen(v) / 2, y + 4, A_DLG, v);
+        if (!own && au && au[0]) { /* someone else's program: its author, nothing of Violyx */
+            ksnprintf(c, 48, "(c) %s", au);
+            text(x + 20 - (int)strlen(c) / 2, y + 5, A_DLG, c);
+        }
         if (own) {
             text(x + 11, y + 5, A_DLG, "(c) 2026 Merecete");
             text(x + 6, y + 6, A_DLG, TR("Lizenz: BSD-3-Clause", "Licence: BSD-3-Clause"));
