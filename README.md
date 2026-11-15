@@ -20,16 +20,17 @@ used for the build tools.
 |---|---|---|
 | ![Violet](docs/violyx-violet.png) | ![Ruby](docs/violyx-ruby.png) | ![Ocean](docs/violyx-ocean.png) |
 
-> Experimental hobby project, version 0.3.1. Please do not enter passwords or use it for anything
+> Experimental hobby project, version 0.3.2. Please do not enter passwords or use it for anything
 > sensitive.
 
 ## What's inside
 
 - Windowed text desktop, controlled entirely by keyboard, with colour schemes and screen savers
+- Screenshots with the Print Screen key, saved as PNG in the home folder
 - Web browser with HTTPS, images, tabs, bookmarks and downloads
 - Write, Files, Commands, Calculator, Calendar, Clock, Image viewer and Paint
 - XZN music player for MP3, OGG, FLAC, WAV, AIFF, WavPack, DSD, AC3 and more, plays audio CDs and
-  rips them to FLAC or WAV
+  rips them to FLAC, OGG or WAV
 - Games: Pong (also for two players), Invaders, Chomp, Mines, Snake, Bricks and Novastrike
 - Every program runs in its own protected memory, so a crash only ends that program
 - Sound, wired network, USB sticks and SD cards (FAT32 and exFAT), CDs and DVDs, English and German
@@ -47,7 +48,7 @@ used for the build tools.
 
 ## Try it
 
-Download `violyx_v0.3.1.iso` from the [Releases](../../releases) page.
+Download `violyx_v0.3.2.iso` from the [Releases](../../releases) page.
 
 **VirtualBox:** create a VM with type *Other/Unknown (64-bit)* and 512 MB memory, and start it from
 the ISO. For internet, choose the network adapter *Intel PRO/1000 MT Desktop*. For sound, enable
@@ -56,10 +57,10 @@ the *Intel HD Audio* controller.
 **QEMU:**
 
 ```sh
-qemu-system-x86_64 -cdrom violyx_v0.3.1.iso -m 512 -nic user,model=e1000 -device intel-hda -device hda-duplex
+qemu-system-x86_64 -cdrom violyx_v0.3.2.iso -m 512 -nic user,model=e1000 -device intel-hda -device hda-duplex
 ```
 
-**Real PC:** write `violyx_v0.3.1.img` to a USB stick (for example with Rufus in DD mode, this
+**Real PC:** write `violyx_v0.3.2.img` to a USB stick (for example with Rufus in DD mode, this
 erases the stick), turn off Secure Boot and start from the stick.
 
 Once it runs, **F1** shows the help and **F2** all programs. All keys are in the
@@ -91,9 +92,8 @@ The finished images are in the `build` folder.
 
 ## License
 
-BSD-3-Clause, see [LICENSE](LICENSE). XZN is under the MIT License, see
-[sdk/examples/LICENSE-XZN](sdk/examples/LICENSE-XZN). Bundled components keep their own licenses,
-listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). In Violyx, System > About Violyx
+BSD-3-Clause, see [LICENSE](LICENSE) Bundled components keep their own licenses,
+listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt). In Violyx, System > About Violyx
 shows all of them (L).
 
 ![How Violyx is built](docs/architecture.png)
