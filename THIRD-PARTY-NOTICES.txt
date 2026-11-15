@@ -1,4 +1,5 @@
-# Violyx - Third-party software
+Violyx - Third-party software
+==================================================================
 
 Violyx itself is released under the BSD 3-Clause License (see
 LICENSE), XZN for Violyx under the MIT License (see
@@ -10,7 +11,7 @@ source code at the paths given below, and Violyx shows all of
 them under System > About Violyx > L. Their notices must be
 included when Violyx is redistributed, also as a prebuilt image.
 
-```text
+------------------------------------------------------------------
 Component                License
   What it does, where the license text is
 ------------------------------------------------------------------
@@ -53,7 +54,7 @@ chibicc                  MIT
 ATSC A/52 tables         data from a public standard
   two number tables of the AC3 decoder in XZN (latab, hth in
   sdk/examples/xzncodec.h), from ATSC A/52:2018
-```
+------------------------------------------------------------------
 
 The source code of Violyx and of every component listed here is
 in the Violyx source code: https://github.com/Merecete/Violyx
