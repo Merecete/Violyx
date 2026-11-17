@@ -34,6 +34,7 @@ u64 mem_total_kb;
 static u64 hhdm;
 static int pit_ok;
 static u64 tsc0, tsc_tick;
+u64 tsc_khz; /* TSC ticks per millisecond, for udelay */
 u64 phys(const void *p) {
     return (u64)p - hhdm;
 }
@@ -87,13 +88,26 @@ void isr_handler(regs *r) {
         proc_tick(r);
 }
 /* Waits for the next event. Without a PIT (some new Intel systems) time runs on the TSC. */
+#ifdef BOOTDIAG
+#define STEP(s) ui_bootstep(s)
+#define MARK(x, c) ui_bootmark(x, c)
+#else
+#define STEP(s)
+#define MARK(x, c)
+#endif
 void idle(void) {
+    MARK(0, 'U');
     usb_hotplug();
+    MARK(0, 'C');
     cd_poll();
+    MARK(0, 'P');
     prog_bg();
+    MARK(0, 'h');
     if (pit_ok) {
         __asm__("sti;hlt");
+        MARK(0, 'N');
         net_poll();
+        MARK(0, '.');
         return;
     }
     __asm__("pause");
@@ -219,6 +233,16 @@ static void pit_check(void) {
     }
     if (ticks) {
         pit_ok = 1;
+        /* the TSC over ten timer ticks (100 ms), from the start of a tick */
+        u64 k = ticks;
+        while (ticks == k)
+            __asm__("pause");
+        u64 a = rdtsc(), k0 = ticks;
+        while (ticks < k0 + 10)
+            __asm__("pause");
+        u64 d = rdtsc() - a;
+        if (d > 100000) /* at least 1 MHz: otherwise something is wrong, keep port 0x80 */
+            tsc_khz = d / 100;
         return;
     }
     /* Fallback: calibrate the TSC on the second change of the CMOS clock */
@@ -231,6 +255,7 @@ static void pit_check(void) {
     while (cmos(0) == s)
         ;
     tsc_tick = (rdtsc() - a) / 100;
+    tsc_khz = tsc_tick / 10;
     tsc0 = rdtsc();
     __asm__("sti");
 }
@@ -434,11 +459,18 @@ void kmain(void) {
     fb_init(f->address, f->width, f->height, f->pitch, f->bpp, f->red_mask_shift,
             f->green_mask_shift, f->blue_mask_shift);
     ui_init();
+    STEP("Violyx " VERSION " Diagnose: Bildschirm ok");
+    STEP("cpu_init");
     cpu_init();
+    STEP("mem_init");
     mem_init();
+    STEP("paging_init");
     paging_init();
+    STEP("kbd_init");
     kbd_init();
+    STEP("pit_check (Timer)");
     pit_check();
+    STEP(pit_ok ? "  Timer ok" : "  kein Timer-Interrupt, TSC");
     {
         u64 r = rsreq.response ? (u64)rsreq.response->address : 0;
         if (r >= hhdm)
@@ -446,10 +478,26 @@ void kmain(void) {
         pci_ecam = acpi_mcfg(r);
     }
     static pci_t d[256];
+    STEP("PCI-Suche");
     int n = pci_scan(d, 256); /* AMD boards have many functions, 64 was not always enough */
+    for (int i = 0; i < n; i++) {
+#ifdef BOOTDIAG
+        char sb[80];
+        ksnprintf(sb, 80, "  PCI %02x:%02x.%d  %04x:%04x  Klasse %02x.%02x.%02x", d[i].bus, d[i].dev,
+                  d[i].fn, d[i].ven, d[i].did, d[i].cls, d[i].sub, d[i].pif);
+        STEP(sb);
+#endif
+    }
+    STEP("Sound");
     for (int i = 0; i < n; i++)
         snd_probe(&d[i]);
     for (int i = 0; i < n; i++) {
+#ifdef BOOTDIAG
+        char sb[80];
+        ksnprintf(sb, 80, "Treiber fuer %02x:%02x.%d (%04x:%04x)", d[i].bus, d[i].dev, d[i].fn,
+                  d[i].ven, d[i].did);
+        STEP(sb);
+#endif
         if (d[i].ven == 0x10EC && (d[i].did == 0x8126 || d[i].did == 0x8125))
             rge_probe(&d[i]);
         else if (d[i].cls == 1 && d[i].sub == 6 && d[i].pif == 1)
@@ -463,6 +511,7 @@ void kmain(void) {
                   d[i].did == 0x10D3))
             e1000_init(&d[i]);
     }
+    STEP("IDE");
     ide_probe();
 #ifdef FAKECD
     void cd_fake(void);
@@ -470,12 +519,19 @@ void kmain(void) {
 #endif
     if (modreq.response && modreq.response->module_count)
         install_set_image(modreq.response->modules[0]->address, modreq.response->modules[0]->size);
+    STEP("fs_init (Dateisystem)");
     fs_init();
+    STEP("cfg_load");
     cfg_load();
+    STEP("snd_select");
     snd_select();
+    STEP("drives_sync (Laufwerke)");
     drives_sync();
+    STEP("ui_init");
     ui_init();
+    STEP("net_init (Netzwerk)");
     net_init();
+    STEP("Logo");
     ui_splash();
     if (!cfg_seen) { /* the keyboard help only at the first start; F1 brings it back */
         app_help();

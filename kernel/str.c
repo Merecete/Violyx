@@ -80,10 +80,12 @@ int ksnprintf(char *o, size_t n, const char *f, ...) {
     va_list a;
     va_start(a, f);
     size_t p = 0;
+    /* c is read exactly once, also when the buffer is full: OUT(t[--i]) must count down */
 #define OUT(c)                                                                                     \
     do {                                                                                           \
+        char ch_ = (char)(c);                                                                      \
         if (p + 1 < n)                                                                             \
-            o[p] = (c);                                                                            \
+            o[p] = ch_;                                                                            \
         p++;                                                                                       \
     } while (0)
     for (; *f; f++) {

@@ -1,9 +1,8 @@
 Violyx - Third-party software
 ==================================================================
 
-Violyx itself is released under the BSD 3-Clause License (see
-LICENSE), XZN for Violyx under the MIT License (see
-sdk/examples/LICENSE-XZN).
+Violyx itself, XZN for Violyx included, is released under the
+BSD 3-Clause License (see LICENSE).
 
 Violyx contains the following open-source components. Each one
 stays under its own license. The full license texts are in the
@@ -36,7 +35,12 @@ minimp3                  CC0-1.0
   MP3 in XZN, third_party/minimp3/LICENSE
 dr_flac                  MIT-0 or Public Domain
   FLAC in XZN, end of third_party/dr_flac/dr_flac.h
-Xenon-Zones              MIT
+libvorbis (git 1b75110)  BSD-3-Clause
+  Vorbis encoder for OGG rips in XZN,
+  third_party/vorbis/COPYING
+libogg (git 06a5e02)     BSD-3-Clause
+  Ogg container for OGG rips in XZN, third_party/ogg/COPYING
+Xenon-Zones              BSD-3-Clause
   design and intro sample of XZN (sdk/assets/xzn-intro.mp3),
   https://github.com/Merecete/XZN
 Mozilla root             MPL-2.0

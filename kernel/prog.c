@@ -737,6 +737,47 @@ void proc_syscall(regs *r) {
             v = (long)cw_ << 16 | ch_;
             break;
         }
+        case 33: /* recording: a = 0 start input c (b: {int rate; char name[40]}), 1 read
+                    (b: buffer, c: stereo frames), 2 stop, 3 name of input c into b (40 bytes;
+                    0 = there is none). Only a program with a window, and the status line shows
+                    REC as long as it runs. */
+            if (!p->w) {
+                v = VE_DENIED;
+                break;
+            }
+            if (a == 0) {
+                if (!uok(p, b, 44, 1)) {
+                    v = VE_INVAL;
+                    break;
+                }
+                int r = 0;
+                char nm[40];
+                v = rec_open(p, (int)c, &r, nm, sizeof nm);
+                if (!v) {
+                    *(int *)b = r;
+                    memcpy((char *)b + 4, nm, 40);
+                }
+            } else if (a == 1) {
+                if (c > 48000 * 8 || !uok(p, b, c * 4, 1)) {
+                    v = VE_INVAL;
+                    break;
+                }
+                v = rec_read(p, (short *)b, (u32)c);
+            } else if (a == 2) {
+                rec_close(p);
+                v = 0;
+            } else if (a == 3) {
+                char nm[40];
+                if (!uok(p, b, 40, 1)) {
+                    v = VE_INVAL;
+                    break;
+                }
+                v = rec_name((int)c, nm, sizeof nm);
+                if (v)
+                    memcpy((void *)b, nm, 40);
+            } else
+                v = VE_INVAL;
+            break;
         case 32: /* free space on the drive of a path */
             v = upath(p, a, pa) ? fsx_free(pa) : VE_DENIED;
             break;
@@ -1194,6 +1235,7 @@ static void pw_free(win_t *w) {
         dns_cancel();
         net_owner = 0;
     }
+    rec_close(p); /* a recording ends with its program */
     if (p->bi >= 0 && single_p[p->bi] == p)
         single_p[p->bi] = 0;
     if (p->bg) {
@@ -1389,6 +1431,7 @@ static const struct {
                {"calc", pkg_calc, sizeof pkg_calc, 1, 0, 0},
                {"calendar", pkg_calendar, sizeof pkg_calendar, 1, 1, 0},
                {"clock", pkg_clock, sizeof pkg_clock, 1, 1, 0},
+               {"voice", pkg_voice, sizeof pkg_voice, 1, 1, 0},
                {"write", pkg_write, sizeof pkg_write, 1, 0, 0},
                {"view", pkg_view, sizeof pkg_view, 0, 0, L_LIM | L_RO | L_WALL},
                {"paint", pkg_paint, sizeof pkg_paint, 1, 1, 0},
@@ -1511,6 +1554,9 @@ void app_calendar(void) {
 }
 void app_clock(void) {
     prog_open("clock", 0);
+}
+void app_voice(void) {
+    prog_open("voice", 0);
 }
 void app_write(const char *file) {
     prog_open("write", file);

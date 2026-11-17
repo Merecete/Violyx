@@ -154,6 +154,30 @@ static inline long vx_append(const char *p, const void *b, size_t n) {
 static inline long vx_free(const char *p) {
     return vx_sys(32, (long)p, 0, 0);
 }
+/* Recording from the microphone. The inputs are numbered from 0: the USB audio devices, then
+ * the input of the mainboard; vx_rec_input gives the name of one (0 when there is none).
+ * vx_rec_start(&i, n) starts input n (or the first one, when there is no n) and fills in the
+ * sample rate (48000, sometimes 44100) and the device name; then
+ * vx_rec_read gives up to n frames of 16-bit stereo (left, right) that came in since, at least
+ * once a second (the system keeps 8 seconds). The status line shows REC while it runs.
+ * Returns: 0 / frames, VX_NOTFOUND without a microphone, VX_BUSY while another program records,
+ * VX_IOERR when the device was unplugged. */
+typedef struct {
+    int rate;
+    char name[40];
+} vx_rec_info;
+static inline long vx_rec_start(vx_rec_info *i, int input) {
+    return vx_sys(33, 0, (long)i, input);
+}
+static inline int vx_rec_input(int n, char name[40]) {
+    return (int)vx_sys(33, 3, (long)name, n);
+}
+static inline long vx_rec_read(short *frames, long n) {
+    return vx_sys(33, 1, (long)frames, n);
+}
+static inline void vx_rec_stop(void) {
+    vx_sys(33, 2, 0, 0);
+}
 static inline long vx_stat(const char *p, vx_stat_t *s) {
     return vx_sys(13, (long)p, (long)s, 0);
 }
@@ -184,7 +208,7 @@ enum {
     VX_INVALID = -7,
     VX_DENIED = -9,
     VX_FORMAT = -10,
-    VX_BUSY = -12, /* the network is in use by another program */
+    VX_BUSY = -12, /* the network or the microphone is in use by another program */
     VX_AGAIN = -13 /* nothing there yet, try again later */
 };
 

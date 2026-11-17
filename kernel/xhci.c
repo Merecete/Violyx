@@ -14,7 +14,8 @@ typedef struct {
 struct msc;
 typedef struct ud {
     int kind, slot, tried, hn, speed, depth, rport, tts, ttp, vid, pid, cls, step;
-    char ifs[28]; /* the interfaces as class/subclass/protocol, for the usb command */
+    int dead; /* a hub that stopped answering: asked again only after it is plugged in again */
+    char ifs[48]; /* the interfaces as class/subclass/protocol, for the usb command */
     u32 route;
     struct msc *m;
     ring ep0;
@@ -22,6 +23,16 @@ typedef struct ud {
     u8 ktr[16];
 } ud_t;
 #define MAXP  64
+#ifdef BOOTDIAG
+#define XD(...)                                                                                    \
+    do {                                                                                           \
+        char xb_[80];                                                                              \
+        ksnprintf(xb_, 80, __VA_ARGS__);                                                           \
+        ui_bootstep(xb_);                                                                          \
+    } while (0)
+#else
+#define XD(...)
+#endif
 #define MAXHC 4
 typedef struct hc {
     u64 cap, op, rt, db;
@@ -29,6 +40,7 @@ typedef struct hc {
     u64 *dcba;
     ring cmd;
     trb *ev;
+    int stuck; /* a command got no answer: no more devices are set up on this controller */
     ud_t pt[MAXP];
 } hc_t;
 static hc_t hcs[MAXHC];
@@ -73,7 +85,7 @@ static u64 rep_at;
 #define PS(n)  (*(volatile u32 *)(op + 0x400 + (n) * 0x10))
 static int want, waitport, cur_kind, cur_slot, cur_hn, cur_vid, cur_pid, cur_cls;
 static int cur_step; /* how far setting a device up came: 1 slot ... 6 running */
-static char cur_ifs[28];
+static char cur_ifs[48];
 static void *cur_m;
 static int usb_ch; /* a drive came or went: the folder /drives is updated */
 static ring cur_ep0;
@@ -235,18 +247,38 @@ static ua_t UA;
 static int ua_found;
 static void ua_event(trb *e);
 /* Waits for an event; keyboard and audio events are handled on the way */
+static int ev_limit = 6000000; /* about 6 s or more: inb(0x80) takes 1 to 2 us */
+static int uin_is(int slot, int dci);
+static void uin_event(trb *e);
 static int ev_wait(int type, trb *o) {
-    for (int i = 0; i < 6000000; i++) {
+#ifdef BOOTDIAG
+    u64 t0 = ticks;
+    extern int xd_on;
+#endif
+    for (int i = 0; i < ev_limit; i++) {
+#ifdef BOOTDIAG
+        if (xd_on && i && !(i % 100000))
+            XD("        warte auf Ereignis %d (Slot %d): %d00000 Runden, %d s", type, want,
+               i / 100000, (int)((ticks - t0) / 100));
+#endif
         if (ev_next(o)) {
             int t = (o->d >> 10) & 63;
             if (t == 32) {
                 int s = o->d >> 24, kbd = 0;
-                if (UA.on && UA.h == UH && s == UA.slot) {
+                if (uin_is(s, (int)((o->d >> 16) & 31))) {
+                    uin_event(o);
+                    continue;
+                }
+                /* the control endpoint (1) belongs to the request waited for here, also on a
+                 * device that plays or types: a sound chip that also records gets its
+                 * SET_INTERFACE answer this way */
+                int dci = (int)((o->d >> 16) & 31);
+                if (UA.on && UA.h == UH && s == UA.slot && dci != 1) {
                     ua_event(o);
                     continue;
                 }
                 for (int k = 0; k < usb_keyboards; k++)
-                    if (kb[k].h == UH && kb[k].slot == s)
+                    if (kb[k].h == UH && kb[k].slot == s && dci != 1)
                         kbd = 1;
                 if (kbd) {
                     kb_event(o);
@@ -265,11 +297,15 @@ static int ev_wait(int type, trb *o) {
     return 0;
 }
 static int command(u32 a, u32 b, u32 c, u32 d) {
+    if (UH->stuck)
+        return -1;
     put_trb(&cmd, a, b, c, d);
     DB(0) = 0;
     trb e;
-    if (!ev_wait(33, &e))
+    if (!ev_wait(33, &e)) {
+        UH->stuck = 1;
         return -1;
+    }
     return (e.c >> 24) == 1 ? (int)(e.d >> 24) : -1;
 }
 /* One drive of a storage device. Card readers have several (SD, microSD, CF ...) and a slot
@@ -297,6 +333,7 @@ typedef struct msc {
 } msc_t;
 #define NMSC 8
 static msc_t *mscs[NMSC]; /* the storage devices plugged in, for the look for cards */
+static int ctrl_cc; /* completion code of the last control request, 0 when none came */
 static int ctrl(int slot, ring *r, u32 rq, u16 val, u16 idx, u16 len, void *buf) {
     int in = rq & 0x80;
     put_trb(r, rq | (val & 0xFFFFu) << 16 | 0, idx | (u32)len << 16, 8,
@@ -306,11 +343,26 @@ static int ctrl(int slot, ring *r, u32 rq, u16 val, u16 idx, u16 len, void *buf)
         put_trb(r, p, p >> 32, len, (3 << 10) | ((in ? 1 : 0) << 16));
     }
     put_trb(r, 0, 0, 0, (4 << 10) | (1 << 5) | ((len && in ? 0 : 1) << 16));
-    DB(slot) = 1;
+#ifdef SILENTHUB /* test: a hub that never answers its port status */
+    if (rq != 0xA3)
+#endif
+        DB(slot) = 1;
     want = slot;
     trb e;
-    if (!ev_wait(32, &e))
-        return -1;
+    /* Requests on the control endpoint are answered within milliseconds. A device that is
+     * silent (a KVM switch showing another PC, a hub that hangs) must not stop the start:
+     * wait about 1.5 s, then stop the endpoint and put its ring behind the request, so the
+     * next request does not wait for this one again. */
+    ev_limit = 1500000;
+    int got = ev_wait(32, &e);
+    ev_limit = 6000000;
+    ctrl_cc = got ? (int)(e.c >> 24) : 0;
+    if (!got) {
+        command(0, 0, 0, (15u << 10) | ((u32)slot << 24) | (1 << 16)); /* stop endpoint */
+        u64 q = phys(&r->t[r->i]) | r->cy;
+        command((u32)q, q >> 32, 0, (16u << 10) | ((u32)slot << 24) | (1 << 16));
+        return -2;
+    }
     u32 cc = e.c >> 24;
     return cc == 1 || cc == 13 ? 0 : -1;
 }
@@ -821,6 +873,349 @@ static void ua_gone(void) {
     ua_found = 0;
 }
 /* Reads the descriptors and starts playback. Returns 1 if it was an audio device */
+/* ---------- USB audio input (recording) ---------- An isochronous IN endpoint, separate from
+ * the output above: one device may play while another records (a USB microphone or an audio
+ * interface). It is set up when the device comes, but runs only while a program records. Every
+ * packet ends with an event; the samples go into the recording ring of rec.c. */
+#define UIN_N 256 /* transfers in the ring */
+#define UIN_Q 64  /* waiting at a time: 8 ms at 480 Mbit/s, 64 ms at 12 Mbit/s */
+typedef struct {
+    hc_t *h;
+    int slot, on, run, ifn, alt, dci, ch, sub, uac2, ep, rate, acif, nclk, clk[4], vid, pid;
+    int esit, bsz, out, errs, lastcc, hs;
+    ring r, ep0;
+    u8 *buf;
+    u64 got;
+    char fmt[48];
+} uin_t;
+#define NUIN 4
+static uin_t uins[NUIN], *uc = uins, *urun; /* uc: the one worked on, urun: the one recording */
+#define UIN (*uc)
+static int uin_is(int slot, int dci) {
+    for (int i = 0; i < NUIN; i++)
+        if (uins[i].on && uins[i].h == UH && slot == uins[i].slot && dci == uins[i].dci) {
+            uc = &uins[i];
+            return 1;
+        }
+    return 0;
+}
+static int uin_free(void) { /* a place for one more input */
+    for (int i = 0; i < NUIN; i++)
+        if (!uins[i].on) {
+            uc = &uins[i];
+            return 1;
+        }
+    return 0;
+}
+static uin_t *uin_nth(int n) {
+    for (int i = 0; i < NUIN; i++)
+        if (uins[i].on && !n--)
+            return &uins[i];
+    return 0;
+}
+static void uin_queue(void) {
+    int i = UIN.r.i;
+    u64 p = phys(UIN.buf + i * UIN.bsz);
+    put_trb(&UIN.r, p, p >> 32, (u32)UIN.esit, (5 << 10) | (1 << 5) | (1 << 2) | (1u << 31));
+    UIN.out++;
+}
+static void uin_event(trb *e) {
+    if (!UIN.run)
+        return;
+    u32 cc = e->c >> 24;
+    u64 ptr = e->a | (u64)e->b << 32, b = phys(UIN.r.t);
+    if (ptr >= b && ptr < b + UIN_N * 16) {
+        int idx = (int)((ptr - b) / 16);
+        UIN.out--;
+        if (cc == 1 || cc == 13) {
+            int got = UIN.esit - (int)(e->c & 0xFFFFFF), fs = UIN.ch * UIN.sub;
+            const u8 *p = UIN.buf + idx * UIN.bsz;
+            for (int k = 0; fs && (k + 1) * fs <= got; k++) {
+                const u8 *f = p + k * fs;
+                short l = (short)(f[UIN.sub - 2] | f[UIN.sub - 1] << 8), r = l;
+                if (UIN.ch > 1)
+                    r = (short)(f[2 * UIN.sub - 2] | f[2 * UIN.sub - 1] << 8);
+                rec_put(l, r);
+                UIN.got++;
+            }
+        } else {
+            UIN.errs++;
+            UIN.lastcc = (int)cc;
+        }
+    } else if (cc == 14 || cc == 15) /* ring ran empty or over: everything is back */
+        UIN.out = 0;
+    while (UIN.out < UIN_Q)
+        uin_queue();
+    DB(UIN.slot) = UIN.dci;
+}
+int usb_rec_name(int n, char *o, int max) {
+    if (!(uc = uin_nth(n)))
+        return 0;
+    ksnprintf(o, max, "%04x:%04x, %s", UIN.vid, UIN.pid, UIN.fmt);
+    return 1;
+}
+int usb_rec_alive(void) {
+    return urun && urun->on;
+}
+static u8 *uin_t8;
+char usb_rec_err[64];
+int usb_rec_start(int n, int *rate, char *name, int max) {
+    if (!(uc = uin_nth(n)) || UIN.run)
+        return -1;
+    u64 f = irq_off();
+    hc_t *sv = UH;
+    UH = UIN.h;
+    if (!uin_t8)
+        uin_t8 = dma_alloc(64);
+    u8 *t = uin_t8;
+    int r = UIN.rate, e = 0;
+    if (ctrl(UIN.slot, &UIN.ep0, 0x01 | (11 << 8), (u16)UIN.alt, (u16)UIN.ifn, 0, 0)) {
+        ksnprintf(usb_rec_err, sizeof usb_rec_err, "%04x:%04x SET_INTERFACE %d/%d, cc %d", UIN.vid,
+                  UIN.pid, UIN.ifn, UIN.alt, ctrl_cc);
+        ep0_fix(UIN.slot, &UIN.ep0);
+        e = -1;
+    } else if (UIN.uac2) {
+        for (int i = 0; i < UIN.nclk; i++) {
+            t[0] = (u8)r;
+            t[1] = (u8)(r >> 8);
+            t[2] = (u8)(r >> 16);
+            t[3] = 0;
+            uctrl(UIN.slot, &UIN.ep0, 0x21 | (1 << 8), 0x0100, (u16)(UIN.clk[i] << 8 | UIN.acif), 4,
+                  t);
+        }
+    } else {
+        t[0] = (u8)r;
+        t[1] = (u8)(r >> 8);
+        t[2] = (u8)(r >> 16);
+        uctrl(UIN.slot, &UIN.ep0, 0x22 | (1 << 8), 0x0100, (u16)UIN.ep, 3, t);
+    }
+    if (!e) {
+        UIN.out = 0;
+        UIN.errs = 0;
+        UIN.run = 1;
+        urun = uc;
+        while (UIN.out < UIN_Q)
+            uin_queue();
+        DB(UIN.slot) = UIN.dci;
+    }
+    UH = sv;
+    irq_on(f);
+    if (e)
+        return e;
+    *rate = r;
+    ksnprintf(name, max, "USB %04x:%04x", UIN.vid, UIN.pid);
+    return 0;
+}
+void usb_rec_stop(void) {
+    if (!urun || !urun->run)
+        return;
+    uc = urun;
+    urun = 0;
+    UIN.run = 0;
+    if (!UIN.on)
+        return;
+    u64 f = irq_off();
+    hc_t *sv = UH;
+    UH = UIN.h;
+    u32 ep = (u32)UIN.slot << 24 | (u32)UIN.dci << 16;
+    command(0, 0, 0, (15u << 10) | ep); /* stop endpoint, then the ring behind what is left */
+    u64 q = phys(&UIN.r.t[UIN.r.i]) | UIN.r.cy;
+    command((u32)q, q >> 32, 0, (16u << 10) | ep);
+    UIN.out = 0;
+    uctrl(UIN.slot, &UIN.ep0, 0x01 | (11 << 8), 0, (u16)UIN.ifn, 0, 0); /* zero bandwidth */
+    UH = sv;
+    irq_on(f);
+}
+/* Why a USB audio device with an input could not record, for the sound command */
+static struct {
+    int vid, pid;
+    char why[40];
+} unotes[4];
+static void uin_note(const char *why) {
+    int i = 0;
+    while (i < 3 && unotes[i].vid && !(unotes[i].vid == cur_vid && unotes[i].pid == cur_pid))
+        i++;
+    unotes[i].vid = cur_vid;
+    unotes[i].pid = cur_pid;
+    strlcpy_(unotes[i].why, why, sizeof unotes[i].why);
+}
+void usb_rec_notes(void (*cb)(const char *, void *), void *a) {
+    char l[80];
+    for (int i = 0; i < 4; i++)
+        if (unotes[i].vid) {
+            ksnprintf(l, 80, "USB %04x:%04x: %s %s", unotes[i].vid, unotes[i].pid,
+                      TR("keine Aufnahme,", "no recording,"), unotes[i].why);
+            cb(l, a);
+        }
+}
+/* Looks for an input stream (an AS interface whose endpoint goes IN). configured: the output
+ * part of the same device already chose the configuration. */
+static int uin_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8 *d, int tl,
+                     int cfgv, int configured) {
+    int acif = -1, uac2 = 0, clk[4], nclk = 0, ccls = 0, csub = 0, ca = 0, first = 0, have = 0;
+    int seen_in = 0;
+    char why[40];
+    why[0] = 0;
+    typedef struct {
+        int ifn, alt, ch, sub, pcm, ep, mps, ival, rate, sc;
+    } cand;
+    cand c, best;
+    memset(&c, 0, sizeof c);
+    memset(&best, 0, sizeof best);
+#define TAKEIN()                                                                                   \
+    do {                                                                                           \
+        if (ccls == 1 && csub == 2 && ca > 0 && c.ep) {                                            \
+            if (c.pcm && c.sub >= 2 && c.sub <= 4 && c.rate) {                                     \
+                if (!c.ch)                                                                         \
+                    c.ch = 2;                                                                      \
+                c.sc = (c.rate == 48000) * 8 + (c.ch <= 2) * 4 + (c.sub == 2) * 2 + 1;             \
+                if (!have || c.sc > best.sc) {                                                     \
+                    best = c;                                                                      \
+                    have = 1;                                                                      \
+                }                                                                                  \
+            } else                                                                                 \
+                ksnprintf(why, 40, "if %d/%d: pcm %d, %d Byte, %d Hz", c.ifn, c.alt, c.pcm, c.sub, \
+                          c.rate);                                                                 \
+        }                                                                                          \
+    } while (0)
+    for (int o = 0; o + 1 < tl && d[o]; o += d[o]) {
+        const u8 *x = d + o;
+        int L = x[0];
+        if (x[1] == 4 && L >= 9) {
+            TAKEIN();
+            ca = x[3];
+            ccls = x[5];
+            csub = x[6];
+            memset(&c, 0, sizeof c);
+            c.ifn = x[2];
+            c.alt = ca;
+            first = 0;
+            if (ccls == 1 && csub == 1) {
+                acif = x[2];
+                if (x[7] == 0x20)
+                    uac2 = 1;
+            }
+            if (ccls == 1 && csub == 2 && x[7] == 0x20)
+                uac2 = 1;
+            continue;
+        }
+        if (x[1] == 0x24 && ccls == 1 && csub == 1 && L >= 4) {
+            if (x[2] == 1 && L >= 5 && x[4] >= 2)
+                uac2 = 1;
+            if (x[2] == 0x0A && nclk < 4)
+                clk[nclk++] = x[3];
+        }
+        if (x[1] == 0x24 && ccls == 1 && csub == 2 && L >= 4) {
+            if (x[2] == 1) {
+                if (uac2 && L >= 11) {
+                    c.pcm = x[6] & 1;
+                    c.ch = x[10];
+                } else if (L >= 7)
+                    c.pcm = (x[5] | x[6] << 8) == 1;
+            }
+            if (x[2] == 2) {
+                if (uac2 && L >= 6) {
+                    c.sub = x[4];
+                    c.rate = 48000; /* the clock is set to 48 kHz when recording starts */
+                } else if (L >= 8 && x[3] == 1) {
+                    c.ch = x[4];
+                    c.sub = x[5];
+                    int nf = x[7];
+                    /* 48 kHz when it can, else 44.1 kHz, else the highest rate up to 48 kHz
+                     * (webcams often offer only 16 kHz); the program records at that rate */
+                    if (!nf && L >= 14) {
+                        u32 lo = x[8] | x[9] << 8 | x[10] << 16, hi = x[11] | x[12] << 8 | x[13] << 16;
+                        c.rate = lo <= 48000 && hi >= 48000 ? 48000 : hi < 48000 ? (int)hi : (int)lo;
+                    }
+                    for (int k = 0; k < nf && 8 + k * 3 + 2 < L; k++) {
+                        int v = x[8 + k * 3] | x[9 + k * 3] << 8 | x[10 + k * 3] << 16;
+                        if (v < 8000 || v > 192000)
+                            continue;
+                        if (!c.rate || v == 48000 || (c.rate != 48000 && v == 44100) ||
+                            (c.rate != 48000 && c.rate != 44100 &&
+                             (c.rate > 48000 ? v < c.rate : v > c.rate && v <= 48000)))
+                            c.rate = v;
+                    }
+                    if (c.rate && (c.rate < 8000 || c.rate > 192000))
+                        c.rate = 0;
+                }
+            }
+        }
+        if (x[1] == 5 && ccls == 1 && csub == 2 && L >= 7 && (x[3] & 3) == 1 && !first) {
+            first = 1; /* the first endpoint of an alternate setting carries the sound */
+            if ((x[2] & 0x80) && ((x[3] >> 4) & 3) != 1) {
+                seen_in = 1;
+                c.ep = x[2];
+                c.mps = x[4] | x[5] << 8;
+                c.ival = x[6];
+            }
+        }
+    }
+    TAKEIN();
+#undef TAKEIN
+    if (acif < 0)
+        return 0;
+    if (!have) { /* an audio device without an input it can use: say why, for the sound command */
+        uin_note(!seen_in ? TR("das Geraet hat keinen Eingang", "the device has no input")
+                 : why[0] ? why
+                          : TR("kein passender Eingang", "no usable input"));
+        return 0;
+    }
+    if (!configured && ctrl(slot, ep0, 0 | (9 << 8), cfgv, 0, 0, 0)) {
+        uin_note("SET_CONFIGURATION");
+        return 1;
+    }
+    int hs = speed >= 3, iv = best.ival < 1 ? 1 : best.ival > 16 ? 16 : best.ival;
+    int mps = best.mps & 0x7FF, burst = hs ? (best.mps >> 11) & 3 : 0, esit = mps * (burst + 1);
+    if (esit < best.ch * best.sub) {
+        uin_note(TR("Paketgroesse zu klein", "packet size too small"));
+        return 1;
+    }
+    int dci = (best.ep & 15) * 2 + 1;
+    memset(&UIN, 0, sizeof UIN);
+    ring_new(&UIN.r, UIN_N);
+    UIN.esit = esit;
+    UIN.bsz = (esit + 63) & ~63;
+    UIN.buf = dma_alloc((u64)UIN_N * UIN.bsz);
+    memset(ictx, 0, 33 * csz);
+    memcpy(IC(1), octx, 16); /* the slot as it is now, with the entries for more endpoints */
+    IC(1)[3] = 0;
+    if ((int)((IC(1)[0] >> 27) & 31) < dci)
+        IC(1)[0] = (IC(1)[0] & 0x07FFFFFF) | (u32)dci << 27;
+    IC(0)[1] = 1 | 1u << dci;
+    u32 *e = IC(dci + 1);
+    e[0] = (u32)(hs ? iv - 1 : iv - 1 + 3) << 16 | (u32)((esit >> 16) & 255) << 24;
+    e[1] = (5 << 3) | ((u32)burst << 8) | ((u32)mps << 16);
+    u64 q = phys(UIN.r.t);
+    e[2] = q | 1;
+    e[3] = q >> 32;
+    e[4] = (u32)esit | ((u32)(esit & 0xFFFF) << 16);
+    if (command(phys(ictx), phys(ictx) >> 32, 0, (12 << 10) | ((u32)slot << 24)) < 0) {
+        uin_note(TR("Endpunkt nicht eingerichtet", "endpoint setup failed"));
+        return 1;
+    }
+    UIN.h = UH;
+    UIN.slot = slot;
+    UIN.ifn = best.ifn;
+    UIN.alt = best.alt;
+    UIN.dci = dci;
+    UIN.ch = best.ch;
+    UIN.sub = best.sub;
+    UIN.uac2 = uac2;
+    UIN.ep = best.ep;
+    UIN.rate = best.rate;
+    UIN.acif = acif;
+    UIN.nclk = nclk;
+    for (int i = 0; i < nclk; i++)
+        UIN.clk[i] = clk[i];
+    UIN.vid = cur_vid;
+    UIN.pid = cur_pid;
+    UIN.hs = hs;
+    ksnprintf(UIN.fmt, 48, "UAC%d, %d %s, %d kHz", uac2 ? 2 : 1, best.ch, TR("Kan.", "ch"),
+              best.rate / 1000);
+    UIN.on = 1;
+    return 1;
+}
 static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8 *d, int tl,
                     int cfgv) {
     int acif = -1, uac2 = 0, clk[4], nclk = 0, fu[8], nfu = 0;
@@ -847,6 +1242,7 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
                 cs[nc++] = c;                                                                      \
         }                                                                                          \
     } while (0)
+    XD("      C: Sound-Suche beginnt, %d Bytes", tl);
     for (int o = 0; o + 1 < tl && d[o]; o += d[o]) {
         const u8 *x = d + o;
         int L = x[0];
@@ -921,8 +1317,10 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
             }
         }
     }
+    XD("      D: Sound-Suche fertig");
     TAKE();
 #undef TAKE
+    XD("      Sound? Steuerung %d, UAC%d, %d Ausgaenge", acif, uac2 ? 2 : 1, nc);
     if (acif < 0)
         return 0;
     ua_found = 1;
@@ -933,6 +1331,7 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
         strlcpy_(UA.err, TR("keine passende 48-kHz-Ausgabe", "no matching 48 kHz output"), 48);
         return 1;
     }
+    XD("      Sound: Konfiguration %d", cfgv);
     if (ctrl(slot, ep0, 0 | (9 << 8), cfgv, 0, 0, 0)) {
         strlcpy_(UA.err, "SET_CONFIGURATION", 48);
         return 1;
@@ -961,6 +1360,7 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
     for (int s = 0; s < nc; s++) {
         cand *b = &cs[s];
         ust *u = &UA.st[UA.nst];
+        XD("      Sound: Ausgang %d, Schnittstelle %d/%d, Endpunkt %02x", s, b->ifn, b->alt, b->ep);
         if (uctrl(slot, ep0, 0x01 | (11 << 8), (u16)b->alt, (u16)b->ifn, 0, 0)) {
             if (!UA.nst)
                 strlcpy_(UA.err, "SET_INTERFACE", 48);
@@ -983,6 +1383,14 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
         u->nom = (u32)(((u64)48000 << 16) / UA.unitrate);
         int mps = b->mps & 0x7FF, burst = hs ? (b->mps >> 11) & 3 : 0, esit = mps * (burst + 1);
         u->maxn = esit / (b->ch * b->sub);
+        /* a packet must carry 48 kHz, or it plays too slowly (the Fluid Audio SRI-2 at 12 Mbit/s
+         * allows only 100 to 200 bytes per millisecond) */
+        if (u->maxn < (int)((48000ull * u->upt + UA.unitrate - 1) / UA.unitrate)) {
+            if (!UA.nst)
+                strlcpy_(UA.err, TR("Paketgroesse zu klein fuer 48 kHz", "packet too small for 48 kHz"),
+                         48);
+            continue;
+        }
         int need = (int)((48000ull * u->upt + UA.unitrate - 1) / UA.unitrate) + 2;
         if (u->maxn > need)
             u->maxn = need;
@@ -1036,6 +1444,7 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
             strlcpy_(UA.err, TR("Paketgroesse zu klein", "packet size too small"), 48);
         return 1;
     }
+    XD("      Sound: Lautstaerke, %d Regler", nfu);
     for (int i = 0; i < nfu; i++)
         for (int chn = 0; chn <= 2; chn++) {
             t[0] = 0;
@@ -1045,6 +1454,7 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
             uctrl(slot, ep0, 0x21 | (1 << 8), (u16)(2 << 8 | chn), (u16)(fu[i] << 8 | acif), 2, t);
         }
     IC(1)[0] = (IC(1)[0] & 0x07FFFFFF) | ((u32)top << 27);
+    XD("      Sound: Endpunkte einrichten");
     if (command(phys(ictx), phys(ictx) >> 32, 0, (12 << 10) | ((u32)slot << 24)) < 0) {
         strlcpy_(UA.err, TR("Endpunkt nicht eingerichtet", "endpoint setup failed"), 48);
         UA.nst = 0;
@@ -1062,7 +1472,9 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
     }
     char nm[40];
     ksnprintf(nm, 40, "%04x:%04x", cur_vid, cur_pid);
+    XD("      Sound: beim Mischer anmelden");
     UA.sidx = snd_add_usb(nm);
+    XD("      Sound: fertig");
     if (UA.sidx < 0) {
         strlcpy_(UA.err, TR("zu viele Soundgeraete", "too many sound devices"), 48);
         return 1;
@@ -1074,10 +1486,17 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
 static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth) {
     u32 slot;
     {
+        if (UH->stuck)
+            return;
+        XD("      Slot anfordern");
         put_trb(&cmd, 0, 0, 0, 9 << 10);
         DB(0) = 0;
         trb e;
-        if (!ev_wait(33, &e) || (e.c >> 24) != 1)
+        if (!ev_wait(33, &e)) {
+            UH->stuck = 1;
+            return;
+        }
+        if ((e.c >> 24) != 1)
             return;
         slot = e.d >> 24;
         cur_slot = slot;
@@ -1100,9 +1519,13 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     if (command(phys(ictx), phys(ictx) >> 32, 0, (11 << 10) | (slot << 24)) < 0)
         return;
     cur_step = 2;
-    static u8 *d;
-    if (!d)
-        d = dma_alloc(4096);
+    static u8 *d; /* 16 KB (webcams describe many picture sizes), not across 64 KB for the TRB */
+    if (!d) {
+        d = dma_alloc(32768);
+        u64 o = phys(d) & 0xFFFF;
+        if (o + 16384 > 0x10000)
+            d += 0x10000 - o;
+    }
     /* the device may take its time after it got its address (USB allows 2 ms, some need more) */
     udelay(10000);
     if (ctrl(slot, &ep0, 0x80 | (6 << 8), 0x100, 0, 8, d)) {
@@ -1130,18 +1553,32 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     if (ctrl(slot, &ep0, 0x80 | (6 << 8), 0x200, 0, 9, d))
         return;
     int tl = d[2] | d[3] << 8;
-    if (tl > 4096)
-        tl = 4096;
+    if (tl > 16384)
+        tl = 16384;
     if (ctrl(slot, &ep0, 0x80 | (6 << 8), 0x200, 0, tl, d))
         return;
     cur_step = 4;
+    XD("      Schritt %d: Geraet %04x:%04x Klasse %d, %d Bytes Beschreibung", 4, cur_vid, cur_pid,
+       cur_cls, tl);
+#ifdef BOOTDIAG
+    if (cur_vid == 0x3002) { /* the Fluid Audio SRI-2: its descriptor as hex, 32 bytes a line */
+        for (int o = 0; o < tl; o += 32) {
+            char hx[100];
+            int k = ksnprintf(hx, 100, "%03d:", o);
+            for (int i = o; i < tl && i < o + 32 && k < 96; i++)
+                k += ksnprintf(hx + k, 100 - k, "%02x", d[i]);
+            ui_bootstep(hx);
+        }
+    }
+#endif
     { /* the interfaces, for the usb command */
         int n = 0;
         cur_ifs[0] = 0;
-        for (int o = 0; o + 8 < tl && d[o] && n < 22; o += d[o])
+        for (int o = 0; o + 8 < tl && d[o] && n < 40; o += d[o])
             if (d[o + 1] == 4 && !d[o + 3]) /* alternate setting 0 */
                 n += ksnprintf(cur_ifs + n, (int)sizeof cur_ifs - n, "%s%d/%d/%d", n ? " " : "",
                                d[o + 5], d[o + 6], d[o + 7]);
+        XD("      A: Schnittstellen %s", cur_ifs);
     }
     int cfgv = d[5];
     int ifn = -1, epa = 0, epi = 0, eps = 8, cur = 0, boot = 0;
@@ -1159,10 +1596,25 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
             epi = d[o + 6];
         }
     }
-    if (cur_cls != 9 && !ua_found && ua_setup(slot, &ep0, octx, ictx, speed, d, tl, cfgv)) {
-        cur_ep0 = ep0;
-        return;
+    XD("      B: Tastatursuche fertig, Sound %s", ua_found ? "schon gefunden" : "noch keiner");
+    /* USB sound: the first device that plays, and the first that records (may be the same);
+     * one that does not work leaves the place to the next */
+    if (cur_cls != 9) {
+        int au = !UA.on && ua_setup(slot, &ep0, octx, ictx, speed, d, tl, cfgv);
+        int cfgd = UA.on && UA.h == UH && UA.slot == (int)slot;
+        int ai = uin_free() && uin_setup(slot, &ep0, octx, ictx, speed, d, tl, cfgv, cfgd);
+        if (ai && !UIN.on)
+            ai = 0; /* found but failed: the reason is noted */
+        if (ai && UIN.on)
+            UIN.ep0 = ep0; /* from now on only recording uses the control endpoint */
+        if (au || ai) {
+            if (ai && !au)
+                cur_kind = 4;
+            cur_ep0 = ep0;
+            return;
+        }
     }
+    XD("      kein Sound, Tastatur-Schnittstelle %d", ifn);
     /* Hub: mark the slot as a hub and power the ports */
     if (cur_cls == 9) {
         if (ctrl(slot, &ep0, 0 | (9 << 8), cfgv, 0, 0, 0))
@@ -1264,9 +1716,11 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     }
     if (ifn < 0 || !epa || usb_keyboards >= MAXK)
         return;
+    XD("      Tastatur: Konfiguration %d", cfgv);
     if (ctrl(slot, &ep0, 0 | (9 << 8), cfgv, 0, 0, 0))
         return;
     cur_step = 5;
+    XD("      Schritt %d", 5);
     /* As every PC does it: the report descriptor first (some keyboards stay silent without),
      * then boot protocol and no repeat by the keyboard. A STALL of these is not an error. */
     u8 *hd = d; /* the configuration is read, d is free again */
@@ -1313,6 +1767,7 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     usb_keyboards++;
     cur_kind = 1;
     cur_step = 6;
+    XD("      Schritt %d", 6);
 }
 /* Bookkeeping for plugging and unplugging, also behind hubs */
 static ud_t kids[48];
@@ -1345,8 +1800,15 @@ static void dev_gone(ud_t *q) {
         }
     if (q->kind == 2 && q->m)
         msc_gone(q->m);
-    if (q->kind == 4 || (ua_found && UA.h == UH && UA.slot == q->slot))
+    if (ua_found && UA.h == UH && UA.slot == q->slot)
         ua_gone();
+    for (int i = 0; i < NUIN; i++) /* a recording stops with its device */
+        if (uins[i].on && uins[i].h == UH && uins[i].slot == q->slot) {
+            uins[i].run = 0;
+            uins[i].on = 0;
+            if (urun == &uins[i])
+                urun = 0;
+        }
     if (q->kind == 1) {
         for (int i = 0; i < usb_keyboards; i++)
             if (kb[i].h == UH && kb[i].slot == q->slot) {
@@ -1375,7 +1837,10 @@ static void dev_attach(ud_t *q, int rport, int speed, u32 route, int tts, int tt
     cur_cls = -1;
     cur_step = 0;
     cur_ifs[0] = 0;
+    q->dead = 0;
+    XD("    USB-Geraet Tiefe %d Port %d: melde an", depth, rport);
     usb_dev(rport, speed, route, tts, ttp, depth);
+    XD("    USB-Geraet %04x:%04x Art %d Schritt %d", cur_vid, cur_pid, cur_kind, cur_step);
     q->step = cur_step;
     strlcpy_(q->ifs, cur_ifs, sizeof q->ifs);
     q->kind = cur_kind;
@@ -1405,10 +1870,16 @@ static void hub_poll(ud_t *q) {
     if (!b)
         b = dma_alloc(16);
     int ss = q->speed == 4;
+    if (q->dead)
+        return;
     for (int p = 1; p <= q->hn && q->kind == 3; p++) {
         waitport = q->rport;
         int r = ctrl(q->slot, &q->ep0, 0xA3, 0, p, 4, b);
         waitport = 0;
+        if (r == -2) { /* silent: leave the hub alone until it is plugged in again */
+            q->dead = 1;
+            return;
+        }
         if (r)
             continue;
         u32 st = b[0] | b[1] << 8, chg = b[2] | b[3] << 8;
@@ -1432,7 +1903,12 @@ static void hub_poll(ud_t *q) {
         int ok = 0;
         for (int i = 0; i < 100; i++) {
             udelay(10000);
-            if (ctrl(q->slot, &q->ep0, 0xA3, 0, p, 4, b))
+            int r2 = ctrl(q->slot, &q->ep0, 0xA3, 0, p, 4, b);
+            if (r2 == -2) {
+                q->dead = 1;
+                return;
+            }
+            if (r2)
                 break;
             if ((b[2] | b[3] << 8) & 0x10) {
                 ok = 1;
@@ -1467,7 +1943,7 @@ static void hub_poll(ud_t *q) {
 }
 static void port_attach(int n) {
     u32 s = PS(n);
-    if (!(s & 1))
+    if (!(s & 1) || s == 0xFFFFFFFFu || UH->stuck)
         return;
     if (!(s & 2)) {
         PS(n) = (s & 0x0E00C200) | (1 << 4);
@@ -1539,8 +2015,8 @@ static const char *ud_sp(int s) {
 }
 static void ud_line(ud_t *q, const char *pre, void (*cb)(const char *, void *), void *a) {
     char l[72];
-    ksnprintf(l, 72, "%s %s %s %04x:%04x cl%d", pre, ud_name(q), ud_sp(q->speed), q->vid, q->pid,
-              q->cls);
+    ksnprintf(l, 72, "%s %s %s %04x:%04x cl%d%s", pre, ud_name(q), ud_sp(q->speed), q->vid, q->pid,
+              q->cls, q->dead ? TR(" antwortet nicht", " not answering") : "");
     cb(l, a);
     /* interfaces, and for what did not work: how far it came */
     if (!q->kind)
@@ -1586,32 +2062,79 @@ void usb_report(void (*cb)(const char *, void *), void *a) {
     UH = sv;
     irq_on(f);
 }
+#ifdef BOOTDIAG
+int xd_on; /* waiting lines only while the controllers are set up */
+#endif
+static void xhci_init2(const pci_t *c);
 void xhci_init(const pci_t *c) {
+#ifdef BOOTDIAG
+    xd_on = 1;
+#endif
+    xhci_init2(c);
+#ifdef BOOTDIAG
+    xd_on = 0;
+#endif
+}
+static void xhci_init2(const pci_t *c) {
     if (nhc >= MAXHC)
         return;
+#ifdef SKIP15B7 /* test: leave the second USB controller of AMD Ryzen 7000 alone */
+    if (c->ven == 0x1022 && c->did == 0x15b7)
+        return;
+#endif
     UH = &hcs[nhc];
+    memset(UH, 0, sizeof *UH);
+    int pw = pci_d0(c);
+    (void)pw;
     pci_enable(c);
     u64 bar = pci_bar(c, 0);
+    XD("  xHCI: Energiezustand war D%d, Register bei %lx", pw, (unsigned long)bar);
     if (!bar)
         return;
     mmio_map(bar, 0x10000);
     cap = bar;
-    op = cap + (C32(0) & 255);
+    u32 c0 = C32(0);
+    XD("  xHCI: Kennung %08x", c0);
+    if (c0 == 0xFFFFFFFFu || !(c0 & 255) || (c0 & 255) >= 0x80)
+        return; /* the controller does not answer: leave it */
+    op = cap + (c0 & 255);
     rt = cap + (C32(0x18) & ~31u);
     db = cap + (C32(0x14) & ~3u);
     u32 hc1 = C32(0x10), hs1 = C32(4), hs2 = C32(8);
     csz = (hc1 & 4) ? 64 : 32;
-    for (u32 x = hc1 >> 16, o = x * 4; x;) {
+    /* hand-over from the firmware (BIOS legacy support), at most 64 entries inside the window */
+    for (u32 x = hc1 >> 16, o = x * 4, k = 0; x && o < 0x10000 - 4 && k < 64; k++) {
         u64 a = cap + o;
         u32 v = *(volatile u32 *)a;
         if ((v & 255) == 1) {
+            /* USB legacy support: ask the firmware for the controller (OS owned, bit 24) and
+             * wait until it lets go (BIOS owned, bit 16) */
             *(volatile u32 *)a = v | (1 << 24);
             for (int i = 0; i < 500000 && (*(volatile u32 *)a & (1 << 16)); i++)
                 udelay(2);
+            u32 v2 = *(volatile u32 *)a;
+            if (v2 & (1 << 16)) /* it does not answer: take it anyway, as Linux does */
+                *(volatile u32 *)a = (v2 & ~(1u << 16)) | (1 << 24);
+            /* and turn off the SMIs the firmware gets on USB events. Left on, the firmware
+             * keeps handling the controller behind our back and can stop the whole PC (system
+             * management mode) as soon as a device does something. Keep only the reserved
+             * bits, clear the enables, write 1 to the three event bits to clear them. */
+            volatile u32 *lc = (volatile u32 *)(a + 4);
+            u32 l0 = *lc;
+            *lc = (l0 & ((7u << 1) | (0xFFu << 5) | (7u << 17))) | (7u << 29);
+#ifdef BOOTDIAG
+            {
+                char hb[90];
+                ksnprintf(hb, 90, "USB %d: BIOS-Uebergabe %08x -> %08x  SMI %08x -> %08x", nhc + 1, v,
+                          *(volatile u32 *)a, l0, *lc);
+                ui_boothdr(hb);
+            }
+#endif
         }
         x = (v >> 8) & 255;
         o += x * 4;
     }
+    XD("  xHCI: Firmware abgeloest, halte an");
     O32(0) &= ~1u;
     for (int i = 0; i < 200000 && !(O32(4) & 1); i++)
         udelay(5);
@@ -1620,6 +2143,9 @@ void xhci_init(const pci_t *c) {
         udelay(5);
     for (int i = 0; i < 200000 && (O32(4) & (1 << 11)); i++)
         udelay(5);
+    XD("  xHCI: nach Reset Befehl %08x Status %08x", O32(0), O32(4));
+    if ((O32(0) & 2) || (O32(4) & (1 << 11)) || O32(4) == 0xFFFFFFFFu)
+        return; /* the reset does not finish: leave the controller */
     int slots = hs1 & 255, ports = hs1 >> 24;
     if (ports > MAXP)
         ports = MAXP;
@@ -1650,9 +2176,14 @@ void xhci_init(const pci_t *c) {
     O32(0) |= 1;
     for (int i = 0; i < 200000 && (O32(4) & 1); i++)
         udelay(5);
+    XD("  xHCI: laeuft, Status %08x, %d Ports", O32(4), ports);
+    if (O32(4) & 1)
+        return; /* it does not start */
 #define PKEEP 0x4F01C3E0u /* Bits that are kept when writing; not the change bits */
-    for (int n = 0; n < ports; n++) {
+    for (int n = 0; n < ports && !UH->stuck; n++) {
         u32 s = PS(n);
+        if (s == 0xFFFFFFFFu)
+            break;
         if (!(s & (1 << 9))) {
             PS(n) = (s & 0x0E00C200) | (1 << 9);
             udelay(20000);
@@ -1660,8 +2191,11 @@ void xhci_init(const pci_t *c) {
         }
         if (!(s & 1))
             continue;
+        XD("  xHCI: Port %d belegt (%08x), melde an", n + 1, s);
         pt[n].tried = 1;
         port_attach(n);
+        XD("  xHCI: Port %d: Art %d, Schritt %d, %04x:%04x%s", n + 1, pt[n].kind, pt[n].step,
+           pt[n].vid, pt[n].pid, UH->stuck ? ", Controller antwortet nicht" : "");
     }
     ready = 1;
     nhc++;
@@ -1829,7 +2363,11 @@ void xhci_poll(void) {
             continue;
         while (ev_next(&e)) {
             if (((e.d >> 10) & 63) == 32) {
-                if (UA.on && UA.h == UH && (int)(e.d >> 24) == UA.slot)
+                if (uin_is((int)(e.d >> 24), (int)((e.d >> 16) & 31)))
+                    uin_event(&e);
+                else if (((e.d >> 16) & 31) == 1)
+                    ; /* a control request that was given up already */
+                else if (UA.on && UA.h == UH && (int)(e.d >> 24) == UA.slot)
                     ua_event(&e);
                 else
                     kb_event(&e);

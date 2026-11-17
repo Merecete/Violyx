@@ -36,7 +36,21 @@ static inline u32 inl(u16 p) {
     __asm__ volatile("inl %1,%0" : "=a"(v) : "Nd"(p));
     return v;
 }
+/* Waits n microseconds. After the start measured the TSC (tsc_khz, main.c) by the clock;
+ * before that with port 0x80, which takes 1 us in QEMU but up to 7 us on some real PCs. */
+extern u64 tsc_khz;
 static inline void udelay(u32 n) {
+    if (tsc_khz) {
+        u32 lo, hi;
+        __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+        u64 t0 = (u64)hi << 32 | lo, w = (u64)n * tsc_khz / 1000;
+        for (;;) {
+            __asm__ volatile("pause");
+            __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+            if (((u64)hi << 32 | lo) - t0 >= w)
+                return;
+        }
+    }
     while (n--)
         inb(0x80);
 }
@@ -193,6 +207,7 @@ u32 pci_rd(const pci_t *, u8 off);
 void pci_wr(const pci_t *, u8 off, u32 v);
 u64 pci_bar(const pci_t *, int n);
 void pci_enable(const pci_t *);
+int pci_d0(const pci_t *);
 void usb_report(void (*)(const char *, void *), void *);
 extern int usb_hold;
 void usb_hotplug(void);
@@ -264,6 +279,25 @@ int snd_has_hdmi(void);
 void snd_report(void (*)(const char *, void *), void *);
 extern int cfg_out;
 int snd_ok(void);
+/* rec.c: recording, from USB audio (xhci.c) or HD Audio (sound.c) */
+enum { REC_USB = 1, REC_HDA = 2 };
+#define VE_BUSY (-12)
+void rec_put(short l, short r);
+int rec_active(void);
+int rec_open(void *who, int n, int *rate, char *name, int max);
+int rec_name(int n, char *, int);
+long rec_read(void *who, short *dst, u32 max);
+void rec_close(void *who);
+void rec_report(void (*)(const char *, void *), void *);
+int usb_rec_start(int n, int *rate, char *name, int max);
+void usb_rec_stop(void);
+int usb_rec_name(int n, char *, int);
+int usb_rec_alive(void);
+void usb_rec_notes(void (*cb)(const char *, void *), void *a);
+extern char usb_rec_err[64];
+int snd_rec_start(int *rate, char *name, int max);
+void snd_rec_stop(void);
+int snd_rec_name(char *, int);
 extern int cfg_vol;
 int prog_run(const char *);
 int prog_open(const char *name, const char *arg);
@@ -379,6 +413,9 @@ void ui_screen(u8 **fb, u32 *pitch, u32 *bpp, u32 *rs, u32 *gs, u32 *bs, int *x,
                int *h);
 /* shot.c: Print Screen */
 void shot_take(void);
+void ui_bootstep(const char *s);
+void ui_boothdr(const char *s);
+void ui_bootmark(int x, char c);
 int shot_save(void);
 extern char shot_note[100];
 extern u64 shot_until;
@@ -467,6 +504,7 @@ void app_chomp(void);
 void app_mines(void);
 void app_calendar(void);
 void app_clock(void);
+void app_voice(void);
 void app_view(const char *file);
 void app_snake(void);
 void app_bricks(void);

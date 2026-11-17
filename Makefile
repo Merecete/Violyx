@@ -12,7 +12,7 @@ MBSRC   = $(wildcard $(MB)/library/*.c)
 MBOBJ   = $(patsubst $(MB)/library/%.c,build/mb/%.o,$(MBSRC))
 CACERTS ?= third_party/cacert/cacert.pem
 INC     = -Ikernel/lwip_port -Ikernel/libc -I$(LW)/include -I$(MB)/include -Ikernel/mbed_port -DMBEDTLS_CONFIG_FILE='"violyx_tls_config.h"'
-OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/str.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/sound.o build/install.o build/viofs.o build/vfsname.o build/fat.o build/exfat.o build/format.o build/drives.o build/iso9660.o build/cdda.o build/cdrom.o build/clock.o build/saver.o build/prog.o build/rge.o build/wall.o build/efi.o build/shot.o $(LWOBJ)
+OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/str.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/sound.o build/install.o build/viofs.o build/vfsname.o build/fat.o build/exfat.o build/format.o build/drives.o build/iso9660.o build/cdda.o build/cdrom.o build/clock.o build/saver.o build/prog.o build/rge.o build/wall.o build/efi.o build/shot.o build/rec.o $(LWOBJ)
 all: build/violyx.img build/violyx.iso build/violyx.vdi
 build/font.h: tools/mkfont.py
 	@mkdir -p build
@@ -70,6 +70,7 @@ build/u/commands.o: system/web/web.h
 VPK_calc     = --name calc --title Rechner --cols 40 --rows 10
 VPK_calendar = --name calendar --title Kalender --cols 64 --rows 17
 VPK_clock    = --name clock --title Uhr --cols 30 --rows 16
+VPK_voice    = --name voice --title Sprachnotizen --cols 60 --rows 16
 VPK_write    = --name write --title Schreiben --cols 60 --rows 15
 VPK_view     = --name view --title Bildbetrachter --cols 42 --rows 7
 VPK_paint    = --name paint --title Malprogramm --cols 60 --rows 18
@@ -81,10 +82,11 @@ VPK_invaders = --name invaders --title Invaders --cols 64 --rows 20
 VPK_chomp    = --name chomp --title Chomp --cols 42 --rows 20
 VPK_mines    = --name mines --title Mines --cols 50 --rows 17
 VPK_cc       = --name cc --title C-Compiler --cols 76 --rows 20
-SYSPROG = calc calendar clock write view paint files commands web pong invaders chomp mines cc
+SYSPROG = calc calendar clock voice write view paint files commands web pong invaders chomp mines cc
 build/sys/calc.elf: build/u/calc.o $(URT)
 build/sys/calendar.elf: build/u/calendar.o $(URT)
 build/sys/clock.elf: build/u/clock.o $(URT)
+build/sys/voice.elf: build/u/voice.o $(URT)
 build/sys/write.elf: build/u/write.o $(URT)
 build/sys/view.elf: build/u/viewer.o build/u/decode.o $(URT)
 build/sys/paint.elf: build/u/paint.o $(URT)

@@ -17,6 +17,28 @@ void pci_wr(const pci_t *p, u8 o, u32 v) {
 void pci_enable(const pci_t *p) {
     pci_wr(p, 4, pci_rd(p, 4) | 6);
 }
+/* Wakes a device the firmware left in a power saving state (D1 to D3): there it answers
+ * register reads with all ones. Returns the state it was in. */
+int pci_d0(const pci_t *p) {
+    if (!(pci_rd(p, 4) & (1u << 20))) /* no capability list */
+        return 0;
+    u8 c = (u8)(pci_rd(p, 0x34) & 0xFC);
+    for (int n = 0; c && n < 48; n++) {
+        u32 h = pci_rd(p, c);
+        if ((h & 255) == 1) { /* power management */
+            u32 cs = pci_rd(p, (u8)(c + 4));
+            int st = (int)(cs & 3);
+            if (st) {
+                pci_wr(p, (u8)(c + 4), cs & ~3u);
+                for (int i = 0; i < 10000; i++) /* D3 to D0 takes up to 10 ms */
+                    inb(0x80);
+            }
+            return st;
+        }
+        c = (u8)((h >> 8) & 0xFC);
+    }
+    return 0;
+}
 u64 pci_bar(const pci_t *p, int n) {
     u32 l = pci_rd(p, 0x10 + n * 4);
     if (l & 1)

@@ -92,6 +92,8 @@ Mbed TLS, just like the Violyx browser does.
 
 `vx_tone(hz, ms, volume, wave, delay)` plays a tone without blocking. The volume runs from 1 to 100, the wave is `VX_SQUARE`, `VX_TRIANGLE`, `VX_SAW` or `VX_NOISE`, and the delay in milliseconds lets you queue short melodies. Without a sound card the call does nothing.
 
+`vx_rec_start(&info, input)` starts recording from input number `input` (0 is the first one, `vx_rec_input(n, name)` gives the names) and fills in the sample rate and device name. `vx_rec_read(buf, frames)` then takes 16-bit stereo frames, `vx_rec_stop()` ends it. Only one program can record at a time, the others get `VX_BUSY`. The Voice notes program shows how it works.
+
 `chip.h` adds a small chiptune player: write up to three parts as text, call `chip_play()` once and `chip_tick()` in your game loop. Novastrike and Bricks show how it works.
 
 ## Program menu

@@ -311,19 +311,184 @@ static void seven_draw(u32 ms) {
 }
 
 /* ---------- 5: synthwave sunset ---------- */
-static const char *palm[] = {
-    ".......##...##.......", "....######.######....", "..####...###...####..",
-    ".##....#######....##.", "#....###..#..###....#", "....##....#....##....",
-    "...#......#......#...", "..#.......#.......#..", "..........#..........",
-    "..........#..........", "..........##.........", "...........#.........",
-    "...........#.........", "...........##........", "............#........",
-    "............#........", "............#........", "...........##........",
-    "...........#.........", "...........#.........", "..........##.........",
-    "..........#..........", ".........###........."};
-#define PALMW 21
-#define PALMH 23
+/* A small 3D scene: the eye drives along a road over a wire frame floor, with hills at the sides
+ * and palms. Everything moves at the same speed, so it fits together. World
+ * units are 1/256: the eye is SU above the floor, and a point x, h (height), z (distance) is seen
+ * at cx + sD * x / z, hy + sD * (SU - h) / z. */
+#define SU    256
+#define CELL  128      /* the floor grid: half a unit */
+#define ROADW 240      /* half the width of the road */
+#define XN    30       /* grid columns on each side */
+#define ZFAR  (40 * SU)
+static int s_hy, s_cx, s_D, *s_lim;
+static int isqrt(long v) {
+    long r = 0, b = 1L << 40;
+    if (v <= 0)
+        return 0;
+    while (b > v)
+        b >>= 2;
+    while (b) {
+        if (v >= r + b) {
+            v -= r + b;
+            r = (r >> 1) + b;
+        } else
+            r >>= 1;
+        b >>= 2;
+    }
+    return (int)r;
+}
+/* the height of the floor: flat around the road, hills further out, different on each side */
+static int hill(int x, int zw) {
+    int ax = x < 0 ? -x : x, x0 = 3 * SU;
+    if (ax <= x0)
+        return 0;
+    int ramp = ax - x0 > 3 * SU ? 3 * SU : ax - x0;
+    int ph1 = x < 0 ? 0 : 250;
+    long v = isin((int)((long)zw * 720 / (9 * SU)) + x * 720 / (7 * SU) + ph1) +
+             isin((int)((long)zw * 720 / (5 * SU)) - x * 720 / (4 * SU) + 100 + ph1) / 2 + 4000;
+    if (v < 0)
+        return 0;
+    return (int)(v * ramp / 16384 * 2 / 5);
+}
+/* a line cut to the picture; with s_lim only where nothing nearer hides it (y above s_lim[x]) */
+static void cline(long x0, long y0, long x1, long y1, u8 c) {
+    long dx = x1 - x0, dy = y1 - y0;
+    long t0 = 0, t1 = 1 << 16; /* Liang-Barsky in 1/65536 */
+    long p[4] = {-dx, dx, -dy, dy}, q[4] = {x0, pw - 1 - x0, y0, ph - 1 - y0};
+    for (int i = 0; i < 4; i++) {
+        if (!p[i]) {
+            if (q[i] < 0)
+                return;
+            continue;
+        }
+        long t = q[i] * 65536 / p[i];
+        if (p[i] < 0) {
+            if (t > t1)
+                return;
+            if (t > t0)
+                t0 = t;
+        } else {
+            if (t < t0)
+                return;
+            if (t < t1)
+                t1 = t;
+        }
+    }
+    int ax = (int)(x0 + dx * t0 / 65536), ay = (int)(y0 + dy * t0 / 65536);
+    int bx = (int)(x0 + dx * t1 / 65536), by = (int)(y0 + dy * t1 / 65536);
+    int ddx = bx > ax ? bx - ax : ax - bx, ddy = by > ay ? ay - by : by - ay;
+    int sx = ax < bx ? 1 : -1, sy = ay < by ? 1 : -1, e = ddx + ddy;
+    for (;;) {
+        if (ax >= 0 && ay >= 0 && ax < pw && ay < ph && (!s_lim || ay < s_lim[ax]))
+            buf[ay * pw + ax] = c;
+        if (ax == bx && ay == by)
+            break;
+        int e2 = 2 * e;
+        if (e2 >= ddy) {
+            e += ddy;
+            ax += sx;
+        }
+        if (e2 <= ddx) {
+            e += ddx;
+            ay += sy;
+        }
+    }
+}
+/* a thick line: squares of w pixels along it */
+static void tline(int x0, int y0, int x1, int y1, int w, u8 c) {
+    if (w <= 1) {
+        cline(x0, y0, x1, y1, c);
+        return;
+    }
+    int n = (x1 > x0 ? x1 - x0 : x0 - x1) + (y1 > y0 ? y1 - y0 : y0 - y1);
+    if (n > 4000)
+        return;
+    for (int i = 0; i <= n; i++) {
+        int x = n ? x0 + (x1 - x0) * i / n : x0, y = n ? y0 + (y1 - y0) * i / n : y0;
+        rect(x - w / 2, y - w / 2, w, w, c);
+    }
+}
+/* palms: each one different, from a number. Drawn twice: first trunk and ribs moved a pixel
+ * towards the sun in the pink of the sky (the rim light), then all of it black on top. */
+static void palm_shape(int id, int bx, int by, int k, int side, int ox, int oy, u8 c) {
+    /* k: pixels per 256 world units */
+    u32 r = (u32)id * 2654435761u + 77;
+    rnd(&r);
+    int hp = 520 + (int)(rnd(&r) % 300);                  /* height */
+    int lean = side * 60 + (int)(rnd(&r) % 260) - 130;   /* the top leans, mostly outwards */
+    int bend = (int)(rnd(&r) % 3);                      /* how the trunk curves */
+    int nf = 6 + (int)(rnd(&r) % 3), fl = 230 + (int)(rnd(&r) % 120);
+    bx += ox;
+    by += oy;
+    /* the trunk, from the foot to the crown, thinner upwards */
+    int steps = hp * k / SU / 2 + 6, tx = bx, ty = by;
+    for (int i = 1; i <= steps; i++) {
+        long t = (long)i * 1024 / steps;                  /* 0..1024 */
+        long cv = bend == 0 ? t * t / 1024 : bend == 1 ? t : (t * t / 1024 * t / 1024);
+        int x = bx + (int)(lean * cv / 1024) * k / SU, y = by - (int)(hp * t / 1024) * k / SU;
+        int w = (int)((34 - 16 * t / 1024) * k / SU);
+        tline(tx, ty, x, y, w < 1 ? 1 : w, c);
+        tx = x;
+        ty = y;
+    }
+    /* coconuts under the crown */
+    int cn = 7 * k / SU;
+    if (cn >= 2 && !ox)
+        for (int i = -1; i <= 1; i++)
+            rect(tx + i * cn - cn / 2, ty + cn / 3, cn, cn, c);
+    /* the fronds: a curved rib with leaflets that hang down */
+    for (int j = 0; j < nf; j++) {
+        int th = -25 + j * 230 / (nf - 1) + (int)(rnd(&r) % 24) - 12; /* degrees, 90 is up */
+        int dr = 300 + (int)(rnd(&r) % 450);                          /* droop, of 1024 */
+        int L = (fl + (int)(rnd(&r) % 80)) * k / SU;                   /* length in pixels */
+        if (th > 70 && th < 110)
+            L = L * 3 / 4; /* the ones on top are shorter */
+        int cx_ = icos(th * 2), sy_ = isin(th * 2), n = L / 3 > 12 ? L / 3 : 12;
+        if (n > 60)
+            n = 60;
+        int px = tx, py = ty, rw = L / 45 + 1;
+        for (int s = 1; s <= n; s++) {
+            int x = tx + (int)((long)L * s * cx_ / n / 16384);
+            int y = ty - (int)((long)L * s * sy_ / n / 16384) + (int)((long)L * dr / 1024 * s * s / n / n);
+            tline(px, py, x, y, rw > 3 ? 3 : rw, c);
+            if (s < n && !ox) { /* the rim light only on the trunk and the ribs */
+                /* the direction of the rib, its normal pointing down, and gravity */
+                long ux = cx_, uy = -sy_ + (long)2 * dr * s * 16 / n * L / (L + 1);
+                int ul = isqrt(ux * ux + uy * uy);
+                if (!ul)
+                    ul = 1;
+                ux = ux * 1024 / ul;
+                uy = uy * 1024 / ul;
+                long nx = -uy, ny = ux;
+                if (ny < 0) {
+                    nx = -nx;
+                    ny = -ny;
+                }
+                /* longest in the middle; like a feather, both sides slanted towards the tip
+                 * and hanging a little */
+                int ll = (int)((long)L * 26 / 100 * isin(s * 300 / n + 60) / 16384);
+                for (int q = 0; q < 2; q++) {
+                    long dx = (q ? -nx * 6 / 10 : nx) + ux * 7 / 10,
+                         dy = (q ? -ny * 6 / 10 : ny) + uy * 7 / 10 + 500;
+                    int dl = isqrt(dx * dx + dy * dy);
+                    if (!dl)
+                        continue;
+                    cline(x, y, x + dx * ll / dl, y + dy * ll / dl, c);
+                }
+            }
+            px = x;
+            py = y;
+        }
+    }
+}
+typedef struct {
+    int z, kind, x, id; /* kind 1: a palm */
+} sobj;
 static void synth_draw(u32 ms) {
-    int hy = ph * 58 / 100, cx = pw / 2;
+    int hy = ph * 58 / 100, cx = pw / 2, D = ph - hy;
+    s_hy = hy;
+    s_cx = cx;
+    s_D = D;
     /* sky: deep violet to pink at the horizon */
     for (int y = 0; y < hy; y++) {
         u32 c = y < hy / 2 ? mix(0x0B0326, 0x3A0C5C, y, hy / 2)
@@ -358,7 +523,7 @@ static void synth_draw(u32 ms) {
             if (x >= 0 && x < pw)
                 buf[y * pw + x] = dith(c, x, y);
     }
-    /* mountains in front of the sun */
+    /* far mountains in front of the sun */
     for (int x = 0; x < pw; x++) {
         int d = x < cx ? cx - x : x - cx;
         int hgt = (int)((long)(isin(x * 3) + 16384) * (ph / 30) / 32768) +
@@ -368,63 +533,118 @@ static void synth_draw(u32 ms) {
             if (y >= 0)
                 buf[y * pw + x] = dith(mix(0x2A0A40, 0x14062A, y - (hy - hgt), hgt + 1), x, y);
     }
-    /* ground with the grid */
-    u8 ground = near(0x12001E), gridc = near(0xFF2FD0), roadc = near(0x1C0C30),
-       edge = near(0x2FF0FF);
+    u8 ground = near(0x12001E);
     for (int y = hy; y < ph; y++)
         memset(buf + y * pw, ground, pw);
-    int D = ph - hy, speed = (int)(ms % 1000); /* the floor runs towards the viewer */
-    for (int i = 1; i < 40; i++) {
-        /* lines at depth z = i - speed: y = horizon + D * k / z */
-        long z = (long)i * 1000 - speed;
-        if (z <= 0)
+    /* the floor as a wire frame, from near to far: what is nearer hides what is behind it */
+    long trav = (long)ms * SU / 1000; /* one unit a second */
+    int *lim = kmalloc((u64)pw * 2 * sizeof(int));
+    if (!lim)
+        return;
+    int *nl = lim + pw;
+    for (int x = 0; x < pw; x++)
+        lim[x] = ph;
+    int pxs[2 * XN + 1], pys[2 * XN + 1], qxs[2 * XN + 1], qys[2 * XN + 1], have = 0;
+    long k0 = trav / CELL + 1;
+    for (long k = k0;; k++) {
+        long zw = k * CELL, z = zw - trav;
+        if (z > ZFAR)
+            break;
+        if (z < SU / 4)
             continue;
-        int y = hy + (int)((long)D * 1000 / z);
-        if (y >= ph)
-            continue;
-        u8 c = i > 12 ? near(0x80208A) : gridc;
-        memset(buf + y * pw, c, pw);
-    }
-    for (int k = -14; k <= 14; k++) { /* lines to the vanishing point */
-        int bx = cx + k * pw / 8;
-        line(cx + k * 3, hy, bx, ph - 1, gridc);
-    }
-    /* the road: dark, with bright edges and a dashed centre line */
-    for (int y = hy + 1; y < ph; y++) {
-        int half = (y - hy) * (pw * 22 / 100) / D + 1;
-        for (int x = cx - half; x <= cx + half; x++)
-            pset(x, y, roadc);
-        pset(cx - half, y, edge);
-        pset(cx + half, y, edge);
-        long z = (long)D * 1000 / (y - hy);
-        if (((z + speed * 4) / 1500) % 2 && half > 6)
-            for (int w = -half / 30; w <= half / 30; w++)
-                pset(cx + w, y, near(0xFFE45C));
-    }
-    /* palms on both sides, from far to near: black silhouettes with a pink rim on top */
-    u8 pc = near(0x000000), rim = near(0xFF4FA0);
-    for (int i = 9; i >= 1; i--) {
-        long z = (long)i * 1400 - (ms % 2800) / 2;
-        if (z <= 100)
-            continue;
-        int gy = hy + (int)((long)D * 1000 / z), s = (int)(ph * 4000L / z); /* size in % */
-        if (gy > ph + ph / 8 || s < 8)
-            continue;
-        int half = (gy - hy) * (pw * 22 / 100) / D + 1;
-        int w = PALMW * s / 100 + 1, h = PALMH * s / 100 + 1;
-        for (int side = -1; side <= 1; side += 2) {
-            int bx = cx + side * (half + w / 2 + 2);
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++) {
-                    int u = x * PALMW / w, v = y * PALMH / h;
-                    if (side > 0)
-                        u = PALMW - 1 - u;
-                    if (palm[v][u] != '#')
-                        continue;
-                    int top = !v || palm[(y - 1 < 0 ? 0 : (y - 1) * PALMH / h)][u] != '#' || !y;
-                    pset(bx - w / 2 + x, gy - h + y, top && v < 8 ? rim : pc);
-                }
+        u8 c = near(mix(0xFF2FD0, 0x4A1060, (int)(z > 24 * SU ? 24 * SU : z), 24 * SU));
+        for (int i = 0; i <= 2 * XN; i++) {
+            int x = (i - XN) * CELL, h = hill(x, (int)zw);
+            qxs[i] = cx + (int)((long)D * x / z);
+            qys[i] = hy + (int)((long)D * (SU - h) / z);
         }
+        for (int x = 0; x < pw; x++)
+            nl[x] = lim[x];
+        /* the strip between this row and the one before: floor colour over what is behind */
+        for (int i = 0; i < 2 * XN; i++) {
+            int x0 = qxs[i], x1 = qxs[i + 1];
+            if (x1 <= x0 || x1 < 0 || x0 >= pw)
+                continue;
+            for (int x = x0 < 0 ? 0 : x0; x <= x1 && x < pw; x++) {
+                int y = qys[i] + (int)((long)(qys[i + 1] - qys[i]) * (x - x0) / (x1 - x0));
+                if (y < 0)
+                    y = 0;
+                if (y < nl[x]) {
+                    for (int yy = y; yy < lim[x] && yy < ph; yy++)
+                        buf[yy * pw + x] = ground;
+                    nl[x] = y;
+                }
+            }
+        }
+        s_lim = lim;
+        for (int i = 0; i <= 2 * XN; i++) {
+            if (have)
+                cline(pxs[i], pys[i], qxs[i], qys[i], c);
+            if (i < 2 * XN)
+                cline(qxs[i], qys[i], qxs[i + 1], qys[i + 1], c);
+        }
+        s_lim = 0;
+        for (int x = 0; x < pw; x++)
+            lim[x] = nl[x];
+        for (int i = 0; i <= 2 * XN; i++) {
+            pxs[i] = qxs[i];
+            pys[i] = qys[i];
+        }
+        have = 1;
+    }
+    kfree(lim);
+    /* the road: dark, with bright edges and a dashed centre line */
+    u8 roadc = near(0x1C0C30), edge = near(0x2FF0FF), mid = near(0xFFE45C);
+    /* far away the bright edges fade out, so the road vanishes at the horizon instead of
+     * ending in a point */
+    int fade = D / 4 > 1 ? D / 4 : 1;
+    for (int y = hy + 1; y < ph; y++) {
+        int half = (y - hy) * ROADW / SU, t = y - hy;
+        u8 ec = edge, rc = roadc;
+        if (t < fade) {
+            ec = near(mix(0x1C0C30, 0x2FF0FF, t * t, fade * fade));
+        }
+        for (int x = cx - half; x <= cx + half; x++)
+            pset(x, y, rc);
+        pset(cx - half, y, ec);
+        pset(cx + half, y, ec);
+        if (half > 2)
+            pset(cx - half + 1, y, ec);
+        if (half > 2)
+            pset(cx + half - 1, y, ec);
+        long zw = (long)D * SU / (y - hy) + trav;
+        if ((zw / (SU * 3 / 2)) % 2 && half > 6 && t >= fade / 3)
+            for (int w = -half / 40; w <= half / 40; w++)
+                pset(cx + w, y, mid);
+    }
+    /* palms on both sides of the road every three units, far ones first */
+    sobj ob[160];
+    int no = 0;
+    for (long k = trav / SU + 1; no < 150; k++) {
+        long z = k * SU - trav;
+        if (z > 32 * SU)
+            break;
+        if (z < SU / 3)
+            continue;
+        if (k % 3 == 0)
+            for (int side = -1; side <= 1; side += 2)
+                ob[no++] = (sobj){(int)z, 1, side * (ROADW + 300), (int)k * 2 + (side > 0)};
+    }
+    for (int i = 1; i < no; i++) /* far to near */
+        for (int j = i; j > 0 && ob[j].z > ob[j - 1].z; j--) {
+            sobj t = ob[j];
+            ob[j] = ob[j - 1];
+            ob[j - 1] = t;
+        }
+    u8 black = near(0x000000), rimc = near(0xFF4FA0);
+    for (int i = 0; i < no; i++) {
+        sobj *o = &ob[i];
+        int k = (int)((long)D * SU / o->z); /* pixels per unit */
+        int bx = cx + (int)((long)D * o->x / o->z), by = hy + (int)((long)D * SU / o->z);
+        int side = o->x < 0 ? -1 : 1;
+        if (k >= 24)
+            palm_shape(o->id, bx, by, k, side, -side, -1, rimc);
+        palm_shape(o->id, bx, by, k, side, 0, 0, black);
     }
 }
 

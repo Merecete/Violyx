@@ -209,9 +209,14 @@ typedef struct {
     u8 pin[8], np, cad[8];
     u32 upos;
     char uname[24];
+    /* recording: the best input pin, the converter (ADC) that reaches it, the input stream */
+    int in_c, in_afg, in_pin, in_adc, in_score, isd;
+    short *iring;
+    u32 ipos;
 } sdev;
 static sdev dv[ND];
 static int nd, ad = -1;
+static int rin = -1, rrun; /* the device that records, and whether it runs */
 int cfg_out;
 static sdev *D;
 #define R32(o) (*(volatile u32 *)(D->hb + (o)))
@@ -295,6 +300,59 @@ static int route(int c, int afg, int n, int d, u32 fmt, int dig) {
         }
     return 0;
 }
+/* Recording: is pin reachable from widget n (walking the connections from the converter)?
+ * prog: also switch the selectors and open the amplifiers on the way. */
+static int in_route(int c, int afg, int n, int pin, int d, int prog) {
+    if (n == pin)
+        return 1;
+    if (d > 5)
+        return 0;
+    u32 wc = PARM(c, n, 9);
+    int t = (wc >> 20) & 15;
+    if (t != 1 && t != 2 && t != 3)
+        return 0;
+    int l[32], m = conns(c, n, l, 32);
+    for (int i = 0; i < m; i++)
+        if (in_route(c, afg, l[i], pin, d + 1, prog)) {
+            if (prog) {
+                hcmd(c, n, 0x70500);
+                if (t != 2 && m > 1)
+                    hcmd(c, n, 0x70100 | i);
+                if (wc & 2) { /* input amplifier: 0 dB, for a mixer the input i */
+                    u32 cap = (wc & 8) ? PARM(c, n, 0x0D) : PARM(c, afg, 0x0D);
+                    int z = cap & 127, idx = t == 2 ? i : 0;
+                    hcmd(c, n, 0x30000 | 0x7000 | (u32)idx << 8 | (u32)z);
+                }
+                if (t != 1)
+                    amp_out(c, n, afg, wc);
+            }
+            return 1;
+        }
+    return 0;
+}
+static void in_pin(int c, int f, int n, u32 pc, u32 cfg) {
+    int dev = (cfg >> 20) & 15, con = cfg >> 30;
+    if (!(pc & 32) || con == 1 || (dev != 0xA && dev != 8))
+        return;
+    int score = dev == 0xA ? (con == 0 ? 3 : 2) : 1;
+    if (score <= D->in_score)
+        return;
+    u32 s = PARM(c, f, 4);
+    int a = (s >> 16) & 255, b = s & 255;
+    for (int x = a; x < a + b; x++) {
+        u32 wc = PARM(c, x, 9);
+        if (((wc >> 20) & 15) != 1 || (wc & (1 << 9)))
+            continue;
+        if (in_route(c, f, x, n, 0, 0)) {
+            D->in_c = c;
+            D->in_afg = f;
+            D->in_pin = n;
+            D->in_adc = x;
+            D->in_score = score;
+            return;
+        }
+    }
+}
 /* Audio InfoFrame: tells the display that stereo PCM is coming */
 static void infoframe(int c, int n) {
     u8 f[14] = {0x84, 0x01, 0x0A, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -342,6 +400,7 @@ static void codec(int c) {
                 continue;
             u32 pc = PARM(c, n, 0x0C), cfg = hcmd(c, n, 0xF1C00);
             int dev = (cfg >> 20) & 15, con = cfg >> 30;
+            in_pin(c, f, n, pc, cfg);
             if (!(pc & 16) || con == 1)
                 continue;
             int hd = (wc & (1 << 9)) && (pc & ((1 << 7) | (1 << 24)));
@@ -426,11 +485,36 @@ static void hda_init(const pci_t *p) {
     for (int c = 0; c < 15; c++)
         if (cads & (1u << c))
             codec(c);
-    if (!D->ana && !D->dig) {
+    if (!D->ana && !D->dig && !D->in_score) {
         R8(0x4C) = 0;
         R8(0x5C) = 0;
         return;
     }
+    if (D->in_score && iss) { /* recording: input stream 0, started by snd_rec_start */
+        D->isd = 0x80;
+        D->iring = dma_alloc(FRAMES * 4);
+        u64 *ib = dma_alloc(4096);
+        ib[0] = phys(D->iring);
+        ib[1] = FRAMES * 2;
+        ib[2] = phys(D->iring) + FRAMES * 2;
+        ib[3] = FRAMES * 2;
+        u32 isd = 0x80;
+        R8(isd) = 1;
+        for (int i = 0; i < 1000 && !(R8(isd) & 1); i++)
+            udelay(10);
+        R8(isd) = 0;
+        for (int i = 0; i < 1000 && (R8(isd) & 1); i++)
+            udelay(10);
+        R32(isd + 0x18) = (u32)phys(ib);
+        R32(isd + 0x1C) = (u32)(phys(ib) >> 32);
+        R32(isd + 8) = FRAMES * 4;
+        R16(isd + 0xC) = 1;
+        R16(isd + 0x12) = 0x11;
+        R8(isd + 2) = 0x20; /* stream 2; playback has 1 */
+        if (rin < 0)
+            rin = nd;
+    } else
+        D->in_score = 0;
     u32 sd = 0x80 + (u32)iss * 0x20;
     D->sd = (int)sd;
     D->ring = dma_alloc(FRAMES * 4);
@@ -452,7 +536,7 @@ static void hda_init(const pci_t *p) {
     R16(sd + 0x12) = 0x11;
     R8(sd + 2) = 0x10;
     R8(sd) = 2;
-    D->kind = S_HDA;
+    D->kind = D->ana || D->dig ? S_HDA : S_NONE; /* only an input: not for playing */
     D->ven = p->ven;
     D->did = p->did;
     nd++;
@@ -599,6 +683,7 @@ void snd_report(void (*cb)(const char *, void *), void *a) {
     if (!any) {
         cb(TR("Keine Soundkarte gefunden", "No sound card found"), a);
         usb_audio_info(cb, a, 1);
+        rec_report(cb, a);
         return;
     }
     for (int i = 0; i < nd; i++) {
@@ -646,9 +731,90 @@ void snd_report(void (*cb)(const char *, void *), void *a) {
     }
     usb_audio_info(cb, a, 1);
     cb(TR("Ausgang waehlen: Einstellungen, Ausgabe", "Choose the output: Settings, Output"), a);
+    rec_report(cb, a);
 }
 /* From the timer: fills the ring up to a little ahead of the play position */
+/* ---------- Recording from HD Audio ---------- */
+int snd_rec_name(char *o, int max) {
+    if (rin < 0)
+        return 0;
+    sdev *d = &dv[rin];
+    ksnprintf(o, max, "%s (%s)", d->in_score == 3 ? TR("Mikrofonbuchse", "microphone jack")
+                                 : d->in_score == 2 ? TR("eingebautes Mikrofon", "built-in microphone")
+                                                    : "Line-In",
+              d->ven == 0x8086 ? "Intel HDA" : d->ven == 0x1022 ? "AMD HDA" : "HD Audio");
+    return 1;
+}
+int snd_rec_start(int *rate, char *name, int max) {
+    if (rin < 0)
+        return -1;
+    sdev *sv = D;
+    D = &dv[rin];
+    int c = D->in_c, f = D->in_afg, pin = D->in_pin, adc = D->in_adc;
+    hcmd(c, f, 0x70500);
+    hcmd(c, pin, 0x70500);
+    in_route(c, f, adc, pin, 0, 1);
+    /* the pin: input on, for a microphone the bias voltage (80 %, else 50 %) */
+    u32 pc = PARM(c, pin, 0x0C), cfg = hcmd(c, pin, 0xF1C00);
+    u32 ctl = 0x20;
+    if (((cfg >> 20) & 15) == 0xA)
+        ctl |= (pc & (1 << 12)) ? 4 : (pc & (1 << 9)) ? 1 : 0;
+    hcmd(c, pin, 0x70700 | ctl);
+    u32 wc = PARM(c, pin, 9);
+    if (wc & 2) { /* the boost of the pin: about +20 dB for a microphone, 0 for line in */
+        u32 cap = (wc & 8) ? PARM(c, pin, 0x0D) : PARM(c, f, 0x0D);
+        int steps = (cap >> 8) & 127, g = ((cfg >> 20) & 15) == 0xA ? (steps < 2 ? steps : 2) : 0;
+        hcmd(c, pin, 0x30000 | 0x7000 | (u32)g);
+    }
+    hcmd(c, adc, 0x70500);
+    hcmd(c, adc, 0x20000 | 0x11);  /* 48 kHz, 16 bit, stereo */
+    hcmd(c, adc, 0x70600 | 0x20); /* stream 2, channel 0 */
+    u32 awc = PARM(c, adc, 9);
+    if (awc & 2) {
+        u32 cap = (awc & 8) ? PARM(c, adc, 0x0D) : PARM(c, f, 0x0D);
+        hcmd(c, adc, 0x30000 | 0x7000 | (cap & 127));
+    }
+    memset(D->iring, 0, FRAMES * 4);
+    u32 isd = (u32)D->isd;
+    R8(isd + 3) = 0x1C; /* clear the status bits */
+    R8(isd) = 2;         /* run */
+    D->ipos = 0;
+    rrun = 1;
+    snd_rec_name(name, max);
+    *rate = RATE;
+    D = sv;
+    return 0;
+}
+void snd_rec_stop(void) {
+    if (rin < 0 || !rrun)
+        return;
+    rrun = 0;
+    sdev *sv = D;
+    D = &dv[rin];
+    R8(D->isd) = 0;
+    hcmd(D->in_c, D->in_pin, 0x70700); /* input off */
+    D = sv;
+}
+/* new frames of the input stream into the recording ring; in the timer */
+static void rec_tick(void) {
+    sdev *d = &dv[rin];
+    u32 pos = (*(volatile u32 *)(d->hb + d->isd + 4) / 4) % FRAMES;
+    while (d->ipos != pos) {
+        rec_put(d->iring[d->ipos * 2], d->iring[d->ipos * 2 + 1]);
+        d->ipos = (d->ipos + 1) % FRAMES;
+    }
+}
+static void snd_tick_(void);
+/* From the timer. It works on D, so it gives D back as it found it: the interrupted code (the
+ * sound command, a program starting a recording) may be in the middle of using it. */
 void snd_tick(void) {
+    sdev *sv = D;
+    snd_tick_();
+    D = sv;
+}
+static void snd_tick_(void) {
+    if (rrun)
+        rec_tick();
     if (!kind || ad < 0)
         return;
     D = &dv[ad];

@@ -896,6 +896,8 @@ static void status(void) {
     char v[24];
     ksnprintf(v, 24, "VIOLYX %s", VERSION);
     text(W - (int)strlen(v) - 1, H - 1, AT(C_RAISE, C_NEON), v);
+    if (rec_active()) /* a program records: always to be seen */
+        text(W - (int)strlen(v) - 7, H - 1, AT(C_HOT, C_VOID), " REC ");
     if (ticks < shot_until) { /* a screenshot was saved */
         fill(0, H - 1, W - (int)strlen(v) - 2, 1, ' ', A_BAR);
         text(1, H - 1, A_BARK, shot_note);
@@ -1630,7 +1632,40 @@ void ui_show(void) {
     cx = -1;
     present();
 }
+/* Diagnosis build (make EXTRA=-DBOOTDIAG): each step of the start as a line on the screen,
+ * shown at once, so the last line tells where a PC stops */
+static int boot_hdr; /* lines at the top that stay (the hand-over of the USB controllers) */
+void ui_bootstep(const char *s) {
+    static int row;
+    if (row < boot_hdr)
+        row = boot_hdr;
+    if (row >= H - 1) {
+        fill(0, boot_hdr, W, H - boot_hdr, ' ', AT(C_VOID, C_LAV));
+        row = boot_hdr;
+    }
+    text(0, row++, AT(C_VOID, C_LAV), s);
+    present();
+}
+void ui_boothdr(const char *s) {
+    if (boot_hdr >= 6)
+        return;
+    fill(0, boot_hdr, W, 1, ' ', AT(C_VOID, C_HOT));
+    text(0, boot_hdr++, AT(C_VOID, C_HOT), s);
+    present();
+}
+void ui_bootmark(int x, char c) { /* the poll running now, at the bottom right */
+    put(W - 8 + x, H - 1, (u8)c, AT(C_HOT, C_VOID));
+    present();
+}
 void ui_splash(void) {
+#ifdef BOOTDIAG
+    ui_bootstep("Start fertig, warte 10 s (unten rechts: U=USB C=CD P=Programme N=Netz)");
+    u64 e0 = ticks + 1000;
+    key_t k0;
+    while (ticks < e0 && !key_poll(&k0))
+        idle();
+    return;
+#endif
     static const char *l[] = {
         "#   #  ###   ###   #     #   #  #   #", "#   #   #   #   #  #      # #    # # ",
         "#   #   #   #   #  #       #      #  ", " # #    #   #   #  #       #     # # ",

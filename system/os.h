@@ -234,6 +234,36 @@ void drive_format(const char *);
 int wall_open_file(const char *);
 int wall_use(const u8 *);
 void reboot(void);
+void ui_bgframes(int on); /* picture steps also in the background */
+/* Recording (see vx_rec_start in the SDK): rate and device name, then 16-bit stereo frames */
+typedef struct {
+    int rate;
+    char name[40];
+} rec_info;
+static inline long rec_start(rec_info *i, int input) {
+    return vx_sys(33, 0, (long)i, input);
+}
+static inline int rec_input(int n, char name[40]) {
+    return (int)vx_sys(33, 3, (long)name, n);
+}
+static inline long rec_read(short *f, long n) {
+    return vx_sys(33, 1, (long)f, n);
+}
+static inline void rec_stop(void) {
+    vx_sys(33, 2, 0, 0);
+}
+static inline long snd_stream(const short *f, long n) { /* 48 kHz stereo; frames taken */
+    return vx_sys(22, (long)f, n, 0);
+}
+static inline void snd_stream_flush(void) {
+    vx_sys(23, 0, 0, 0);
+}
+static inline long fsx_append(const char *p, const void *b, u64 n) {
+    return vx_sys(31, (long)p, (long)b, (long)n);
+}
+static inline long fsx_free(const char *p) {
+    return vx_sys(32, (long)p, 0, 0);
+}
 static inline void snd_tone(int hz, int ms, int vol, int wave, int delay) {
     vx_sys(21, hz, ms, (long)(vol & 255) | (long)(wave & 15) << 8 | (long)(delay & 0xFFFF) << 16);
 }

@@ -442,6 +442,12 @@ void ui_screen(int *w, int *h) {
 void ui_background(int on) {
     vx_sys(S_CTL, on ? 2 : 17, 0, 0);
 }
+/* Picture steps also behind other windows, for recording and playing (voice notes) */
+static int bgframes;
+void ui_bgframes(int on) {
+    bgframes = on;
+    ui_background(on);
+}
 __attribute__((weak)) void prog_reopen(void) {
 }
 /* Events: keys, picture steps (25 a second while in front) and the once a second tick */
@@ -462,7 +468,7 @@ static void run(void) {
         }
         const app_t *a = win.app;
         long now = vx_sys(7, 0, 0, 0), to = -1;
-        int front = a->frame ? win_front() : 0;
+        int front = a->frame ? win_front() || bgframes : 0;
         if (a->frame)
             to = front ? (nf > now ? nf - now : 0) : 200;
         if (a->tick) {
@@ -484,7 +490,7 @@ static void run(void) {
             dirty = 1;
         }
         now = vx_sys(7, 0, 0, 0);
-        if (a->frame && now >= nf && win_front()) {
+        if (a->frame && now >= nf && (win_front() || bgframes)) {
             nf = now + 40;
             a->frame(&win);
             dirty = 1;
