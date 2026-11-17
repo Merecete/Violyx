@@ -1,6 +1,6 @@
 # Violyx
 
-**A keyboard-only 64-bit operating system for x86 PCs, with a retro text desktop in glowing violet.**
+**A keyboard-only 64-bit operating system for x86 PCs, with a retro desktop in glowing violet.**
 
 Violyx is written from scratch, with its own kernel, drivers, file system and programs. There is no
 Linux underneath. It boots on BIOS and UEFI, goes online, plays music and games, all without a
