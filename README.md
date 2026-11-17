@@ -27,6 +27,7 @@ used for the build tools.
 
 - Windowed text desktop, controlled entirely by keyboard, with colour schemes and screen savers
 - Screenshots with the Print Screen key, saved as PNG in the home folder
+- Voice notes from a microphone, on the mainboard or over USB
 - Web browser with HTTPS, images, tabs, bookmarks and downloads
 - Write, Files, Commands, Calculator, Calendar, Clock, Image viewer and Paint
 - XZN music player for MP3, OGG, FLAC, WAV, AIFF, WavPack, DSD, AC3 and more, plays audio CDs and
