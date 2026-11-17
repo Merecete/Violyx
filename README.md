@@ -18,7 +18,7 @@ used for the build tools.
 
 | | | |
 |---|---|---|
-| ![Violet](docs/violyx-violet.png) | ![Ruby](docs/violyx-ruby.png) | ![Ocean](docs/violyx-ocean.png) |
+| ![Violet](docs/violyx-ocean.png) | ![Ruby](docs/violyx-emerald.png) | ![Ocean](docs/violyx-graphite.png) |
 
 > Experimental hobby project, version 0.3.2. Please do not enter passwords or use it for anything
 > sensitive.
