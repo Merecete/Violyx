@@ -374,6 +374,14 @@ static int log2i(int v) {
     }
     return n;
 }
+/* the next power of two, at least 64 and at most 4096: buffers of this size side by side from
+ * the start of a page never cross a page, and so never a 64 KB boundary */
+static int pow2_64(int n) {
+    int p = 64;
+    while (p < n && p < 4096)
+        p <<= 1;
+    return p;
+}
 /* Bulk-only transport */
 static int bulk(msc_t *m, int in, void *b, u32 len, int *cc) {
     ring *r = in ? &m->ri : &m->ro;
@@ -882,7 +890,7 @@ static void ua_gone(void) {
 typedef struct {
     hc_t *h;
     int slot, on, run, ifn, alt, dci, ch, sub, uac2, ep, rate, acif, nclk, clk[4], vid, pid;
-    int esit, bsz, out, errs, lastcc, hs;
+    int esit, bsz, bcap, out, errs, lastcc, hs;
     ring r, ep0;
     u8 *buf;
     u64 got;
@@ -1078,7 +1086,7 @@ static int uin_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u
                           c.rate);                                                                 \
         }                                                                                          \
     } while (0)
-    for (int o = 0; o + 1 < tl && d[o]; o += d[o]) {
+    for (int o = 0; o + 1 < tl && d[o] >= 2 && o + d[o] <= tl; o += d[o]) {
         const u8 *x = d + o;
         int L = x[0];
         if (x[1] == 4 && L >= 9) {
@@ -1172,11 +1180,29 @@ static int uin_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u
         return 1;
     }
     int dci = (best.ep & 15) * 2 + 1;
+    u8 *keepb = UIN.buf;
+    int keepc = UIN.bcap;
+    trb *keepr = UIN.r.t;
     memset(&UIN, 0, sizeof UIN);
-    ring_new(&UIN.r, UIN_N);
+    if (keepr) { /* this place held an input before: use its memory again */
+        memset(keepr, 0, UIN_N * sizeof(trb));
+        UIN.r.t = keepr;
+        UIN.r.n = UIN_N;
+        UIN.r.cy = 1;
+        u64 rp = phys(keepr);
+        keepr[UIN_N - 1].a = rp;
+        keepr[UIN_N - 1].b = rp >> 32;
+        keepr[UIN_N - 1].d = (6 << 10) | 2;
+    } else
+        ring_new(&UIN.r, UIN_N);
+    UIN.buf = keepb;
+    UIN.bcap = keepc;
     UIN.esit = esit;
-    UIN.bsz = (esit + 63) & ~63;
-    UIN.buf = dma_alloc((u64)UIN_N * UIN.bsz);
+    UIN.bsz = pow2_64(esit); /* within one page each, so never across a 64 KB boundary */
+    if (!UIN.buf || UIN.bcap < UIN_N * UIN.bsz) { /* the buffer of a device unplugged before */
+        UIN.buf = dma_alloc((u64)UIN_N * UIN.bsz);
+        UIN.bcap = UIN_N * UIN.bsz;
+    }
     memset(ictx, 0, 33 * csz);
     memcpy(IC(1), octx, 16); /* the slot as it is now, with the entries for more endpoints */
     IC(1)[3] = 0;
@@ -1243,7 +1269,7 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
         }                                                                                          \
     } while (0)
     XD("      C: Sound-Suche beginnt, %d Bytes", tl);
-    for (int o = 0; o + 1 < tl && d[o]; o += d[o]) {
+    for (int o = 0; o + 1 < tl && d[o] >= 2 && o + d[o] <= tl; o += d[o]) {
         const u8 *x = d + o;
         int L = x[0];
         if (x[1] == 4 && L >= 9) {
@@ -1396,7 +1422,7 @@ static int ua_setup(int slot, ring *ep0, u8 *octx, u8 *ictx, int speed, const u8
             u->maxn = need;
         if (u->maxn < 1)
             continue;
-        u->bsz = (u->maxn * b->ch * b->sub + 63) & ~63;
+        u->bsz = pow2_64(u->maxn * b->ch * b->sub); /* in one page: never across 64 KB */
         u->dci = (b->ep & 15) * 2;
         u->fdci = (u->async && b->fb && b->fbmps) ? (b->fb & 15) * 2 + 1 : 0;
         ring_new(&u->r, URN);
@@ -1555,6 +1581,11 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     int tl = d[2] | d[3] << 8;
     if (tl > 16384)
         tl = 16384;
+    if (tl < 9)
+        tl = 9;
+    /* empty first: a device that sends less leaves zeros, not what the last device sent, and
+     * the parsers below that read a few bytes past a descriptor find zeros there too */
+    memset(d, 0, (size_t)tl + 256);
     if (ctrl(slot, &ep0, 0x80 | (6 << 8), 0x200, 0, tl, d))
         return;
     cur_step = 4;
@@ -1574,7 +1605,7 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     { /* the interfaces, for the usb command */
         int n = 0;
         cur_ifs[0] = 0;
-        for (int o = 0; o + 8 < tl && d[o] && n < 40; o += d[o])
+        for (int o = 0; o + 8 < tl && d[o] >= 2 && o + d[o] <= tl && n < 40; o += d[o])
             if (d[o + 1] == 4 && !d[o + 3]) /* alternate setting 0 */
                 n += ksnprintf(cur_ifs + n, (int)sizeof cur_ifs - n, "%s%d/%d/%d", n ? " " : "",
                                d[o + 5], d[o + 6], d[o + 7]);
@@ -1582,7 +1613,7 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     }
     int cfgv = d[5];
     int ifn = -1, epa = 0, epi = 0, eps = 8, cur = 0, boot = 0;
-    for (int o = 0; o + 1 < tl && d[o]; o += d[o]) {
+    for (int o = 0; o + 1 < tl && d[o] >= 2 && o + d[o] <= tl; o += d[o]) {
         if (d[o + 1] == 4) {
             /* a keyboard: HID with protocol 1, best with the boot subclass */
             cur = d[o + 5] == 3 && d[o + 7] == 1 && !d[o + 3] && ifn < 0;
@@ -1644,7 +1675,7 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     /* USB storage: class 8, SCSI, bulk-only */
     /* subclass 6 is SCSI; CD/DVD drives often say 2 (ATAPI) or 5 (SFF-8070i) */
     int msi = -1, mi = 0, mo = 0, mpi = 0, mpo = 0, bi = 0, bo = 0, in_ms = 0, last = 0, msub = 6;
-    for (int o = 0; o + 1 < tl && d[o]; o += d[o]) {
+    for (int o = 0; o + 1 < tl && d[o] >= 2 && o + d[o] <= tl; o += d[o]) {
         if (d[o + 1] == 4) {
             in_ms = d[o + 5] == 8 && (d[o + 6] == 6 || d[o + 6] == 2 || d[o + 6] == 5) &&
                     d[o + 7] == 0x50;
@@ -1688,7 +1719,11 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
         ring_new(&m->ri, 64);
         ring_new(&m->ro, 64);
         m->buf = dma_alloc(4096);
-        m->big = dma_alloc(2 << 16);
+        { /* 64 KB at a time, which must not cross a 64 KB boundary in memory (xHCI) */
+            u8 *raw = dma_alloc(2 << 16);
+            u64 off = phys(raw) & 0xFFFF;
+            m->big = off ? raw + (0x10000 - off) : raw;
+        }
         m->big = (u8 *)(((u64)m->big + 0xFFFF) & ~0xFFFFull);
         m->cbw = dma_alloc(64);
         m->atapi = msub != 6;

@@ -752,6 +752,7 @@ void proc_syscall(regs *r) {
                 }
                 int r = 0;
                 char nm[40];
+                memset(nm, 0, sizeof nm); /* nothing of the kernel's stack to the program */
                 v = rec_open(p, (int)c, &r, nm, sizeof nm);
                 if (!v) {
                     *(int *)b = r;
@@ -768,6 +769,7 @@ void proc_syscall(regs *r) {
                 v = 0;
             } else if (a == 3) {
                 char nm[40];
+                memset(nm, 0, sizeof nm);
                 if (!uok(p, b, 40, 1)) {
                     v = VE_INVAL;
                     break;

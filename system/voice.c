@@ -239,6 +239,7 @@ static void stop_rec(vn_t *v) {
     make_wav(v, v->raw, v->rate, v->file);
 }
 static void stop_play(vn_t *v);
+static void rescue(vn_t *v);
 static void note_name(char *o, int n, const char *what) {
     rtc_t t;
     rtc_read(&t);
@@ -252,6 +253,7 @@ static void start_rec(vn_t *v) {
         say(v, TR("Kein Platz mehr in /home", "No room left in /home"));
         return;
     }
+    rescue(v); /* raw data kept from a recording that could not be saved: a note first */
     rec_info ri;
     long r = rec_start(&ri, v->input);
     if (r < 0) {

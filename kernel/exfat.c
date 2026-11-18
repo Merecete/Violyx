@@ -332,7 +332,7 @@ static int finish(xset *s) {
     if (s->n < 3 || s->e[1][0] != 0xC0 || setsum(s->e, s->n) != R16(s->e[0], 2))
         return 0;
     int l = s->e[1][3], nn = (l + 14) / 15;
-    if (!l || 2 + nn > s->n)
+    if (!l || l > VFS_NAME || 2 + nn > s->n) /* exFAT allows 255, the buffer holds VFS_NAME */
         return 0;
     int k = 0;
     for (int i = 0; i < nn; i++) {
@@ -341,8 +341,6 @@ static int finish(xset *s) {
         for (int j = 0; j < 15 && k < l; j++, k++)
             s->name[k] = (char)u2cp(R16(s->e[2 + i], 2 + j * 2));
     }
-    if (l > VFS_NAME)
-        return 0;
     s->name[l] = 0;
     return 1;
 }

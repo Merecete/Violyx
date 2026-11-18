@@ -1,3 +1,3 @@
 #pragma once
 /* The one place for the version number: kernel and system programs */
-#define VERSION "0.3.3"
+#define VERSION "0.3.4"
