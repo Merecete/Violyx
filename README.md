@@ -1,6 +1,6 @@
 # Violyx
 
-**A keyboard-only 64-bit operating system for x86 PCs, with a retro text desktop in glowing violet.**
+**A keyboard-only 64-bit operating system for x86 PCs, with a retro desktop in glowing violet.**
 
 Violyx is written from scratch, with its own kernel, drivers, file system and programs. There is no
 Linux underneath. It boots on BIOS and UEFI, goes online, plays music and games, all without a
@@ -18,15 +18,16 @@ used for the build tools.
 
 | | | |
 |---|---|---|
-| ![Violet](docs/violyx-violet.png) | ![Ruby](docs/violyx-ruby.png) | ![Ocean](docs/violyx-ocean.png) |
+| ![Violet](docs/violyx-ocean.png) | ![Ruby](docs/violyx-emerald.png) | ![Ocean](docs/violyx-graphite.png) |
 
-> Experimental hobby project, version 0.3.2. Please do not enter passwords or use it for anything
+> Experimental hobby project, version 0.3.3. Please do not enter passwords or use it for anything
 > sensitive.
 
 ## What's inside
 
 - Windowed text desktop, controlled entirely by keyboard, with colour schemes and screen savers
 - Screenshots with the Print Screen key, saved as PNG in the home folder
+- Voice notes from a microphone, on the mainboard or over USB
 - Web browser with HTTPS, images, tabs, bookmarks and downloads
 - Write, Files, Commands, Calculator, Calendar, Clock, Image viewer and Paint
 - XZN music player for MP3, OGG, FLAC, WAV, AIFF, WavPack, DSD, AC3 and more, plays audio CDs and
