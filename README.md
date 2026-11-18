@@ -20,7 +20,7 @@ used for the build tools.
 |---|---|---|
 | ![Violet](docs/violyx-ocean.png) | ![Ruby](docs/violyx-emerald.png) | ![Ocean](docs/violyx-graphite.png) |
 
-> Experimental hobby project, version 0.3.3. Please do not enter passwords or use it for anything
+> Experimental hobby project, version 0.3.4. Please do not enter passwords or use it for anything
 > sensitive.
 
 ## What's inside
