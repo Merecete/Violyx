@@ -78,6 +78,7 @@ void isr_handler(regs *r) {
     if (r->no == 32) {
         ticks++;
         xhci_poll();
+        usb2_poll();
         snd_tick();
     } else if (r->no == 33)
         kbd_irq();
@@ -98,6 +99,7 @@ void isr_handler(regs *r) {
 void idle(void) {
     MARK(0, 'U');
     usb_hotplug();
+    usb2_hotplug();
     MARK(0, 'C');
     cd_poll();
     MARK(0, 'P');
@@ -114,6 +116,7 @@ void idle(void) {
     ticks = (rdtsc() - tsc0) / tsc_tick;
     __asm__("cli");
     xhci_poll();
+    usb2_poll();
     __asm__("sti");
     net_poll();
 }
@@ -167,6 +170,21 @@ static void cpu_init(void) {
     outb(0x40, div & 255);
     outb(0x40, div >> 8);
 }
+/* memory below 4 GB for controllers that only take 32-bit addresses (UHCI, OHCI and many EHCI),
+ * for when the heap lies above: the largest other free range down there */
+static u64 low_base, low_len;
+void *dma32_alloc(size_t n) {
+    void *p = dma_alloc(n);
+    if (phys(p) + n <= 0x100000000ull)
+        return p;
+    u64 a = (low_base + 4095) & ~4095ull;
+    if (!low_len || a + n > low_base + low_len)
+        return 0;
+    low_len -= a + n - low_base;
+    low_base = a + n;
+    memset((void *)(a + hhdm), 0, n);
+    return (void *)(a + hhdm);
+}
 static void mem_init(void) {
     struct limine_memmap_response *m = mmreq.response;
     u64 best = 0, len = 0;
@@ -182,6 +200,18 @@ static void mem_init(void) {
     }
     if (len < (1 << 22))
         panic(TR("Zu wenig Speicher", "Not enough memory"));
+    for (u64 i = 0; i < m->entry_count; i++) {
+        struct limine_memmap_entry *e = m->entries[i];
+        u64 b = e->base, l = e->length;
+        if (e->type != LIMINE_MEMMAP_USABLE || b == best || b >= 0x100000000ull)
+            continue;
+        if (b + l > 0x100000000ull)
+            l = 0x100000000ull - b;
+        if (l > low_len) {
+            low_base = b;
+            low_len = l;
+        }
+    }
     heap_init(best + hhdm, best + hhdm + len);
 }
 /* Device registers (MMIO) are mapped 1:1 and uncached in the lower half. This happens per device,
@@ -506,11 +536,15 @@ void kmain(void) {
             nvme_init(&d[i]);
         else if (d[i].cls == 0xC && d[i].sub == 3 && d[i].pif == 0x30)
             xhci_init(&d[i]);
+        else if (d[i].cls == 0xC && d[i].sub == 3 && (d[i].pif == 0x20 || d[i].pif == 0x10 || d[i].pif == 0))
+            usb2_add(&d[i]); /* EHCI, OHCI, UHCI: started below, EHCI first */
         else if (d[i].cls == 2 && d[i].sub == 0 && d[i].ven == 0x8086 &&
                  (d[i].did == 0x100E || d[i].did == 0x100F || d[i].did == 0x1004 ||
                   d[i].did == 0x10D3))
             e1000_init(&d[i]);
     }
+    STEP("USB 2");
+    usb2_start();
     STEP("IDE");
     ide_probe();
 #ifdef FAKECD

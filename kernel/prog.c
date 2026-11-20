@@ -36,6 +36,15 @@ static int nulstr(const char *s, int n, int minlen) {
             return 0;
     return i < n && i >= minlen;
 }
+/* A picture icon (from Violyx 0.3.5 on): 24x24 pixels at the end of the package, inside the
+ * part of the ELF file, so that older versions still take the package and show its text icon.
+ * At 128 in the header: "ICN1" and where the pixels start. */
+static int vpk_icon(const u8 *b, u32 *off) {
+    if (memcmp(b + 128, "ICN1", 4))
+        return 0;
+    *off = b[132] | (u32)b[133] << 8 | (u32)b[134] << 16 | (u32)b[135] << 24;
+    return 1;
+}
 static int vpk_check(const u8 *b, u64 n) {
     if (n < VPK_HDR + 64 || n > VPK_MAX)
         return 0;
@@ -57,6 +66,9 @@ static int vpk_check(const u8 *b, u64 n) {
     for (int i = 0; i < 3; i++)
         if (!nulstr(h->icon[i], 7, 0))
             return 0;
+    u32 io;
+    if (vpk_icon(b, &io) && (io < VPK_HDR + 64 || (u64)io + 576 != n))
+        return 0;
     return 1;
 }
 typedef struct {
@@ -133,37 +145,71 @@ static int elf_check(const u8 *b, u64 n, u64 *entry, seg_t *s, int *ns) {
 #define PTE_NX (1ull << 63)
 #define PA     0x000FFFFFFFFFF000ull
 #define SLOT   200
-static u64 pool_next, pool_end;
-static void *pg_free_list;
+/* The pages of programs come from blocks of 8 MB taken from the heap as they are needed. A
+ * block goes back to the heap as soon as none of its pages is used any more, so that a program
+ * that has ended leaves no memory behind. At least 32 MB of the heap stay for the kernel. */
+#define CHUNK    (8ull << 20)
+#define NCHUNK   64
+#define KRESERVE (32ull << 20)
+typedef struct {
+    u8 *raw;   /* from kmalloc */
+    u64 base;  /* first page */
+    u32 next;  /* pages not handed out yet, from the start */
+    u32 used;  /* pages in use */
+    void *fl;  /* pages given back */
+} chunk_t;
+static chunk_t pgc[NCHUNK];
+#define CPAGES ((u32)(CHUNK / 4096) - 1)
 static void *pg_alloc(void) {
-    void *p;
-    if (pg_free_list) {
-        p = pg_free_list;
-        pg_free_list = *(void **)p;
-    } else {
-        if (pool_next >= pool_end) {
-            if (pool_end)
-                return 0;
-            u64 f = heap_free() / 2;
-            if (f > (256ull << 20))
-                f = 256ull << 20;
-            if (f < (16ull << 20))
-                return 0;
-            u8 *m = kmalloc(f);
-            if (!m)
-                return 0;
-            pool_next = ((u64)m + 4095) & ~4095ull;
-            pool_end = ((u64)m + f) & ~4095ull;
-        }
-        p = (void *)pool_next;
-        pool_next += 4096;
+    void *p = 0;
+    chunk_t *c = 0;
+    for (int i = 0; i < NCHUNK && !p; i++) {
+        c = &pgc[i];
+        if (!c->raw)
+            continue;
+        if (c->fl) {
+            p = c->fl;
+            c->fl = *(void **)p;
+        } else if (c->next < CPAGES)
+            p = (void *)(c->base + 4096ull * c->next++);
     }
+    if (!p) {
+        if (heap_free() < CHUNK + KRESERVE)
+            return 0;
+        for (int i = 0; i < NCHUNK && !p; i++) {
+            c = &pgc[i];
+            if (c->raw)
+                continue;
+            if (!(c->raw = kmalloc(CHUNK)))
+                return 0;
+            c->base = ((u64)c->raw + 4095) & ~4095ull;
+            c->next = 1;
+            c->used = 0;
+            c->fl = 0;
+            p = (void *)c->base;
+        }
+        if (!p)
+            return 0;
+    }
+    c->used++;
     memset(p, 0, 4096);
     return p;
 }
 static void pg_put(void *p) {
-    *(void **)p = pg_free_list;
-    pg_free_list = p;
+    u64 a = (u64)p;
+    for (int i = 0; i < NCHUNK; i++) {
+        chunk_t *c = &pgc[i];
+        if (!c->raw || a < c->base || a >= c->base + 4096ull * CPAGES)
+            continue;
+        if (--c->used == 0) { /* the whole block is free again: back to the heap */
+            kfree(c->raw);
+            c->raw = 0;
+            return;
+        }
+        *(void **)p = c->fl;
+        c->fl = p;
+        return;
+    }
 }
 #define V(e) ((u64 *)(((e) & PA) + hhdm_off()))
 static u64 *walk(u64 root, u64 va, int make) {
@@ -1654,6 +1700,10 @@ int prog_scan(prog_info *o, int max) {
         memcpy(o[c].name, v->name, 24);
         memcpy(o[c].title, v->title, 24);
         memcpy(o[c].icon, v->icon, 21);
+        u32 io;
+        vfs_ent st;
+        o[c].haspx = vpk_icon(h, &io) && !fsx_stat(a, &st) && !st.dir && (u64)io + 576 == st.size &&
+                     io >= VPK_HDR + 64 && fsx_read_at(a, o[c].px, io, 576) == 576;
         c++;
     }
     kfree(it);

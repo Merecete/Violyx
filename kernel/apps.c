@@ -270,6 +270,8 @@ void app_settings(void) {
         kfree(s);
 }
 /* ---------- Programs overview ---------- */
+#include "xznicon.h"
+#include "appicons.h"
 static void l_write(void) {
     app_write(0);
 }
@@ -278,75 +280,76 @@ static const struct {
     void (*fn)(void);
     const char *ic[3];
     u8 c;
+    const u8 *px; /* picture icon, 24x24 */
 } progs[] = {
     {"Schreiben",
      "Write",
      l_write,
      {"\xDA\xC4\xC4\xC4\xC4\xBF", "\xB3\xF0\xF0\xF0 \xB3", "\xC0\xC4\xC4\xC4\xC4\xD9"},
-     C_NEON},
+     C_NEON, icon_write},
     {"Internet",
      "Internet",
      app_web,
      {"\xDA\xC4\xC2\xC2\xC4\xBF", "\xC3\xC4\xC5\xC5\xC4\xB4", "\xC0\xC4\xC1\xC1\xC4\xD9"},
-     C_HOT},
+     C_HOT, icon_internet},
     {"Dateien",
      "Files",
      app_files,
      {"\xDC\xDC\xDC   ", "\xDB\xDB\xDB\xDB\xDB\xDB", "\xDB\xDB\xDB\xDB\xDB\xDB"},
-     C_VIOLET},
+     C_VIOLET, icon_files},
     {"Befehle",
      "Commands",
      app_shell,
      {"\xDA\xC4\xC4\xC4\xC4\xBF", "\xB3>_  \xB3", "\xC0\xC4\xC4\xC4\xC4\xD9"},
-     C_ORCH},
+     C_ORCH, icon_commands},
     {"Rechner",
      "Calculator",
      app_calc,
      {"\xDA\xC4\xC4\xC4\xC4\xBF", "\xB3+-x:\xB3", "\xC0\xC4\xC4\xC4\xC4\xD9"},
-     C_HOT},
+     C_HOT, icon_calc},
     {"Kalender",
      "Calendar",
      app_calendar,
      {"\xDA\xC2\xC4\xC4\xC2\xBF", "\xC3\xC4\xC4\xC4\xC4\xB4", "\xC0\xC4\xC4\xC4\xC4\xD9"},
-     C_ORCH},
-    {"Uhr", "Clock", app_clock, {" /\xC4\xC4\\ ", "\xB3 \xC0\xC4 \xB3", " \\\xC4\xC4/ "}, C_NEON},
+     C_ORCH, icon_calendar},
+    {"Uhr", "Clock", app_clock, {" /\xC4\xC4\\ ", "\xB3 \xC0\xC4 \xB3", " \\\xC4\xC4/ "}, C_NEON, icon_clock},
     {"Sprachnotizen",
      "Voice notes",
      app_voice,
      {"  \xDB\xDB  ", " \xC0\xDF\xDF\xD9 ", "  \xC4\xC1\xC4 "},
-     C_HOT},
+     C_HOT, icon_voice},
     {"Malen",
      "Paint",
      app_paint,
      {"\xDB\xDB\xB1\xB1\xB0\xB0", "\xDB\xDB\xB1\xB1\xB0\xB0", "  \xFE   "},
-     C_HOT},
-    {"XZN", "XZN", app_xzn, {"\xDB \xDB   ", "  \xDB \x0E ", "\xDB \xDB   "}, C_NEON},
-    {"Pong", "Pong", app_pong, {"\xDB    \xDB", "\xDB \xFE  \xDB", "\xDB    \xDB"}, C_NEON},
-    {"Invaders", "Invaders", app_invaders, {" /@\\  ", "  \xB3   ", " \xDC\xDB\xDC  "}, C_HOT},
+     C_HOT, icon_paint},
+    {"XZN", "XZN", app_xzn, {"\xDB \xDB   ", "  \xDB \x0E ", "\xDB \xDB   "}, C_NEON, xzn_icon},
+    {"Pong", "Pong", app_pong, {"\xDB    \xDB", "\xDB \xFE  \xDB", "\xDB    \xDB"}, C_NEON, icon_pong},
+    {"Invaders", "Invaders", app_invaders, {" /@\\  ", "  \xB3   ", " \xDC\xDB\xDC  "}, C_HOT, icon_invaders},
     {"Chomp",
      "Chomp",
      app_chomp,
      {"\xDB\xDB\xDB\xDB\xDB\xDB", "<( \xF9 \xEA", "\xDB\xDB\xDB\xDB\xDB\xDB"},
-     C_ORCH},
+     C_ORCH, icon_chomp},
     {"Mines",
      "Mines",
      app_mines,
      {"\xFA\xFA 1 \xFA", "\xFA \x0F 2\xFA", "\xFA\xFA \x10 \xFA"},
-     C_VIOLET},
-    {"Snake", "Snake", app_snake, {" ~~~~ ", "  ~~@ ", "      "}, C_NEON},
-    {"Bricks", "Bricks", app_bricks, {"##  ##", "  ##  ", "  O   "}, C_HOT},
-    {"Novastrike", "Novastrike", app_novastrike, {"  V   ", "  :   ", " /A\\ "}, C_ORCH},
+     C_VIOLET, icon_mines},
+    {"Snake", "Snake", app_snake, {" ~~~~ ", "  ~~@ ", "      "}, C_NEON, icon_snake},
+    {"Bricks", "Bricks", app_bricks, {"##  ##", "  ##  ", "  O   "}, C_HOT, icon_bricks},
+    {"Novastrike", "Novastrike", app_novastrike, {"  V   ", "  :   ", " /A\\ "}, C_ORCH, icon_novastrike},
     {"Einstellungen",
      "Settings",
      app_settings,
      {"\xC4\xFE\xC4\xC4\xC4\xC4", "\xC4\xC4\xC4\xC4\xFE\xC4", "\xC4\xC4\xFE\xC4\xC4\xC4"},
-     C_VIOLET},
+     C_VIOLET, icon_settings},
     {"Systeminfo",
      "System info",
      app_info,
      {" \xDA\xC4\xC4\xBF ", " \xB3i \xB3 ", " \xC0\xC4\xC4\xD9 "},
-     C_ORCH},
-    {"Hilfe", "Help", app_help, {" \xDA\xC4\xC4\xBF ", " \xB3? \xB3 ", " \xC0\xC4\xC4\xD9 "}, C_HOT}
+     C_ORCH, icon_sysinfo},
+    {"Hilfe", "Help", app_help, {" \xDA\xC4\xC4\xBF ", " \xB3? \xB3 ", " \xC0\xC4\xC4\xD9 "}, C_HOT, icon_help}
 #ifdef LAUNCHER_TEST
     ,
     {"Hilfe", "Help", app_help, {"  99  ", "  99  ", "  99  "}, C_NEON},
@@ -362,7 +365,6 @@ static const struct {
 #define PV    2 /* visible rows */
 #define MAXIP 48
 static prog_info ipr[MAXIP];
-#include "xznicon.h"
 /* The overview draws itself from these, also below a dialog opened from it */
 static int lp_s, lp_top, lp_ni;
 static void lp_draw(void) {
@@ -374,10 +376,21 @@ static void lp_draw(void) {
         u8 bg = sel ? C_SEL : C_RAISE;
         fill(tx, ty, 15, 6, ' ', AT(bg, C_LAV));
         int inst = i >= NP;
-        if (!inst && progs[i].fn == app_xzn) {
+        const u8 *px = inst ? (ipr[i - NP].haspx ? ipr[i - NP].px : 0) : progs[i].px;
+        if (px) { /* a picture: transparent where 0, so the tile shows through */
+            static u8 tile[PC * PV][2][576];
+            static int key[PC * PV], bank[PC * PV];
+            int t = i - top * PC, k = i * 2 + sel + 1;
+            if (key[t] != k) { /* other content, other id: the screen draws the cells anew */
+                key[t] = k;
+                bank[t] ^= 1;
+            }
+            u8 *b = tile[t][bank[t]];
+            for (int q = 0; q < 576; q++)
+                b[q] = px[q] ? px[q] : bg;
             for (int r = 0; r < 3; r++)
                 for (int c = 0; c < 6; c++)
-                    gput(tx + 4 + c, ty + 1 + r, 251, xzn_icon, 24, c, r); /* 250 is the background */
+                    gput(tx + 4 + c, ty + 1 + r, (u8)(224 + t + 8 * bank[t]), b, 24, c, r);
         } else
             for (int r = 0; r < 3; r++) {
                 const char *ic = inst ? ipr[i - NP].icon[r] : progs[i].ic[r];
@@ -495,7 +508,7 @@ static void in_draw(win_t *w) {
     }
     ksnprintf(b, 60, TR("Status:   %s", "Status:   %s"), fs_status());
     ctext(w, 1, 6, T, b);
-    ksnprintf(b, 60, TR("USB-Tastaturen: %d", "USB keyboards: %d"), usb_keyboards);
+    ksnprintf(b, 60, TR("USB-Tastaturen: %d", "USB keyboards: %d"), usb_keyboards + usb2_keyboards);
     ctext(w, 1, 7, T, b);
     ksnprintf(b, 60, TR("Netzwerk: %s", "Network:  %s"), net_status());
     ctext(w, 1, 8, T, b);

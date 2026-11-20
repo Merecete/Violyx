@@ -3,6 +3,7 @@
    SPDX-License-Identifier: BSD-3-Clause */
 #include <vorbis/vorbisenc.h>
 #define XO_QUALITY 0.6f
+static long xo_rate = 44100; /* sample rate, CD rips keep 44.1 kHz */
 typedef struct {
     ogg_stream_state os;
     vorbis_info vi;
@@ -51,7 +52,7 @@ static void xo_end(xo_enc *e) {
 static long xo_begin(xo_enc *e, uint32_t serial, const char *const *tags, int ntags, uint8_t *o) {
     xo_end(e);
     vorbis_info_init(&e->vi);
-    if (vorbis_encode_init_vbr(&e->vi, 2, 44100, XO_QUALITY)) {
+    if (vorbis_encode_init_vbr(&e->vi, 2, xo_rate, XO_QUALITY)) {
         vorbis_info_clear(&e->vi);
         return -1;
     }

@@ -14,6 +14,11 @@ make APP=examples/snake NAME=snake TITLE=Snake VPKFLAGS='--cols 60 --rows 19 --i
 The package ends up in `build/snake.vpk`. Copy it to a stick, open `/drives/usb1` in Files and
 press Enter on it. The program then appears in the Programs overview (F2). Delete it there with Del.
 
+The icon in the Programs overview: `--icon` gives it in text, three lines of six characters. From
+Violyx 0.3.5 on, `--icon-png icon.png` adds a picture of 24x24 pixels; transparent pixels let the
+tile show through, all others take the nearest screen colour. Older versions of Violyx show the
+text icon instead, so give both. The icons of the examples are in `icons/`.
+
 `make apps` builds every example. The source of all examples is in `examples/` under the BSD
 3-Clause License, XZN included, so you can read, change
 and share it:
@@ -28,6 +33,7 @@ and share it:
 | Vio-Island | `examples/vioisland.c` (3D world in pixel cells, music made while it plays) |
 | Fetch | `examples/fetch.c` (network) |
 | XZN | `examples/xzn.c` (music player) |
+| Vio-Audio | `examples/vioaudio.c` (sound editor: recording, editing, effects, saving WAV, FLAC and OGG) |
 
 The window can change size at any time (F5 zooms it). `vx_cols` and `vx_rows` always return the
 current size, so read them once per frame as Bricks and Novastrike do.

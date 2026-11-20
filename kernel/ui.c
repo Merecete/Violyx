@@ -104,7 +104,8 @@ static inline void px(u8 *d, u32 c) {
 }
 /* Picture cells: with bit 31 set, a cell holds no character but a 4x8-pixel piece of a picture.
  * Windows, dialogs and shadows keep working as usual, only the drawing of the cell differs.
- * Ids 1-249 go to programs (gfx_newid), 250 is the background picture, 251 the XZN icon. */
+ * Ids 1-223 go to programs (gfx_newid), 224-239 to the icons of the program overview, 250 is the
+ * background picture. */
 #define GN 32
 static struct {
     u8 id;
@@ -114,7 +115,7 @@ static struct {
 static int gn, gnext;
 static u8 gid;
 u8 gfx_newid(void) {
-    if (++gid == 0 || gid >= 250)
+    if (++gid == 0 || gid >= 224)
         gid = 1;
     return gid;
 }
@@ -132,7 +133,7 @@ static int gslot(u8 id, const u8 *px, int stride) {
         do {
             i = gnext;
             gnext = (gnext + 1) % GN;
-        } while (gt[i].id >= 250);
+        } while (gt[i].id >= 224);
     }
     gt[i].id = id;
     gt[i].px = px;

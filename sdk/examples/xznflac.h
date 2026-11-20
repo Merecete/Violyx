@@ -6,6 +6,10 @@
 #include <stdint.h>
 #define XF_BLOCK 4096
 #define XF_FRAME (XF_BLOCK * 2 * 3 + 64) /* largest frame: verbatim with a 17-bit side channel */
+#ifndef XF_VENDOR
+#define XF_VENDOR "Violyx XZN"
+#endif
+static uint32_t xf_rate = 44100; /* sample rate, CD rips keep 44.1 kHz */
 typedef struct {
     uint8_t *o;
     long n;
@@ -200,7 +204,13 @@ static long xf_frame(uint8_t *o, const int16_t *pcm, int n, uint32_t num) {
     xf_bw w = {o, 0, 0, 0};
     xf_put(&w, 0xFFF8, 16);
     xf_put(&w, n == XF_BLOCK ? 12 : 7, 4);
-    xf_put(&w, 9, 4); /* 44.1 kHz */
+    /* the rate as a code of the frame header, 0: as in STREAMINFO */
+    static const uint32_t rc[12] = {0, 88200, 176400, 192000, 8000, 16000, 22050, 24000, 32000, 44100, 48000, 96000};
+    uint32_t code = 0;
+    for (uint32_t i = 1; i < 12; i++)
+        if (rc[i] == xf_rate)
+            code = i;
+    xf_put(&w, code, 4);
     xf_put(&w, mode ? 7 + (uint32_t)mode : 1, 4);
     xf_put(&w, 4 << 1, 4); /* 16 bit */
     /* frame number, coded like UTF-8 */
@@ -286,7 +296,7 @@ static long xf_head(uint8_t *o, uint64_t samples, const char *const *tags, int n
     xf_put(&w, XF_BLOCK, 16);
     xf_put(&w, 0, 24); /* frame sizes: unknown */
     xf_put(&w, 0, 24);
-    xf_put(&w, 44100, 20);
+    xf_put(&w, xf_rate, 20);
     xf_put(&w, 1, 3);  /* 2 channels */
     xf_put(&w, 15, 5); /* 16 bits */
     xf_put(&w, (uint32_t)(samples >> 32) & 15, 4);
@@ -297,7 +307,7 @@ static long xf_head(uint8_t *o, uint64_t samples, const char *const *tags, int n
     long h = n;
     o[n++] = 0x80 | 4; /* VORBIS_COMMENT, the last block */
     n += 3;
-    static const char ven[] = "Violyx XZN";
+    static const char ven[] = XF_VENDOR;
     xf_le32(o + n, sizeof ven - 1);
     memcpy(o + n + 4, ven, sizeof ven - 1);
     n += 4 + (long)sizeof ven - 1;

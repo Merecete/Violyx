@@ -69,6 +69,7 @@ void *kmalloc(size_t);
 void kfree(void *);
 u64 heap_free(void);
 void *dma_alloc(size_t);
+void *dma32_alloc(size_t);
 u64 phys(const void *);
 void mmio_map(u64, u64);
 const u8 *boot_part_guid(void);
@@ -242,6 +243,25 @@ char *strchr(const char *, int);
 char *strrchr(const char *, int);
 int net_ping(u32 ip, u16 seq, int *ms, int *ttl);
 extern int usb_keyboards;
+/* USB keyboards of every controller: the layout of their reports (HID report descriptor) and
+ * what is held, made into PS/2 scan codes */
+typedef struct {
+    int rid, modoff, arroff, arrn, arrsz, nbm;
+    int bmoff[4], bmmin[4], bmn[4];
+    u8 last[8];
+} hidkb_t;
+void hidkb_layout(hidkb_t *, const u8 *, int);
+void hidkb_input(hidkb_t *, const u8 *, int);
+void hidkb_stop(void);
+/* usb2.c: EHCI, UHCI and OHCI */
+void usb2_add(const pci_t *);
+void usb2_start(void);
+void usb2_hotplug(void);
+void usb2_poll(void);
+void usb2_report(void (*)(const char *, void *), void *);
+int usb2_count(void);
+extern int usb2_keyboards;
+void xhci_intel_route(const pci_t *);
 const char *usb_status(void);
 int fs_init(void);
 int fs_ok(void);
@@ -257,6 +277,8 @@ typedef struct {
 } regs;
 typedef struct {
     char name[24], title[24], icon[3][7];
+    u8 haspx;     /* a picture icon: 24x24 pixels, 0 transparent */
+    u8 px[576];
 } prog_info;
 void proc_syscall(regs *);
 void proc_fault(regs *);

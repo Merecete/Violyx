@@ -63,13 +63,9 @@ typedef struct {
     hc_t *h;
     int slot, dci, len; /* len: bytes asked for per report (the endpoint's packet size) */
     int halted;         /* the endpoint stopped after an error: reset in usb_hotplug */
-    /* the report as its descriptor says, for keyboards that keep sending it in boot protocol
-     * (N-key rollover): bit positions after the report id */
-    int rid, modoff, arroff, arrn, arrsz, nbm;
-    int bmoff[4], bmmin[4], bmn[4];
+    hidkb_t hk;         /* the layout of its reports and the keys held */
     ring r;
     u8 *rep;
-    u8 last[8];
 } kb_t;
 static kb_t kb[MAXK];
 int usb_keyboards;
@@ -127,7 +123,7 @@ static int ev_next(trb *o) {
 }
 static void kb_event(trb *e);
 /* The parts of a HID report descriptor that matter for a keyboard (usage page 7) */
-static void hid_layout(kb_t *k, const u8 *d, int n) {
+void hidkb_layout(hidkb_t *k, const u8 *d, int n) {
     int page = 0, size = 0, count = 0, id = 0, umin = -1, umax = -1, nus = 0, us0 = -1;
     int off = 0, kid = -1;
     k->modoff = k->arroff = -1;
@@ -199,7 +195,7 @@ static int hbit(const u8 *r, int len, int bit) {
     return bit / 8 < len ? r[bit / 8] >> (bit % 8) & 1 : 0;
 }
 /* A report in the descriptor's own form, made into the 8 bytes of the boot protocol */
-static int hid_boot(const kb_t *k, const u8 *r, int len, u8 *o) {
+static int hid_boot(const hidkb_t *k, const u8 *r, int len, u8 *o) {
     if (k->rid) {
         if (len < 1 || r[0] != k->rid)
             return 0;
@@ -1779,7 +1775,7 @@ static void usb_dev(int port, int speed, u32 route, int tts, int ttp, int depth)
     /* gaming keyboards send up to 64 bytes even in boot protocol; asking for less makes the
      * controller report babble and stop the endpoint */
     k->len = eps < 8 ? 8 : eps > 64 ? 64 : eps;
-    hid_layout(k, hd, hdn);
+    hidkb_layout(&k->hk, hd, hdn);
     int iv = speed >= 3 ? (epi ? epi - 1 : 0) : 3 + log2i(epi ? epi : 1);
     if (iv > 15)
         iv = 15;
@@ -2070,15 +2066,18 @@ static void ud_line(ud_t *q, const char *pre, void (*cb)(const char *, void *), 
 }
 void usb_report(void (*cb)(const char *, void *), void *a) {
     char l[72];
-    if (!nhc) {
-        cb(TR("Kein USB-3-Controller gefunden.", "No USB 3 controller found."), a);
+    if (!nhc && !usb2_count()) {
+        cb(TR("Kein USB-Controller gefunden.", "No USB controller found."), a);
         return;
     }
+    usb2_report(cb, a);
+    if (!nhc)
+        return;
     u64 f = irq_off();
     hc_t *sv = UH;
     for (int c = 0; c < nhc; c++) {
         UH = &hcs[c];
-        ksnprintf(l, 72, TR("Controller %d: %d Ports", "Controller %d: %d ports"), c + 1, nports);
+        ksnprintf(l, 72, TR("USB 3 (xHCI) %d: %d Ports", "USB 3 (xHCI) %d: %d ports"), c + 1, nports);
         cb(l, a);
         for (int n = 0; n < nports; n++) {
             if (PS(n) & 1) {
@@ -2101,6 +2100,22 @@ void usb_report(void (*cb)(const char *, void *), void *a) {
 int xd_on; /* waiting lines only while the controllers are set up */
 #endif
 static void xhci_init2(const pci_t *c);
+/* Intel chipsets from about 2012 to 2015 (7 to 9 series, Bay Trail) have an EHCI next to the
+ * xHCI and start with the ports wired to the EHCI. As Linux does, the ports go over to the
+ * xHCI: the masks (D4h, DCh) say which ones may be switched. */
+void xhci_intel_route(const pci_t *c) {
+    static const u16 ids[] = {0x1E31, 0x8C31, 0x9C31, 0x8CB1, 0x9CB1, 0x8D31, 0x0F35};
+    int hit = 0;
+    for (unsigned i = 0; i < sizeof ids / sizeof ids[0]; i++)
+        hit |= c->ven == 0x8086 && c->did == ids[i];
+    if (!hit)
+        return;
+    u32 m3 = pci_rd(c, 0xDC), m2 = pci_rd(c, 0xD4);
+    if (m3 != 0xFFFFFFFFu)
+        pci_wr(c, 0xD8, m3); /* USB 3 SuperSpeed on */
+    if (m2 != 0xFFFFFFFFu)
+        pci_wr(c, 0xD0, m2); /* USB 2 lines to the xHCI */
+}
 void xhci_init(const pci_t *c) {
 #ifdef BOOTDIAG
     xd_on = 1;
@@ -2122,6 +2137,7 @@ static void xhci_init2(const pci_t *c) {
     int pw = pci_d0(c);
     (void)pw;
     pci_enable(c);
+    xhci_intel_route(c);
     u64 bar = pci_bar(c, 0);
     XD("  xHCI: Energiezustand war D%d, Register bei %lx", pw, (unsigned long)bar);
     if (!bar)
@@ -2342,7 +2358,7 @@ static int has(const u8 *r, u8 u) {
             return 1;
     return 0;
 }
-static void report(kb_t *k, const u8 *r) {
+static void report(hidkb_t *k, const u8 *r) {
     if (r[2] == 1)
         return;
     for (int b = 0; b < 8; b++) {
@@ -2368,6 +2384,18 @@ static void report(kb_t *k, const u8 *r) {
     }
     memcpy(k->last, r, 8);
 }
+/* A report of a keyboard, from any USB controller */
+void hidkb_input(hidkb_t *k, const u8 *r, int got) {
+    u8 b8[8];
+    if (got == 8)
+        report(k, r); /* boot protocol, as asked */
+    else if (got > 0 && hid_boot(k, r, got, b8))
+        report(k, b8); /* the keyboard kept its own form (N-key rollover) */
+}
+/* a keyboard went: no key may keep repeating */
+void hidkb_stop(void) {
+    rep_sc = 0;
+}
 static void kb_event(trb *e) {
     int s = e->d >> 24;
     for (int i = 0; i < usb_keyboards; i++)
@@ -2375,11 +2403,8 @@ static void kb_event(trb *e) {
             kb_t *k = &kb[i];
             u32 cc = e->c >> 24, got = (u32)k->len - (e->c & 0xFFFFFF);
             if (cc == 1 || cc == 13) {
-                u8 b8[8];
-                if (got == 8)
-                    report(k, k->rep); /* boot protocol, as asked */
-                else if (got > 0 && got <= (u32)k->len && hid_boot(k, k->rep, (int)got, b8))
-                    report(k, b8); /* the keyboard kept its own form (N-key rollover) */
+                if (got <= (u32)k->len)
+                    hidkb_input(&k->hk, k->rep, (int)got);
             } else {
                 k->halted = 1; /* babble, stall or transfer error: usb_hotplug starts it again */
                 return;
@@ -2416,5 +2441,5 @@ void xhci_poll(void) {
     }
 }
 const char *usb_status(void) {
-    return usb_keyboards ? "USB-Tastatur" : "keine";
+    return usb_keyboards || usb2_keyboards ? "USB-Tastatur" : "keine";
 }

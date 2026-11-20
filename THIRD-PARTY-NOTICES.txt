@@ -30,16 +30,16 @@ stb_image 2.30           MIT or Public Domain
   images and gzip in sdk/helpers/vxdec.c,
   third_party/stb/LICENSE
 stb_vorbis               MIT or Public Domain
-  Ogg Vorbis in XZN, third_party/stb/LICENSE
+  Ogg Vorbis in XZN and Vio-Audio, third_party/stb/LICENSE
 minimp3                  CC0-1.0
-  MP3 in XZN, third_party/minimp3/LICENSE
+  MP3 in XZN and Vio-Audio, third_party/minimp3/LICENSE
 dr_flac                  MIT-0 or Public Domain
-  FLAC in XZN, end of third_party/dr_flac/dr_flac.h
+  FLAC in XZN and Vio-Audio, end of third_party/dr_flac/dr_flac.h
 libvorbis (git 1b75110)  BSD-3-Clause
-  Vorbis encoder for OGG rips in XZN,
+  Vorbis encoder for OGG rips in XZN and OGG files of Vio-Audio,
   third_party/vorbis/COPYING
 libogg (git 06a5e02)     BSD-3-Clause
-  Ogg container for OGG rips in XZN, third_party/ogg/COPYING
+  Ogg container for XZN and Vio-Audio, third_party/ogg/COPYING
 Xenon-Zones              BSD-3-Clause
   design and intro sample of XZN (sdk/assets/xzn-intro.mp3),
   https://github.com/Merecete/XZN
