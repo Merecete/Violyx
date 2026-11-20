@@ -46,9 +46,9 @@ struct tabs_s {
 static web_t *cur;
 static win_t *curw;
 static const char START_EN[] =
-    "<title>Violyx Internet</title><h1>Violyx Internet</h1><p>Welcome to the browser.</p><h2>Violyx App Store</h2><p>New programs for Violyx: <a href=\"https://merecete.org/violyx/store.html\">Violyx App Store</a>. Downloaded apps can be installed right away.</p><h2>Keys</h2><ul><li>Arrows and Page Up/Down scroll</li><li>Tab jumps to the next link, Shift+Tab back</li><li>Enter opens the link</li><li>Backspace goes back one page</li><li>Ctrl+L opens the address bar</li><li>N shows link numbers, number and Enter opens directly</li><li>Enter in search fields opens the input</li><li>Ctrl+R reloads, Ctrl+S saves the page, Ctrl+P saves the image on the screen</li><li>Links to files (for example .vpk programs) download to /downloads, programs can be installed right away</li><li>Ctrl+F searches the page, Ctrl+G jumps to the next hit</li><li>Ctrl+D adds a bookmark, Ctrl+B shows bookmarks, Ctrl+H history</li><li>Ctrl+I turns images off or on for this site</li><li>Ctrl+T opens a tab, Ctrl+Enter opens a link in a new tab, Ctrl+Page Up/Down switches tabs</li><li>Esc closes the tab or window</li></ul><h2>Try it</h2><ul><li><a href=\"https://en.wikipedia.org/\">Wikipedia</a></li><li><a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo search</a></li><li><a href=\"https://de.wikipedia.org/\">Wikipedia (German)</a></li><li><a href=\"https://text.npr.org/\">NPR Text</a></li><li><a href=\"https://lite.cnn.com/\">CNN Lite</a></li><li><a href=\"https://lobste.rs/\">Lobsters</a></li><li><a href=\"https://example.com/\">example.com</a></li></ul><p>Please do not enter passwords here. Violyx is a hobby system, nobody has checked its browser for security.</p>";
+    "<title>Violyx Internet</title><h1>Violyx Internet</h1><p>Welcome to the browser.</p><h2>Violyx App Store</h2><p>New programs for Violyx: <a href=\"https://merecete.org/violyx/store.html\">Violyx App Store</a>. Downloaded apps can be installed right away.</p><h2>Keys</h2><ul><li>Up/Down go from link to link (also fields and buttons)</li><li>Page Up/Down and Space scroll, for reading</li><li>Tab jumps to the next link, Shift+Tab back</li><li>Enter opens the link</li><li>Backspace goes back one page</li><li>Ctrl+L opens the address bar</li><li>N shows link numbers, number and Enter opens directly</li><li>Enter in search fields opens the input</li><li>Ctrl+R reloads, Ctrl+S saves the page, Ctrl+P saves the image on the screen</li><li>Links to files (for example .vpk programs) download to /downloads, programs can be installed right away</li><li>Ctrl+F searches the page, Ctrl+G jumps to the next hit</li><li>Ctrl+D adds a bookmark, Ctrl+B shows bookmarks, Ctrl+H history</li><li>Ctrl+I turns images off or on for this site</li><li>Ctrl+T opens a tab, Ctrl+Enter opens a link in a new tab, Ctrl+Page Up/Down switches tabs</li><li>Esc closes the tab or window</li></ul><h2>Try it</h2><ul><li><a href=\"https://en.wikipedia.org/\">Wikipedia</a></li><li><a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo search</a></li><li><a href=\"https://de.wikipedia.org/\">Wikipedia (German)</a></li><li><a href=\"https://text.npr.org/\">NPR Text</a></li><li><a href=\"https://lite.cnn.com/\">CNN Lite</a></li><li><a href=\"https://lobste.rs/\">Lobsters</a></li><li><a href=\"https://example.com/\">example.com</a></li></ul><p>Please do not enter passwords here. Violyx is a hobby system, nobody has checked its browser for security.</p>";
 static const char START[] =
-    "<title>Violyx Internet</title><h1>Violyx Internet</h1><p>Willkommen im Browser.</p><h2>Violyx App Store</h2><p>Neue Programme für Violyx: <a href=\"https://merecete.org/violyx/store.html\">Violyx App Store</a>. Heruntergeladene Apps lassen sich gleich installieren.</p><h2>Tasten</h2><ul><li>Pfeile und Bild auf/ab scrollen</li><li>Tab springt zum nächsten Link, Umschalt+Tab zurück</li><li>Enter öffnet den Link</li><li>Rücktaste geht eine Seite zurück</li><li>Strg+L öffnet die Adresszeile</li><li>N zeigt Link-Nummern, Zahl und Enter öffnet direkt</li><li>Enter in Suchfeldern öffnet die Eingabe</li><li>Strg+R lädt neu, Strg+S speichert die Seite, Strg+P das Bild auf dem Bildschirm</li><li>Links auf Dateien (zum Beispiel .vpk-Programme) landen in /downloads, Programme lassen sich gleich installieren</li><li>Strg+F sucht auf der Seite, Strg+G springt zum nächsten Treffer</li><li>Strg+D merkt die Seite, Strg+B zeigt Lesezeichen, Strg+H den Verlauf</li><li>Strg+I schaltet Bilder für diese Website aus oder ein</li><li>Strg+T öffnet einen Tab, Strg+Enter einen Link im neuen Tab, Strg+Bild auf/ab wechselt den Tab</li><li>Esc schließt den Tab oder das Fenster</li></ul><h2>Zum Ausprobieren</h2><ul><li><a href=\"https://de.wikipedia.org/\">Wikipedia</a></li><li><a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo Suche</a></li><li><a href=\"https://en.wikipedia.org/\">Wikipedia (Englisch)</a></li><li><a href=\"https://text.npr.org/\">NPR Text</a></li><li><a href=\"https://lite.cnn.com/\">CNN Lite</a></li><li><a href=\"https://lobste.rs/\">Lobsters</a></li><li><a href=\"https://example.com/\">example.com</a></li></ul><p>Bitte gib hier keine Passwörter ein. Violyx ist ein Hobbysystem, niemand hat seinen Browser auf Sicherheit geprüft.</p>";
+    "<title>Violyx Internet</title><h1>Violyx Internet</h1><p>Willkommen im Browser.</p><h2>Violyx App Store</h2><p>Neue Programme für Violyx: <a href=\"https://merecete.org/violyx/store.html\">Violyx App Store</a>. Heruntergeladene Apps lassen sich gleich installieren.</p><h2>Tasten</h2><ul><li>Hoch/Runter gehen von Link zu Link (auch Felder und Knöpfe)</li><li>Bild auf/ab und Leertaste scrollen, zum Lesen</li><li>Tab springt zum nächsten Link, Umschalt+Tab zurück</li><li>Enter öffnet den Link</li><li>Rücktaste geht eine Seite zurück</li><li>Strg+L öffnet die Adresszeile</li><li>N zeigt Link-Nummern, Zahl und Enter öffnet direkt</li><li>Enter in Suchfeldern öffnet die Eingabe</li><li>Strg+R lädt neu, Strg+S speichert die Seite, Strg+P das Bild auf dem Bildschirm</li><li>Links auf Dateien (zum Beispiel .vpk-Programme) landen in /downloads, Programme lassen sich gleich installieren</li><li>Strg+F sucht auf der Seite, Strg+G springt zum nächsten Treffer</li><li>Strg+D merkt die Seite, Strg+B zeigt Lesezeichen, Strg+H den Verlauf</li><li>Strg+I schaltet Bilder für diese Website aus oder ein</li><li>Strg+T öffnet einen Tab, Strg+Enter einen Link im neuen Tab, Strg+Bild auf/ab wechselt den Tab</li><li>Esc schließt den Tab oder das Fenster</li></ul><h2>Zum Ausprobieren</h2><ul><li><a href=\"https://de.wikipedia.org/\">Wikipedia</a></li><li><a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo Suche</a></li><li><a href=\"https://en.wikipedia.org/\">Wikipedia (Englisch)</a></li><li><a href=\"https://text.npr.org/\">NPR Text</a></li><li><a href=\"https://lite.cnn.com/\">CNN Lite</a></li><li><a href=\"https://lobste.rs/\">Lobsters</a></li><li><a href=\"https://example.com/\">example.com</a></li></ul><p>Bitte gib hier keine Passwörter ein. Violyx ist ein Hobbysystem, niemand hat seinen Browser auf Sicherheit geprüft.</p>";
 static void layout(web_t *b, int w) {
     b->wid = w;
     html_lang = cfg_lang;
@@ -1158,11 +1158,39 @@ static void w_key(win_t *w, key_t k) {
     }
     switch (k.key) {
         case K_UP:
-            b->top--;
+        case K_DOWN: {
+            /* Up/Down go from link to link (and to fields and buttons), so one can always go
+             * back a step; between links that are far apart they scroll a third of the page.
+             * Page Up/Down still scroll page by page, for reading. */
+            int down = k.key == K_DOWN, i;
+            int vis = b->sel >= 0 && b->sel < g->nlk && g->links[b->sel].line >= b->top &&
+                      g->links[b->sel].line < b->top + h;
+            if (vis)
+                i = down ? b->sel + 1 : b->sel - 1;
+            else if (down)
+                for (i = 0; i < g->nlk && g->links[i].line < b->top; i++)
+                    ;
+            else
+                for (i = g->nlk - 1; i >= 0 && g->links[i].line >= b->top + h; i--)
+                    ;
+            while (i >= 0 && i < g->nlk && g->links[i].line < 0)
+                i += down ? 1 : -1;
+            int step = h / 3 > 1 ? h / 3 : 1;
+            if (i >= 0 && i < g->nlk) {
+                int l = g->links[i].line;
+                if (down ? l < b->top + h + step : l >= b->top - step) {
+                    b->sel = i;
+                    if (l >= b->top + h)
+                        b->top = l - h + 2; /* a line of what follows stays in sight */
+                    else if (l < b->top)
+                        b->top = l > 0 ? l - 1 : 0;
+                } else
+                    b->top += down ? step : -step;
+            } else
+                b->top += down ? step : -step;
+            b->msg[0] = 0;
             break;
-        case K_DOWN:
-            b->top++;
-            break;
+        }
         case K_PGUP:
             b->top -= h - 1;
             break;
@@ -1258,6 +1286,9 @@ static void w_key(win_t *w, key_t k) {
             return;
     }
     clamp(b, h);
+    /* a link scrolled out of sight is no longer chosen: Enter must not open what is not seen */
+    if (b->sel >= 0 && b->sel < g->nlk && (g->links[b->sel].line < b->top || g->links[b->sel].line >= b->top + h))
+        b->sel = -1;
 }
 static void web_kill(web_t *b) {
     hpage *g = &b->g;

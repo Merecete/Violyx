@@ -54,6 +54,11 @@ def browser_paths(path, req):
     import gzip, random
 
     path = path.split("?")[0]
+    if path == "/lang":  # a long page: links close together, then far apart, and a form
+        t = "".join("<p><a href=\"/l%d\">Link %d</a></p>" % (i, i) for i in range(1, 9))
+        t += "<p>" + "Langer Text ohne Links. " * 400 + "</p>"
+        t += "<p><a href=\"/fern\">Link weit unten</a></p><form action=\"/s\"><input name=\"q\"><input type=\"submit\" value=\"Suchen\"></form>"
+        return resp(("<html><head><title>Lang</title></head><body>" + t + "</body></html>").encode())
     if path == "/gz":
         return resp(
             gzip.compress(

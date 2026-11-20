@@ -349,9 +349,10 @@ static int ctrl(int slot, ring *r, u32 rq, u16 val, u16 idx, u16 len, void *buf)
      * silent (a KVM switch showing another PC, a hub that hangs) must not stop the start:
      * wait about 1.5 s, then stop the endpoint and put its ring behind the request, so the
      * next request does not wait for this one again. */
-    ev_limit = 1500000;
+    int lim = ev_limit;
+    ev_limit = lim < 1500000 ? lim : 1500000;
     int got = ev_wait(32, &e);
-    ev_limit = 6000000;
+    ev_limit = lim;
     ctrl_cc = got ? (int)(e.c >> 24) : 0;
     if (!got) {
         command(0, 0, 0, (15u << 10) | ((u32)slot << 24) | (1 << 16)); /* stop endpoint */
@@ -1021,12 +1022,16 @@ void usb_rec_stop(void) {
     u64 f = irq_off();
     hc_t *sv = UH;
     UH = UIN.h;
+    int lim = ev_limit; /* the answers come in microseconds: a device that is silent (a webcam
+                         * busy with itself) may hold everything for half a second, not longer */
+    ev_limit = 500000;
     u32 ep = (u32)UIN.slot << 24 | (u32)UIN.dci << 16;
     command(0, 0, 0, (15u << 10) | ep); /* stop endpoint, then the ring behind what is left */
     u64 q = phys(&UIN.r.t[UIN.r.i]) | UIN.r.cy;
     command((u32)q, q >> 32, 0, (16u << 10) | ep);
     UIN.out = 0;
     uctrl(UIN.slot, &UIN.ep0, 0x01 | (11 << 8), 0, (u16)UIN.ifn, 0, 0); /* zero bandwidth */
+    ev_limit = lim;
     UH = sv;
     irq_on(f);
 }

@@ -1244,7 +1244,9 @@ int rge_send(const void *b, int len) {
     if (len > BUFSZ)
         return -1;
     struct rge_tx_desc *d = &tl[txi];
-    for (int i = 0; i < 200000 && (d->rge_cmdsts & RGE_TDCMDSTS_OWN); i++)
+    /* at most 2 ms: this runs with interrupts off, a chip that does not send must not stop the
+     * whole computer (without a cable, or stuck after the cable was pulled) */
+    for (int i = 0; i < 2000 && (d->rge_cmdsts & RGE_TDCMDSTS_OWN); i++)
         udelay(1);
     if (d->rge_cmdsts & RGE_TDCMDSTS_OWN) {
         txbusy++;
@@ -1268,10 +1270,25 @@ int rge_send(const void *b, int len) {
     return 0;
 }
 
-/* Returns the length of the next frame (0 = none). Call rge_recv_done afterwards. */
 static int gone(void) {
     return RGE_READ_1(&S, RGE_CMD) == 0xFF;
 }
+/* After the cable came or went: frames that the chip kept are dropped and sending starts again
+ * at the beginning of the ring, as a chip may stop sending when the link goes away */
+void rge_tx_reset(void) {
+    if (stage < 6 || gone())
+        return;
+    RGE_WRITE_1(&S, RGE_CMD, RGE_CMD_RXENB);
+    udelay(100);
+    for (int i = 0; i < NTX; i++)
+        tl[i].rge_cmdsts = i == NTX - 1 ? RGE_TDCMDSTS_EOR : 0;
+    __asm__ volatile("mfence" : : : "memory");
+    txi = 0;
+    RGE_WRITE_4(&S, RGE_TXDESC_ADDR_LO, RGE_ADDR_LO(phys(tl)));
+    RGE_WRITE_4(&S, RGE_TXDESC_ADDR_HI, RGE_ADDR_HI(phys(tl)));
+    RGE_WRITE_1(&S, RGE_CMD, RGE_CMD_TXENB | RGE_CMD_RXENB);
+}
+/* Returns the length of the next frame (0 = none). Call rge_recv_done afterwards. */
 int rge_recv(void **out) {
     /* Without interrupts nobody else acknowledges the status. A pending "no receive slots" stops
      * the chip. */

@@ -66,16 +66,20 @@ int rge_link(void);
 int rge_send(const void *, int);
 int rge_recv(void **);
 void rge_recv_done(void);
+void rge_tx_reset(void);
+int net_link(void);
 static err_t tx(struct netif *n, struct pbuf *p) {
     if (p->tot_len > BSZ)
         return ERR_BUF;
+    if (!net_link())
+        return ERR_IF; /* no cable: nothing to wait for */
     if (use_rge) {
         static u8 b[BSZ];
         pbuf_copy_partial(p, b, p->tot_len, 0);
         return rge_send(b, p->tot_len) ? ERR_TIMEOUT : ERR_OK;
     }
     txd *d = &td[ti];
-    for (int i = 0; i < 200000 && !(d->st & 1); i++)
+    for (int i = 0; i < 2000 && !(d->st & 1); i++) /* at most 2 ms, interrupts are off */
         udelay(1);
     if (!(d->st & 1))
         return ERR_TIMEOUT;
@@ -197,7 +201,6 @@ void net_init(void) {
     dhcp_start(&nif);
     started = 1;
 }
-int net_link(void);
 void net_poll(void) {
     if (!started)
         return;
@@ -237,9 +240,13 @@ void net_poll(void) {
         nextlink = ticks + 50;
         int up = net_link();
         if (up && !netif_is_link_up(&nif)) {
+            if (use_rge)
+                rge_tx_reset();
             netif_set_link_up(&nif); /* also starts DHCP again, with short waits */
             since = ticks;
         } else if (!up && netif_is_link_up(&nif)) {
+            if (use_rge)
+                rge_tx_reset();
             netif_set_link_down(&nif);
             dhcp_release_and_stop(&nif); /* the next cable may lead to another network */
             dhcp_start(&nif);
