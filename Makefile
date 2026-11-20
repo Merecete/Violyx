@@ -28,7 +28,7 @@ build/ca_der.h: tools/mkca.py $(CACERTS)
 build/cp437.h: tools/mkcp437.py
 	@mkdir -p build
 	python3 tools/mkcp437.py $@
-APPSRC=$(wildcard sdk/examples/*.c sdk/examples/*.h sdk/helpers/*.c sdk/helpers/*.h sdk/*.h) sdk/violyx.c sdk/violyx.h sdk/link.ld sdk/mkvpk.py sdk/Makefile
+APPSRC=$(wildcard sdk/examples/*.c sdk/examples/*.h sdk/helpers/*.c sdk/helpers/*.h sdk/*.h sdk/icons/*.png) sdk/violyx.c sdk/violyx.h sdk/link.ld sdk/mkvpk.py sdk/Makefile
 build/apps/sdk.stamp: $(APPSRC)
 	$(MAKE) -C sdk apps OUT=../build/apps
 	touch $@

@@ -1,6 +1,6 @@
 # Violyx
 
-**A keyboard-only 64-bit operating system for x86 PCs, with a retro desktop in glowing violet.**
+**A keyboard-only 64-bit operating system for x86 PCs, with a retro text desktop in glowing violet.**
 
 Violyx is written from scratch, with its own kernel, drivers, file system and programs. There is no
 Linux underneath. It boots on BIOS and UEFI, goes online, plays music and games, all without a
@@ -18,9 +18,9 @@ used for the build tools.
 
 | | | |
 |---|---|---|
-| ![Violet](docs/violyx-ocean.png) | ![Ruby](docs/violyx-emerald.png) | ![Ocean](docs/violyx-graphite.png) |
+| ![Violet](docs/violyx-violet.png) | ![Ruby](docs/violyx-ruby.png) | ![Ocean](docs/violyx-ocean.png) |
 
-> Experimental hobby project, version 0.3.4. Please do not enter passwords or use it for anything
+> Experimental hobby project, version 0.3.5. Please do not enter passwords or use it for anything
 > sensitive.
 
 ## What's inside
@@ -41,7 +41,7 @@ used for the build tools.
 
 - Built-in C compiler: write a program in Write and compile it in Commands with `cc`, right on Violyx
 - [SDK](sdk/README.md) in C with one header, `violyx.h`: text grid with 256 colours, keyboard,
-  files, dialogs, network and sound
+  files, dialogs, network, sound and recording
 - Programs are shared as `.vpk` packages and installed with one key press in Files
 - New apps will be available in the [Violyx App Store](https://merecete.org/violyx/store.html),
   linked on the start page of the browser
@@ -49,7 +49,7 @@ used for the build tools.
 
 ## Try it
 
-Download `violyx_v0.3.2.iso` from the [Releases](../../releases) page.
+Download `violyx_v0.3.5.iso` from the [Releases](../../releases) page.
 
 **VirtualBox:** create a VM with type *Other/Unknown (64-bit)* and 512 MB memory, and start it from
 the ISO. For internet, choose the network adapter *Intel PRO/1000 MT Desktop*. For sound, enable
@@ -58,10 +58,10 @@ the *Intel HD Audio* controller.
 **QEMU:**
 
 ```sh
-qemu-system-x86_64 -cdrom violyx_v0.3.2.iso -m 512 -nic user,model=e1000 -device intel-hda -device hda-duplex
+qemu-system-x86_64 -cdrom violyx_v0.3.5.iso -m 512 -nic user,model=e1000 -device intel-hda -device hda-duplex
 ```
 
-**Real PC:** write `violyx_v0.3.2.img` to a USB stick (for example with Rufus in DD mode, this
+**Real PC:** write `violyx_v0.3.5.img` to a USB stick (for example with Rufus in DD mode, this
 erases the stick), turn off Secure Boot and start from the stick.
 
 Once it runs, **F1** shows the help and **F2** all programs. All keys are in the
@@ -93,7 +93,7 @@ The finished images are in the `build` folder.
 
 ## License
 
-BSD-3-Clause, see [LICENSE](LICENSE) Bundled components keep their own licenses,
+BSD-3-Clause, see [LICENSE](LICENSE), XZN included. Bundled components keep their own licenses,
 listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt). In Violyx, System > About Violyx
 shows all of them (L).
 

@@ -233,13 +233,29 @@ void net_poll(void) {
             ri = (ri + 1) % NR;
         }
     if (ticks >= nextlink) {
+        static u64 since; /* link, but no address yet: since when */
         nextlink = ticks + 50;
         int up = net_link();
         if (up && !netif_is_link_up(&nif)) {
-            netif_set_link_up(&nif);
-            dhcp_network_changed_link_up(&nif);
-        } else if (!up && netif_is_link_up(&nif))
+            netif_set_link_up(&nif); /* also starts DHCP again, with short waits */
+            since = ticks;
+        } else if (!up && netif_is_link_up(&nif)) {
             netif_set_link_down(&nif);
+            dhcp_release_and_stop(&nif); /* the next cable may lead to another network */
+            dhcp_start(&nif);
+        }
+        /* No answer from the DHCP server for 20 seconds after the cable came: start over, as
+         * lwIP otherwise waits longer and longer between tries */
+        if (up && !dhcp_supplied_address(&nif)) {
+            if (!since)
+                since = ticks;
+            else if (ticks - since > 2000) {
+                dhcp_release_and_stop(&nif);
+                dhcp_start(&nif);
+                since = ticks;
+            }
+        } else
+            since = 0;
     }
     sys_check_timeouts();
 }
