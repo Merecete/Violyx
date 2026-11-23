@@ -49,7 +49,7 @@ used for the build tools.
 
 ## Try it
 
-Download `violyx_v0.3.5.iso` from the [Releases](../../releases) page.
+Download `violyx_v0.3.6.iso` from the [Releases](../../releases) page.
 
 **VirtualBox:** create a VM with type *Other/Unknown (64-bit)* and 512 MB memory, and start it from
 the ISO. For internet, choose the network adapter *Intel PRO/1000 MT Desktop*. For sound, enable
@@ -58,10 +58,10 @@ the *Intel HD Audio* controller.
 **QEMU:**
 
 ```sh
-qemu-system-x86_64 -cdrom violyx_v0.3.5.iso -m 512 -nic user,model=e1000 -device intel-hda -device hda-duplex
+qemu-system-x86_64 -cdrom violyx_v0.3.6.iso -m 512 -nic user,model=e1000 -device intel-hda -device hda-duplex
 ```
 
-**Real PC:** write `violyx_v0.3.5.img` to a USB stick (for example with Rufus in DD mode, this
+**Real PC:** write `violyx_v0.3.6.img` to a USB stick (for example with Rufus in DD mode, this
 erases the stick), turn off Secure Boot and start from the stick.
 
 Once it runs, **F1** shows the help and **F2** all programs. All keys are in the
