@@ -87,6 +87,40 @@ static void *a_realloc(void *p, size_t n) {
 #define STB_IMAGE_IMPLEMENTATION
 #pragma GCC diagnostic ignored "-Wunused-function"
 #include "stb_image.h"
+#ifdef VXDEC_WEBP
+/* WebP through libwebp (decoder only, plain C) */
+#include "src/webp/decode.h"
+static int is_webp(const uint8_t *in, int n) {
+    return n >= 16 && !memcmp(in, "RIFF", 4) && !memcmp(in + 8, "WEBP", 4);
+}
+#else
+#define is_webp(in, n) 0
+#endif
+static int px_info(const uint8_t *in, int n, int *w, int *h) {
+    int c;
+#ifdef VXDEC_WEBP
+    if (is_webp(in, n))
+        return WebPGetInfo(in, (size_t)n, w, h);
+#endif
+    return stbi_info_from_memory(in, n, w, h, &c);
+}
+static uint8_t *px_load(const uint8_t *in, int n, int *w, int *h) {
+    int c;
+#ifdef VXDEC_WEBP
+    if (is_webp(in, n))
+        return WebPDecodeRGBA(in, (size_t)n, w, h);
+#endif
+    return stbi_load_from_memory(in, n, w, h, &c, 4);
+}
+static void px_free(const uint8_t *in, int n, uint8_t *p) {
+#ifdef VXDEC_WEBP
+    if (is_webp(in, n)) {
+        WebPFree(p);
+        return;
+    }
+#endif
+    stbi_image_free(p);
+}
 #define MINPX 32
 static int cube(int v) {
     return v < 48 ? 0 : v < 115 ? 1 : (v - 35) / 40;
@@ -121,23 +155,49 @@ static uint8_t nearest(int r, int g, int b) {
 /* Mode 0 (browser): 4-byte header, tiny images are skipped. Mode 2 (image viewer): 12-byte header
  * that also holds the original and the shown size; bit 24 of bg enlarges small images to fit, bit
  * 25 fills the whole area and cuts off what sticks out (for a background). */
+/* Mode 3 (Paint): exactly maxc x maxr pixels, cut to fill an area whose sides are in the ratio
+ * bg>>16 : bg&0xffff (the shape of the screen), 12-byte header like mode 2. */
 static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32_t bg) {
-    int w, h, c, hd = mode == 2 ? 12 : 4, up = mode == 2 && (bg >> 24) & 1,
+    int w, h, hd = mode >= 2 ? 12 : 4, up = mode == 2 && (bg >> 24) & 1,
                  cover = mode == 2 && (bg >> 25) & 1;
-    if (!stbi_info_from_memory(in, n, &w, &h, &c) || w < 1 || h < 1 || (long)w * h > 12000000L)
+    long aw = mode == 3 ? (long)(bg >> 16) : 0, ah = mode == 3 ? (long)(bg & 0xffff) : 0;
+    if (mode == 3) {
+        if (maxc < 1 || maxr < 1 || maxc > 400 || maxr > 400)
+            return;
+        if (aw < 1 || ah < 1) {
+            aw = maxc;
+            ah = maxr;
+        }
+        bg = 0;
+    }
+    if (!px_info(in, n, &w, &h) || w < 1 || h < 1 || (long)w * h > 12000000L)
         return;
     if (mode == 0 && (w < MINPX || h < MINPX)) {
         uint8_t z[4] = {0, 0, 0, 0};
         out(z, 4, 0);
         return;
     }
-    uint8_t *p = stbi_load_from_memory(in, n, &w, &h, &c, 4);
+    uint8_t *p = px_load(in, n, &w, &h);
     if (!p)
         return;
     /* A cell has 4x8 pixels. Small images stay 1:1, large ones are scaled down to fit, the rest
      * stays background. */
     long dw = w, dh = h, sx = 0, sy = 0, sw = w, sh = h; /* the part of the image used */
-    if (cover) {
+    if (mode == 3) {
+        dw = maxc;
+        dh = maxr;
+        if ((long)w * ah > (long)h * aw) {
+            sw = h * aw / ah;
+            sx = (w - sw) / 2;
+        } else {
+            sh = w * ah / aw;
+            sy = (h - sh) / 2;
+        }
+        if (sw < 1)
+            sw = 1;
+        if (sh < 1)
+            sh = 1;
+    } else if (cover) {
         dw = maxc * 4;
         dh = maxr * 8;
         if ((long)w * dh > (long)h * dw) { /* wider than the area: cut left and right */
@@ -160,11 +220,11 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
             dh = maxr * 8;
         }
     }
-    if (dw > maxc * 4) {
+    if (mode != 3 && dw > maxc * 4) {
         dh = dh * maxc * 4 / dw;
         dw = maxc * 4;
     }
-    if (dh > maxr * 8) {
+    if (mode != 3 && dh > maxr * 8) {
         dw = dw * maxr * 8 / dh;
         dh = maxr * 8;
     }
@@ -174,8 +234,11 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
         dh = 1;
     long cols = (dw + 3) / 4, rows = (dh + 7) / 8;
     long pw = cols * 4, ph = rows * 8;
-    if (cols > 240 || rows > 100) {
-        stbi_image_free(p);
+    if (mode == 3) {
+        cols = pw = dw;
+        rows = ph = dh;
+    } else if (cols > 240 || rows > 100) {
+        px_free(in, n, p);
         return;
     }
     uint8_t *o = a_malloc(hd + pw * ph);
@@ -185,7 +248,7 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
         a_free(er);
         a_free(rgb);
         a_free(o);
-        stbi_image_free(p);
+        px_free(in, n, p);
         return;
     }
     o[0] = (uint8_t)cols;
@@ -200,7 +263,7 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
     o[9] = (uint8_t)(dw >> 8);
     o[10] = (uint8_t)dh;
     o[11] = (uint8_t)(dh >> 8);
-    memset(o + hd, 2, pw * ph);
+    memset(o + hd, mode == 3 ? 16 : 2, pw * ph);
     int br = (bg >> 16) & 255, bgg = (bg >> 8) & 255, bb = bg & 255;
     for (long y = 0; y < dh; y++) {
         long y0 = sy + y * sh / dh, y1 = sy + (y + 1) * sh / dh;
@@ -272,7 +335,7 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
     a_free(er); /* matters when the decoder is built into a program */
     a_free(rgb);
     a_free(o);
-    stbi_image_free(p);
+    px_free(in, n, p);
 }
 static void gunzip(const uint8_t *in, long n, long cap) {
     if (n < 18 || in[0] != 0x1F || in[1] != 0x8B || in[2] != 8)
@@ -324,7 +387,7 @@ int main(void) {
         return 0;
     in_read(in, n);
     memset(in + n, 0, 64);
-    if (mode == 0 || mode == 2)
+    if (mode == 0 || mode == 2 || mode == 3)
         image(mode, in, (int)n, (int)a1, (int)a2, (uint32_t)a3);
     else if (mode == 1)
         gunzip(in, n, a1);

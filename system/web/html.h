@@ -14,7 +14,8 @@ enum {
 enum {
     HF_TEXT,
     HF_SUBMIT,
-    HF_HIDDEN
+    HF_HIDDEN,
+    HF_SELECT
 };
 typedef struct {
     uint32_t off;
@@ -35,6 +36,8 @@ typedef struct {
     int type;
     int link;
     int cols;
+    uint32_t opt; /* HF_SELECT: the options in the pool, value and label each */
+    int nopt, sel;
 } hfield;
 typedef struct {
     uint32_t action;
@@ -74,9 +77,12 @@ typedef struct {
     int nums;
     char title[80];
     int full;
+    int reader, rdok; /* reader mode wanted; it found a main part */
 } hpage;
 void html_layout(const char *src, size_t len, int width, int latin1, int plain, hpage *p);
 int html_resolve(const char *base, const char *rel, char *out, size_t n);
 extern int html_lang;
 uint32_t html_hash(const char *s);
 uint16_t html_cp437_uni(uint8_t c);
+/* Option i of a drop-down list: its value, or its label in screen characters */
+const char *html_opt(const hpage *g, const hfield *f, int i, int label);

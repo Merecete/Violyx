@@ -1,4 +1,4 @@
-/* Image viewer: shows PNG, JPEG, GIF, BMP and TGA files from the file manager, the same way the
+/* Image viewer: shows PNG, JPEG, GIF, BMP and WebP files from the file manager, the same way the
  * browser shows pictures (decoded into 256-colour picture cells with the code of the vxdec helper).
  * Large images are scaled down to the window, small ones keep their size unless "fit" is on. A
  * program in ring 3. */
@@ -22,7 +22,7 @@ typedef struct {
 } view_t;
 
 int view_is_image(const char *name) {
-    static const char *ext[] = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tga"};
+    static const char *ext[] = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"};
     int l = strlen(name);
     for (unsigned i = 0; i < sizeof ext / sizeof ext[0]; i++) {
         int e = strlen(ext[i]);

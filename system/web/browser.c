@@ -22,6 +22,8 @@ typedef struct {
     char (*val)[VL];
     u8 *edit;
     int num;
+    short osel[MAXF]; /* chosen option of a drop-down list (when edit[] is set) */
+    int pk, pki, pktop; /* open drop-down list: field + 1, chosen line, first line shown */
 } web_t;
 enum {
     ST_NEW,
@@ -46,11 +48,14 @@ struct tabs_s {
 static web_t *cur;
 static win_t *curw;
 static const char START_EN[] =
-    "<title>Violyx Internet</title><h1>Violyx Internet</h1><p>Welcome to the browser.</p><h2>Violyx App Store</h2><p>New programs for Violyx: <a href=\"https://merecete.org/violyx/store.html\">Violyx App Store</a>. Downloaded apps can be installed right away.</p><h2>Keys</h2><ul><li>Up/Down go from link to link (also fields and buttons)</li><li>Page Up/Down and Space scroll, for reading</li><li>Tab jumps to the next link, Shift+Tab back</li><li>Enter opens the link</li><li>Backspace goes back one page</li><li>Ctrl+L opens the address bar</li><li>N shows link numbers, number and Enter opens directly</li><li>Enter in search fields opens the input</li><li>Ctrl+R reloads, Ctrl+S saves the page, Ctrl+P saves the image on the screen</li><li>Links to files (for example .vpk programs) download to /downloads, programs can be installed right away</li><li>Ctrl+F searches the page, Ctrl+G jumps to the next hit</li><li>Ctrl+D adds a bookmark, Ctrl+B shows bookmarks, Ctrl+H history</li><li>Ctrl+I turns images off or on for this site</li><li>Ctrl+T opens a tab, Ctrl+Enter opens a link in a new tab, Ctrl+Page Up/Down switches tabs</li><li>Esc closes the tab or window</li></ul><h2>Try it</h2><ul><li><a href=\"https://en.wikipedia.org/\">Wikipedia</a></li><li><a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo search</a></li><li><a href=\"https://de.wikipedia.org/\">Wikipedia (German)</a></li><li><a href=\"https://text.npr.org/\">NPR Text</a></li><li><a href=\"https://lite.cnn.com/\">CNN Lite</a></li><li><a href=\"https://lobste.rs/\">Lobsters</a></li><li><a href=\"https://example.com/\">example.com</a></li></ul><p>Please do not enter passwords here. Violyx is a hobby system, nobody has checked its browser for security.</p>";
+    "<title>Violyx Internet</title><h1>Violyx Internet</h1><p>Welcome to the browser.</p><h2>Violyx App Store</h2><p>New programs for Violyx: <a href=\"https://merecete.org/violyx/store.html\">Violyx App Store</a>. Downloaded apps can be installed right away.</p><h2>Keys</h2><ul><li>Up/Down go from link to link (also fields and buttons)</li><li>Page Up/Down and Space scroll, for reading</li><li>Tab jumps to the next link, Shift+Tab back</li><li>Enter opens the link</li><li>Backspace goes back one page</li><li>Ctrl+L opens the address bar</li><li>N shows link numbers, number and Enter opens directly</li><li>R turns reader mode on or off: only the main part of the page</li><li>Enter on a drop-down list opens it, arrows or the first letter choose</li><li>Enter in search fields opens the input</li><li>Ctrl+R reloads, Ctrl+S saves the page, Ctrl+P saves the image on the screen</li><li>Links to files (for example .vpk programs) download to /downloads, programs can be installed right away</li><li>Ctrl+F searches the page, Ctrl+G jumps to the next hit</li><li>Ctrl+D adds a bookmark, Ctrl+B shows bookmarks, Ctrl+H history</li><li>Ctrl+I turns images off or on for this site</li><li>Ctrl+T opens a tab, Ctrl+Enter opens a link in a new tab, Ctrl+Page Up/Down switches tabs</li><li>Esc closes the tab or window</li></ul><h2>Try it</h2><ul><li><a href=\"https://en.wikipedia.org/\">Wikipedia</a></li><li><a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo search</a></li><li><a href=\"https://de.wikipedia.org/\">Wikipedia (German)</a></li><li><a href=\"https://text.npr.org/\">NPR Text</a></li><li><a href=\"https://lite.cnn.com/\">CNN Lite</a></li><li><a href=\"https://lobste.rs/\">Lobsters</a></li><li><a href=\"https://example.com/\">example.com</a></li></ul><p>Please do not enter passwords here. Violyx is a hobby system, nobody has checked its browser for security.</p>";
 static const char START[] =
-    "<title>Violyx Internet</title><h1>Violyx Internet</h1><p>Willkommen im Browser.</p><h2>Violyx App Store</h2><p>Neue Programme für Violyx: <a href=\"https://merecete.org/violyx/store.html\">Violyx App Store</a>. Heruntergeladene Apps lassen sich gleich installieren.</p><h2>Tasten</h2><ul><li>Hoch/Runter gehen von Link zu Link (auch Felder und Knöpfe)</li><li>Bild auf/ab und Leertaste scrollen, zum Lesen</li><li>Tab springt zum nächsten Link, Umschalt+Tab zurück</li><li>Enter öffnet den Link</li><li>Rücktaste geht eine Seite zurück</li><li>Strg+L öffnet die Adresszeile</li><li>N zeigt Link-Nummern, Zahl und Enter öffnet direkt</li><li>Enter in Suchfeldern öffnet die Eingabe</li><li>Strg+R lädt neu, Strg+S speichert die Seite, Strg+P das Bild auf dem Bildschirm</li><li>Links auf Dateien (zum Beispiel .vpk-Programme) landen in /downloads, Programme lassen sich gleich installieren</li><li>Strg+F sucht auf der Seite, Strg+G springt zum nächsten Treffer</li><li>Strg+D merkt die Seite, Strg+B zeigt Lesezeichen, Strg+H den Verlauf</li><li>Strg+I schaltet Bilder für diese Website aus oder ein</li><li>Strg+T öffnet einen Tab, Strg+Enter einen Link im neuen Tab, Strg+Bild auf/ab wechselt den Tab</li><li>Esc schließt den Tab oder das Fenster</li></ul><h2>Zum Ausprobieren</h2><ul><li><a href=\"https://de.wikipedia.org/\">Wikipedia</a></li><li><a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo Suche</a></li><li><a href=\"https://en.wikipedia.org/\">Wikipedia (Englisch)</a></li><li><a href=\"https://text.npr.org/\">NPR Text</a></li><li><a href=\"https://lite.cnn.com/\">CNN Lite</a></li><li><a href=\"https://lobste.rs/\">Lobsters</a></li><li><a href=\"https://example.com/\">example.com</a></li></ul><p>Bitte gib hier keine Passwörter ein. Violyx ist ein Hobbysystem, niemand hat seinen Browser auf Sicherheit geprüft.</p>";
+    "<title>Violyx Internet</title><h1>Violyx Internet</h1><p>Willkommen im Browser.</p><h2>Violyx App Store</h2><p>Neue Programme für Violyx: <a href=\"https://merecete.org/violyx/store.html\">Violyx App Store</a>. Heruntergeladene Apps lassen sich gleich installieren.</p><h2>Tasten</h2><ul><li>Hoch/Runter gehen von Link zu Link (auch Felder und Knöpfe)</li><li>Bild auf/ab und Leertaste scrollen, zum Lesen</li><li>Tab springt zum nächsten Link, Umschalt+Tab zurück</li><li>Enter öffnet den Link</li><li>Rücktaste geht eine Seite zurück</li><li>Strg+L öffnet die Adresszeile</li><li>N zeigt Link-Nummern, Zahl und Enter öffnet direkt</li><li>R schaltet den Lesemodus ein oder aus: nur der Hauptteil der Seite</li><li>Enter auf einer Auswahlliste öffnet sie, Pfeile oder der Anfangsbuchstabe wählen</li><li>Enter in Suchfeldern öffnet die Eingabe</li><li>Strg+R lädt neu, Strg+S speichert die Seite, Strg+P das Bild auf dem Bildschirm</li><li>Links auf Dateien (zum Beispiel .vpk-Programme) landen in /downloads, Programme lassen sich gleich installieren</li><li>Strg+F sucht auf der Seite, Strg+G springt zum nächsten Treffer</li><li>Strg+D merkt die Seite, Strg+B zeigt Lesezeichen, Strg+H den Verlauf</li><li>Strg+I schaltet Bilder für diese Website aus oder ein</li><li>Strg+T öffnet einen Tab, Strg+Enter einen Link im neuen Tab, Strg+Bild auf/ab wechselt den Tab</li><li>Esc schließt den Tab oder das Fenster</li></ul><h2>Zum Ausprobieren</h2><ul><li><a href=\"https://de.wikipedia.org/\">Wikipedia</a></li><li><a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo Suche</a></li><li><a href=\"https://en.wikipedia.org/\">Wikipedia (Englisch)</a></li><li><a href=\"https://text.npr.org/\">NPR Text</a></li><li><a href=\"https://lite.cnn.com/\">CNN Lite</a></li><li><a href=\"https://lobste.rs/\">Lobsters</a></li><li><a href=\"https://example.com/\">example.com</a></li></ul><p>Bitte gib hier keine Passwörter ein. Violyx ist ein Hobbysystem, niemand hat seinen Browser auf Sicherheit geprüft.</p>";
+static int reader; /* reader mode, for all tabs */
 static void layout(web_t *b, int w) {
     b->wid = w;
+    b->pk = 0;
+    b->g.reader = reader;
     html_lang = cfg_lang;
     html_layout(b->html, b->hlen, w, b->lat, b->plain, &b->g);
 }
@@ -733,6 +738,95 @@ static void fgo(web_t *b, int dir, int h) {
                  "Hit line %d of %d. Ctrl+G next, Esc ends search"),
               idx, b->fhits);
 }
+static int optof(web_t *b, int f) {
+    return f < MAXF && b->edit[f] ? b->osel[f] : b->g.fld[f].sel;
+}
+/* The open drop-down list, over the page */
+static void pk_draw(win_t *w, web_t *b) {
+    hpage *g = &b->g;
+    hfield *f = &g->fld[b->pk - 1];
+    int W_ = cw(w), H_ = ch(w) - 2;
+    int bw = f->cols + 6, n = f->nopt;
+    if (bw < 24)
+        bw = 24;
+    if (bw > W_ - 2)
+        bw = W_ - 2;
+    int vis = n < H_ - 3 ? n : H_ - 3;
+    if (vis < 1)
+        vis = 1;
+    if (b->pki < b->pktop)
+        b->pktop = b->pki;
+    if (b->pki >= b->pktop + vis)
+        b->pktop = b->pki - vis + 1;
+    int x0 = (W_ - bw) / 2, y0 = 1 + (H_ - vis - 2) / 2;
+    for (int y = 0; y < vis + 2; y++)
+        for (int x = 0; x < bw; x++)
+            cput(w, x0 + x, y0 + y, ' ', AT(C_RAISE, C_LAV));
+    ctext(w, x0 + 1, y0, AT(C_RAISE, C_GLOW), TR("Auswahl", "Choose"));
+    char t[16];
+    ksnprintf(t, 16, "%d/%d", b->pki + 1, n);
+    ctext(w, x0 + bw - 1 - strlen(t), y0, AT(C_RAISE, C_MID), t);
+    for (int i = 0; i < vis && b->pktop + i < n; i++) {
+        int o = b->pktop + i;
+        const char *l = html_opt(g, f, o, 1);
+        u8 a = o == b->pki ? AT(C_SEL, C_GLOW) : AT(C_RAISE, C_LAV);
+        for (int x = 1; x < bw - 1; x++)
+            cput(w, x0 + x, y0 + 1 + i, ' ', a);
+        for (int x = 0; l[x] && x < bw - 4; x++)
+            cput(w, x0 + 2 + x, y0 + 1 + i, (u8)l[x], a);
+    }
+    ctext(w, x0 + 1, y0 + vis + 1, AT(C_RAISE, C_MID),
+          TR("Enter wählt, Esc zurück", "Enter chooses, Esc back"));
+}
+static void pk_key(win_t *w, web_t *b, key_t k) {
+    hfield *f = &b->g.fld[b->pk - 1];
+    int n = f->nopt, page = ch(w) - 6 > 1 ? ch(w) - 6 : 1;
+    switch (k.key) {
+        case K_UP:
+            if (b->pki > 0)
+                b->pki--;
+            break;
+        case K_DOWN:
+            if (b->pki < n - 1)
+                b->pki++;
+            break;
+        case K_PGUP:
+            b->pki = b->pki > page ? b->pki - page : 0;
+            break;
+        case K_PGDN:
+            b->pki = b->pki + page < n ? b->pki + page : n - 1;
+            break;
+        case K_HOME:
+            b->pki = 0;
+            break;
+        case K_END:
+            b->pki = n - 1;
+            break;
+        case K_ESC:
+            b->pk = 0;
+            break;
+        case K_ENTER: {
+            int fi = b->pk - 1;
+            if (fi < MAXF) {
+                b->osel[fi] = (short)b->pki;
+                b->edit[fi] = 1;
+            }
+            b->pk = 0;
+            break;
+        }
+        default:
+            if (k.key > ' ' && k.key < 127) { /* a letter: the next option that starts with it */
+                int c = k.key | 32;
+                for (int i = 1; i <= n; i++) {
+                    int o = (b->pki + i) % n;
+                    if ((html_opt(&b->g, f, o, 1)[0] | 32) == c) {
+                        b->pki = o;
+                        break;
+                    }
+                }
+            }
+    }
+}
 static void w_draw(win_t *w) {
     web_t *b = w->st;
     if (b->wid != cw(w))
@@ -793,7 +887,9 @@ static void w_draw(win_t *w) {
                     fi = 0;
                 }
                 int f = g->links[lk - 1].field;
-                const char *v = f < MAXF && b->edit[f] ? b->val[f] : g->pool + g->fld[f].value;
+                const char *v = g->fld[f].type == HF_SELECT ? html_opt(g, &g->fld[f], optof(b, f), 1)
+                                : f < MAXF && b->edit[f] ? b->val[f]
+                                                         : g->pool + g->fld[f].value;
                 int n = strlen(v);
                 int c2 = g->fld[f].cols, s0 = n > c2 ? n - c2 : 0;
                 c = fi < n - s0 ? (u8)v[s0 + fi] : (u8)' ';
@@ -821,6 +917,8 @@ static void w_draw(win_t *w) {
                 cputg(w, m->x + x, y + 1, m->id, m->px, m->cols * 4, x, r);
         }
     }
+    if (b->pk)
+        pk_draw(w, b);
     {
         tabs_t *T = b->T;
         if (T->n > 1) {
@@ -845,6 +943,8 @@ static void w_draw(win_t *w) {
                 f,
                 g->fld[fd].type == HF_TEXT
                     ? TR("Eingabefeld: Enter zum Ausfüllen", "Input field: press Enter to fill in")
+                : g->fld[fd].type == HF_SELECT
+                    ? TR("Auswahlliste: Enter öffnet sie", "Drop-down list: press Enter to open")
                     : TR("Knopf: Enter sendet das Formular", "Button: press Enter to submit"),
                 130);
         else
@@ -860,7 +960,8 @@ static void w_draw(win_t *w) {
     int pct = g->nl > H_ ? (b->top * 100) / (g->nl - H_ > 0 ? g->nl - H_ : 1) : 100;
     if (pct > 100)
         pct = 100;
-    ksnprintf(w->foot, 64, " %d / %d (%d%%) ", b->top + 1, g->nl, pct);
+    ksnprintf(w->foot, 64, " %d / %d (%d%%)%s ", b->top + 1, g->nl, pct,
+              g->rdok ? TR(" Lesemodus", " Reader") : "");
     win_title(w, g->title[0] ? g->title : "Violyx Internet");
 }
 static int enc(char *o, int p, int max, const char *v, int cp) {
@@ -914,7 +1015,7 @@ static void submit(win_t *w, web_t *b, int form, int btn) {
         const char *nm = g->pool + f->name;
         if (!*nm)
             continue;
-        int ed = i < MAXF && b->edit[i];
+        int ed = i < MAXF && b->edit[i] && f->type != HF_SELECT;
         if (p) {
             if (p + 2 >= 1300)
                 goto big;
@@ -925,7 +1026,11 @@ static void submit(win_t *w, web_t *b, int form, int btn) {
             goto big;
         q[p++] = '=';
         q[p] = 0;
-        p = enc(q, p, 1300, ed ? b->val[i] : g->pool + f->value, ed);
+        p = enc(q, p, 1300,
+                ed                        ? b->val[i]
+                : f->type == HF_SELECT ? html_opt(g, f, optof(b, i), 0)
+                                          : g->pool + f->value,
+                ed);
         if (p < 0)
             goto big;
     }
@@ -967,6 +1072,12 @@ static void openlink(win_t *w, web_t *b, int id) {
         }
         if (f >= MAXF)
             return;
+        if (fd->type == HF_SELECT) {
+            b->pk = f + 1;
+            b->pki = optof(b, f);
+            b->pktop = 0;
+            return;
+        }
         static char v[VL];
         strlcpy_(v, b->edit[f] ? b->val[f] : g->pool + fd->value, VL);
         if (dlg_input(TR("Eingabe", "Input"), TR("Text eingeben:", "Enter text:"), v, VL)) {
@@ -1016,6 +1127,10 @@ static void w_key(win_t *w, key_t k) {
     hpage *g = &b->g;
     int h = ch(w) - 2;
     static char in[UL];
+    if (b->pk) {
+        pk_key(w, b, k);
+        return;
+    }
     if (k.mods & M_CTRL) {
         tabs_t *T = b->T;
         if (k.key == 't') {
@@ -1272,6 +1387,18 @@ static void w_key(win_t *w, key_t k) {
             } else
                 strlcpy_(b->msg, TR("Keine vorherige Seite", "No previous page"), 80);
             break;
+        case 'r':
+        case 'R':
+            reader = !reader;
+            relay(b, b->wid ? b->wid : cw(w));
+            b->top = 0;
+            strlcpy_(b->msg,
+                     !reader      ? TR("Lesemodus aus", "Reader mode off")
+                     : g->rdok ? TR("Lesemodus an: nur der Hauptteil", "Reader mode on: main part only")
+                               : TR("Lesemodus an, aber diese Seite hat keinen Hauptteil",
+                                    "Reader mode on, but this page has no main part"),
+                     80);
+            return;
         case 'n':
         case 'N':
             g->nums = !g->nums;

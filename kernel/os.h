@@ -410,6 +410,8 @@ typedef struct win {
     int full;        /* covers the whole screen without a frame while it is in front */
     char amenu[200]; /* menu of the program, items separated by |, chosen items arrive as K_MENU + n
                       */
+    int ownkeys;     /* Ctrl/Shift+Arrows go to the program (an editor selects with them) instead
+                        of moving and resizing the window */
 } win_t;
 int prog_builtin(win_t *w);
 const char *prog_version(win_t *w, const char **author);

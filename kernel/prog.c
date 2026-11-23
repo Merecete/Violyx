@@ -690,6 +690,9 @@ static long win_control(proc_t *p, u64 op, u64 b, u64 c) {
             return (long)(ui_rgb((int)(b & 15)) & 0xFFFFFF);
         case 20: /* size of the screen in cells */
             return (long)W << 16 | H;
+        case 21: /* 1: Ctrl/Shift+Arrows go to the program instead of moving the window */
+            w->ownkeys = b != 0;
+            return 0;
         case 19: /* name of the program menu */
             if (!ustr(p, b, t, 20))
                 return VE_INVAL;

@@ -59,6 +59,19 @@ def browser_paths(path, req):
         t += "<p>" + "Langer Text ohne Links. " * 400 + "</p>"
         t += "<p><a href=\"/fern\">Link weit unten</a></p><form action=\"/s\"><input name=\"q\"><input type=\"submit\" value=\"Suchen\"></form>"
         return resp(("<html><head><title>Lang</title></head><body>" + t + "</body></html>").encode())
+    if path == "/neu":  # drop-down list, hidden parts, a main part for reader mode, a WebP picture
+        t = (
+            "<html><head><title>Neu</title><style>.weg{display:none}</style></head><body>"
+            "<nav><a href=\"/n1\">Navigation</a></nav><p class=\"weg\">VERSTECKT1</p>"
+            "<div hidden>VERSTECKT2</div><p style=\"display:none\">VERSTECKT3</p>"
+            "<main><h1>Hauptteil</h1><p>Text im Hauptteil.</p><img src=\"/b.webp\" alt=\"WebP\">"
+            "<form action=\"/wahl\"><select name=\"farbe\"><option value=\"r\">Rot</option>"
+            "<option value=\"g\" selected>Gr&uuml;n</option><option value=\"b\">Blau</option>"
+            "<option>Violett</option></select><div style=\"display:none\"><input name=\"tok\" value=\"42\"></div>"
+            "<input type=\"submit\" value=\"Senden\"></form></main><footer>Fuss</footer></body></html>")
+        return resp(t.encode())
+    if path == "/b.webp":
+        return resp(picture("WEBP"), "image/webp")
     if path == "/gz":
         return resp(
             gzip.compress(

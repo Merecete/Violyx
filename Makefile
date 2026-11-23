@@ -40,7 +40,10 @@ UMB     = -Ikernel/libc -I$(MB)/include -Ikernel/mbed_port -DMBEDTLS_CONFIG_FILE
 UHDR    = system/os.h system/common.h kernel/str.h kernel/viofs.h kernel/version.h
 UMBOBJ  = $(patsubst $(MB)/library/%.c,build/umb/%.o,$(MBSRC))
 URT     = build/u/rt.o build/u/str.o build/u/vfsname.o
-UWEB    = build/u/web/http.o build/u/web/tls.o build/u/web/cookies.o build/u/web/html.o build/u/decode.o build/umb/libmbed.a
+WEBPSRC = $(wildcard third_party/libwebp/src/dec/*.c third_party/libwebp/src/dsp/*.c third_party/libwebp/src/utils/*.c)
+WEBPOBJ = $(patsubst third_party/libwebp/src/%.c,build/uwebp/%.o,$(WEBPSRC))
+UDEC    = build/u/decode.o build/uwebp/libwebp.a
+UWEB    = build/u/web/http.o build/u/web/tls.o build/u/web/cookies.o build/u/web/html.o $(UDEC) build/umb/libmbed.a
 ULD     = ld -m elf_x86_64 -static -nostdlib --no-relax -z max-page-size=0x1000 -z noexecstack -T sdk/link.ld
 build/u/%.o: system/%.c $(UHDR)
 	@mkdir -p $(dir $@)
@@ -53,7 +56,13 @@ build/u/vfsname.o: kernel/vfsname.c kernel/viofs.h
 	$(CC) $(U3) -c $< -o $@
 build/u/decode.o: system/decode.c sdk/helpers/vxdec.c $(UHDR)
 	@mkdir -p build/u
-	$(CC) $(U3) -Isdk/helpers/inc -Ithird_party/stb -w -c $< -o $@
+	$(CC) $(U3) -Isdk/helpers/inc -Ithird_party/stb -Ithird_party/libwebp -w -c $< -o $@
+build/uwebp/libwebp.a: $(WEBPOBJ)
+	rm -f $@
+	ar rcs $@ $^
+build/uwebp/%.o: third_party/libwebp/src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(U3) -DHAVE_CONFIG_H -Isdk/helpers/inc -Ithird_party/libwebp -Dmalloc=vxw_malloc -Dcalloc=vxw_calloc -Dfree=vxw_free -w -Werror=implicit-function-declaration -Werror=int-conversion -c $< -o $@
 build/u/web/%.o: system/web/%.c system/web/web.h system/web/html.h $(UHDR)
 	@mkdir -p build/u/web
 	$(CC) $(U3) $(UMB) -c $< -o $@
@@ -92,8 +101,8 @@ build/sys/calendar.elf: build/u/calendar.o $(URT)
 build/sys/clock.elf: build/u/clock.o $(URT)
 build/sys/voice.elf: build/u/voice.o $(URT)
 build/sys/write.elf: build/u/write.o $(URT)
-build/sys/view.elf: build/u/viewer.o build/u/decode.o $(URT)
-build/sys/paint.elf: build/u/paint.o $(URT)
+build/sys/view.elf: build/u/viewer.o $(UDEC) $(URT)
+build/sys/paint.elf: build/u/paint.o $(UDEC) $(URT)
 build/sys/files.elf: build/u/files.o $(URT)
 build/sys/commands.elf: build/u/commands.o $(UWEB) $(URT)
 build/sys/web.elf: build/u/web/browser.o $(UWEB) $(URT)
@@ -163,10 +172,10 @@ build/fat.o: build/cp437.h kernel/fat.h kernel/viofs.h
 build/iso9660.o: build/cp437.h kernel/iso9660.h kernel/viofs.h
 build/cdda.o: build/cp437.h kernel/cdda.h kernel/viofs.h
 # the licence texts, shown under System > About Violyx > L
-LICFILES = LICENSE THIRD-PARTY-NOTICES.txt third_party/limine/LICENSE third_party/limine/3RDPARTY.md third_party/lwip/COPYING third_party/mbedtls/LICENSE third_party/stb/LICENSE third_party/minimp3/LICENSE third_party/cacert/LICENSE-certifi.txt third_party/rge/LICENSE third_party/spleen/LICENSE system/cc/chibicc/LICENSE third_party/vorbis/COPYING third_party/ogg/COPYING
+LICFILES = LICENSE THIRD-PARTY-NOTICES.txt third_party/limine/LICENSE third_party/limine/3RDPARTY.md third_party/lwip/COPYING third_party/mbedtls/LICENSE third_party/stb/LICENSE third_party/minimp3/LICENSE third_party/cacert/LICENSE-certifi.txt third_party/rge/LICENSE third_party/spleen/LICENSE system/cc/chibicc/LICENSE third_party/vorbis/COPYING third_party/ogg/COPYING third_party/libwebp/COPYING third_party/libwebp/PATENTS
 build/licdata.h: $(LICFILES) tools/mkccdata.py
 	@mkdir -p build
-	python3 tools/mkccdata.py $@ --name=lic 'Violyx: BSD-3-Clause=LICENSE' 'Third-party components=THIRD-PARTY-NOTICES.txt' 'Limine=third_party/limine/LICENSE' 'Limine: included parts=third_party/limine/3RDPARTY.md' 'lwIP=third_party/lwip/COPYING' 'Mbed TLS=third_party/mbedtls/LICENSE' 'stb_image, stb_vorbis=third_party/stb/LICENSE' 'minimp3=third_party/minimp3/LICENSE' 'Root certificates (certifi)=third_party/cacert/LICENSE-certifi.txt' 'Realtek driver (OpenBSD rge)=third_party/rge/LICENSE' 'Spleen font=third_party/spleen/LICENSE' 'chibicc=system/cc/chibicc/LICENSE' 'libvorbis=third_party/vorbis/COPYING' 'libogg=third_party/ogg/COPYING'
+	python3 tools/mkccdata.py $@ --name=lic 'Violyx: BSD-3-Clause=LICENSE' 'Third-party components=THIRD-PARTY-NOTICES.txt' 'Limine=third_party/limine/LICENSE' 'Limine: included parts=third_party/limine/3RDPARTY.md' 'lwIP=third_party/lwip/COPYING' 'Mbed TLS=third_party/mbedtls/LICENSE' 'stb_image, stb_vorbis=third_party/stb/LICENSE' 'minimp3=third_party/minimp3/LICENSE' 'Root certificates (certifi)=third_party/cacert/LICENSE-certifi.txt' 'Realtek driver (OpenBSD rge)=third_party/rge/LICENSE' 'Spleen font=third_party/spleen/LICENSE' 'chibicc=system/cc/chibicc/LICENSE' 'libvorbis=third_party/vorbis/COPYING' 'libogg=third_party/ogg/COPYING' 'libwebp=third_party/libwebp/COPYING' 'libwebp: patent grant=third_party/libwebp/PATENTS'
 build/ui.o: build/licdata.h
 build/drives.o: kernel/iso9660.h
 build/exfat.o: build/cp437.h kernel/exfat.h kernel/viofs.h

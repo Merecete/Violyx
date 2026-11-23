@@ -29,6 +29,10 @@ Mbed TLS 3.6.7           Apache-2.0 (chosen from
 stb_image 2.30           MIT or Public Domain
   images and gzip in sdk/helpers/vxdec.c,
   third_party/stb/LICENSE
+libwebp 1.6.0            BSD-3-Clause (plus the patent
+                         grant in PATENTS)
+  WebP pictures (decoder only, git 5eddebf),
+  third_party/libwebp/COPYING and PATENTS
 stb_vorbis               MIT or Public Domain
   Ogg Vorbis in XZN and Vio-Audio, third_party/stb/LICENSE
 minimp3                  CC0-1.0

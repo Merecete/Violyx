@@ -1174,16 +1174,46 @@ int dlg_input(const char *t, const char *p, char *b, int max) {
     int n = strlen(b), fresh = dlg_fresh;
     dlg_fresh = 0;
     for (;;) {
-        int x, y;
-        dlg_box(t, 50, 7, &x, &y);
-        text(x + 3, y + 2, A_DLG, p);
-        fill(x + 3, y + 3, 44, 1, ' ', A_IN);
-        int s = n > 43 ? n - 43 : 0;
+        /* as wide as the question, up to the screen; longer ones go on two lines */
+        int x, y, pl = (int)strlen(p), w = pl + 6, two = 0, cut = pl;
+        if (w < 50)
+            w = 50;
+        if (w > W - 2)
+            w = W - 2;
+        if (pl > w - 6) {
+            two = 1;
+            cut = w - 6;
+            for (int i = cut; i > (w - 6) / 2; i--)
+                if (p[i] == ' ') {
+                    cut = i;
+                    break;
+                }
+        }
+        dlg_box(t, w, 7 + two, &x, &y);
+        char l1[160];
+        int c1 = cut < 159 ? cut : 159;
+        memcpy(l1, p, (size_t)c1);
+        l1[c1] = 0;
+        text(x + 3, y + 2, A_DLG, l1);
+        if (two) {
+            const char *r = p + cut + (p[cut] == ' ');
+            char l2[160];
+            int c2 = 0;
+            while (r[c2] && c2 < w - 6 && c2 < 159) {
+                l2[c2] = r[c2];
+                c2++;
+            }
+            l2[c2] = 0;
+            text(x + 3, y + 3, A_DLG, l2);
+        }
+        int fw = w - 6, iy = y + 3 + two;
+        fill(x + 3, iy, fw, 1, ' ', A_IN);
+        int s = n > fw - 1 ? n - (fw - 1) : 0;
         for (int i = s; i < n; i++)
-            put(x + 3 + i - s, y + 3, b[i], A_IN);
-        text(x + 3, y + 5, A_DLG, TR("Enter = OK   Esc = Abbrechen", "Enter = OK   Esc = Cancel"));
+            put(x + 3 + i - s, iy, b[i], A_IN);
+        text(x + 3, iy + 2, A_DLG, TR("Enter = OK   Esc = Abbrechen", "Enter = OK   Esc = Cancel"));
         cx = x + 3 + n - s;
-        cy = y + 3;
+        cy = iy;
         present();
         key_t k;
         if (!ui_wait(&k))
@@ -1704,6 +1734,8 @@ static int win_key(key_t k) {
     if (!w)
         return 0;
     int c = k.mods & M_CTRL, s = k.mods & M_SHIFT;
+    if (w->ownkeys)
+        return 0;
     if (c && !s && (k.key == K_LEFT || k.key == K_RIGHT || k.key == K_UP || k.key == K_DOWN) &&
         !w->zoomed) {
         int dx = k.key == K_LEFT    ? -1

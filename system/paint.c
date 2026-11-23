@@ -53,6 +53,33 @@ static int wfile(const char *p, u8 *out) {
     memcpy(out, b + 4, WSZ);
     return 0;
 }
+/* Loads a PNG, JPEG, GIF or BMP picture: cut to the shape of the screen, scaled down to 80x50
+ * and turned into the 256 colours. A start for painting over it. */
+static int pimport(const char *p, u8 *out) {
+    vfs_ent e;
+    int r = fsx_stat(p, &e);
+    if (r)
+        return r;
+    if (e.dir)
+        return VE_INVAL;
+    if (!e.size || e.size > (32u << 20))
+        return e.size ? VE_NOSPC : VE_FORMAT;
+    u8 *d = kmalloc(e.size), *o = kmalloc(12 + WSZ);
+    if (!d || !o) {
+        kfree(d);
+        kfree(o);
+        return VE_NOSPC;
+    }
+    int64_t n = fsx_read(p, d, e.size);
+    long k = n < 0 ? (long)n
+                   : prog_decode(3, d, (u64)n, o, 12 + WSZ, PW, PH, ((long)W << 16) | (H * 2),
+                                 15000, 0);
+    if (k == 12 + WSZ)
+        memcpy(out, o + 12, WSZ);
+    kfree(d);
+    kfree(o);
+    return k == 12 + WSZ ? 0 : k < 0 ? (int)k : VE_FORMAT;
+}
 static u8 cv[WSZ], und[WSZ];
 static const u8 QP[16] = {16, 231, 244, 196, 208, 226, 46,     51,
                           21, 93,  201, 213, 94,  30,  C_NEON, C_VIOLET};
@@ -83,6 +110,9 @@ static void pshow(int px, int py, int col, int pen) {
     put8(x + 2, by, 0xDB, col, C_RAISE);
     char s[40];
     ksnprintf(s, 40, " %d,%d %s Tab %s", px, py, pen ? "Pen" : "", TR("Farben", "Colours"));
+    int room = W - 19 - (x + 3);
+    if (room < (int)strlen(s))
+        s[room > 0 ? room : 0] = 0;
     text(x + 3, by, AT(C_RAISE, C_GLOW), s);
     text(W - 18, by, AT(C_RAISE, C_MID), TR("F1 Hilfe  Esc Ende", "F1 Help  Esc Quit"));
     ui_show();
@@ -149,7 +179,7 @@ static void phelp(void) {
                                "F          Fläche füllen",
                                "U          Rückgängig",
                                "N          Neues Bild",
-                               "O / S      Öffnen / Speichern",
+                               "O / S      Öffnen (auch PNG, JPEG) / Speichern",
                                "T          Als Hintergrund verwenden"},
                       *en[] = {"Arrows     Move",
                                "Space      Paint one pixel",
@@ -159,7 +189,7 @@ static void phelp(void) {
                                "F          Fill area",
                                "U          Undo",
                                "N          New image",
-                               "O / S      Open / Save",
+                               "O / S      Open (also PNG, JPEG) / Save",
                                "T          Use as background"};
     for (int i = 0; i < 10; i++)
         text(x + 4, y + 2 + i, AT(C_RAISE, C_LAV), TR(de[i], en[i]));
@@ -310,10 +340,22 @@ static void paint_run(void) {
         if (K == 'o' || K == 'O') {
             char n[VFS_PATH];
             if (dlg_pick(TR("Bild öffnen", "Open image"), n, VFS_PATH)) {
-                int r = wfile(n, cv);
+                static u8 t[WSZ];
+                int r = wfile(n, t);
+                if (r == VE_FORMAT) { /* not a Paint picture: import it as a start */
+                    r = pimport(n, t);
+                    if (!r) {
+                        memcpy(und, cv, WSZ);
+                        memcpy(cv, t, WSZ);
+                        path[0] = 0;
+                        dirty = 1;
+                        continue;
+                    }
+                }
                 if (r)
                     dlg_msg(TR("Malprogramm", "Paint"), vfs_errstr(r, cfg_lang));
                 else {
+                    memcpy(cv, t, WSZ);
                     strlcpy_(path, n, VFS_PATH);
                     dirty = 0;
                     memcpy(und, cv, WSZ);

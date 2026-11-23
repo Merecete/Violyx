@@ -14,6 +14,7 @@ int html_lang;
 #define MAXDEPTH 16
 #define TCOLS    16
 #define FGS      24
+#define HCLS     96
 typedef struct {
     const char *p, *e;
     hpage *g;
@@ -30,6 +31,9 @@ typedef struct {
         uint32_t h;
         uint8_t prev;
     } fgs[FGS];
+    uint32_t hcls[HCLS]; /* classes and ids that a <style> block hides with display:none */
+    int nhcls;
+    int rd; /* reader mode: only the main part of the page */
 } C;
 static int lc(int c) {
     return c >= 'A' && c <= 'Z' ? c + 32 : c;
@@ -194,23 +198,24 @@ static void puts_(C *c, const char *s, int st) {
     while (*s)
         put(c, (uint8_t)*s++, st);
 }
-static void outcp(C *c, uint32_t u, int st) {
+/* One code point as up to 4 CP437 bytes (the screen font), 0 bytes for invisible ones */
+static int cpconv(uint32_t u, uint8_t *o) {
     if (u < 32 || u == 127)
-        return;
+        return 0;
     if (u < 127) {
-        put(c, (uint8_t)u, st);
-        return;
+        o[0] = (uint8_t)u;
+        return 1;
     }
     if (u == 0xA0) {
-        put(c, ' ', st);
-        return;
+        o[0] = ' ';
+        return 1;
     }
     int a = 0, b = sizeof cp437_map / sizeof cp437_map[0] - 1;
     while (a <= b) {
         int m = (a + b) / 2;
         if (cp437_map[m].u == u) {
-            put(c, cp437_map[m].c, st);
-            return;
+            o[0] = cp437_map[m].c;
+            return 1;
         }
         if (cp437_map[m].u < u)
             a = m + 1;
@@ -223,51 +228,51 @@ static void outcp(C *c, uint32_t u, int st) {
         case 0x2212:
         case 0x2010:
         case 0x2011:
-            put(c, '-', st);
-            break;
+            o[0] = '-';
+            return 1;
         case 0x2018:
         case 0x2019:
         case 0x201A:
         case 0x2032:
-            put(c, '\'', st);
-            break;
+            o[0] = '\'';
+            return 1;
         case 0x201C:
         case 0x201D:
         case 0x201E:
         case 0x2033:
         case 0xAB:
         case 0xBB:
-            put(c, '"', st);
-            break;
+            o[0] = '"';
+            return 1;
         case 0x2026:
-            puts_(c, "...", st);
-            break;
+            memcpy(o, "...", 3);
+            return 3;
         case 0x2022:
         case 0xB7:
         case 0x25CF:
-            put(c, 0xF9, st);
-            break;
+            o[0] = 0xF9;
+            return 1;
         case 0x20AC:
-            puts_(c, "EUR", st);
-            break;
+            memcpy(o, "EUR", 3);
+            return 3;
         case 0xA9:
-            puts_(c, "(c)", st);
-            break;
+            memcpy(o, "(c)", 3);
+            return 3;
         case 0xAE:
-            puts_(c, "(R)", st);
-            break;
+            memcpy(o, "(R)", 3);
+            return 3;
         case 0x2122:
-            puts_(c, "(TM)", st);
-            break;
+            memcpy(o, "(TM)", 4);
+            return 4;
         case 0xD7:
-            put(c, 'x', st);
-            break;
+            o[0] = 'x';
+            return 1;
         case 0x2192:
-            puts_(c, "->", st);
-            break;
+            memcpy(o, "->", 2);
+            return 2;
         case 0x2190:
-            puts_(c, "<-", st);
-            break;
+            memcpy(o, "<-", 2);
+            return 2;
         case 0x200B:
         case 0x200C:
         case 0x200D:
@@ -275,10 +280,17 @@ static void outcp(C *c, uint32_t u, int st) {
         case 0xFEFF:
         case 0x200E:
         case 0x200F:
-            break;
+            return 0;
         default:
-            put(c, '?', st);
+            o[0] = '?';
+            return 1;
     }
+}
+static void outcp(C *c, uint32_t u, int st) {
+    uint8_t b[4];
+    int n = cpconv(u, b);
+    for (int i = 0; i < n; i++)
+        put(c, b[i], st);
 }
 static void text1(C *c, uint32_t u) {
     int st = cstyle(c);
@@ -427,12 +439,14 @@ enum {
     A_STYLE,
     A_COLOR,
     A_COLSPAN,
+    A_CLASS,
+    A_ARIAH,
     A_N
 };
 typedef struct {
     const char *v[A_N];
     int n[A_N];
-    int hidden, checked;
+    int hidden, checked, selected, open;
 } attrs;
 /* Reads the attributes up to the end of the tag */
 static void parse_attrs(C *c, attrs *a) {
@@ -490,6 +504,8 @@ static void parse_attrs(C *c, attrs *a) {
                 : kl == 5 && ieq(k, "style", 5)    ? A_STYLE
                 : kl == 5 && ieq(k, "color", 5)    ? A_COLOR
                 : kl == 7 && ieq(k, "colspan", 7)  ? A_COLSPAN
+                : kl == 5 && ieq(k, "class", 5)    ? A_CLASS
+                : kl == 11 && ieq(k, "aria-hidden", 11) ? A_ARIAH
                                                    : -1;
         if (i >= 0 && v && vl < 4096) {
             a->v[i] = v;
@@ -499,6 +515,10 @@ static void parse_attrs(C *c, attrs *a) {
             a->hidden = 1;
         if (kl == 7 && ieq(k, "checked", 7))
             a->checked = 1;
+        if (kl == 8 && ieq(k, "selected", 8))
+            a->selected = 1;
+        if (kl == 4 && ieq(k, "open", 4))
+            a->open = 1;
     }
     if (p < e)
         p++;
@@ -517,6 +537,28 @@ static int pool_add(C *c, const char *s, int n) {
             uint32_t u = entity(p, e, &q);
             if (u && u < 128) {
                 *w++ = (char)u;
+                p = q;
+                continue;
+            }
+            if (u && c->lat && u < 256) { /* the page's own encoding */
+                *w++ = (char)u;
+                p = q;
+                continue;
+            }
+            if (u && !c->lat && u < 0x110000) { /* UTF-8, at most 4 bytes for a longer entity */
+                if (u < 0x800) {
+                    *w++ = (char)(0xC0 | u >> 6);
+                    *w++ = (char)(0x80 | (u & 63));
+                } else if (u < 0x10000) {
+                    *w++ = (char)(0xE0 | u >> 12);
+                    *w++ = (char)(0x80 | ((u >> 6) & 63));
+                    *w++ = (char)(0x80 | (u & 63));
+                } else {
+                    *w++ = (char)(0xF0 | u >> 18);
+                    *w++ = (char)(0x80 | ((u >> 12) & 63));
+                    *w++ = (char)(0x80 | ((u >> 6) & 63));
+                    *w++ = (char)(0x80 | (u & 63));
+                }
                 p = q;
                 continue;
             }
@@ -743,6 +785,317 @@ static uint8_t scolor(const char *s, int n) {
         }
     return 0;
 }
+/* ---------- What the page hides (no full CSS: only display:none and its relatives) ---------- */
+/* Does the text s contain the declaration pat ("display:none")? Spaces in s are skipped. */
+static int hasdecl(const char *s, int n, const char *pat) {
+    for (int i = 0; i < n; i++) {
+        if (lc(s[i]) != pat[0] || (i && (alnum(s[i - 1]) || s[i - 1] == '-')))
+            continue;
+        int j = i, k = 0;
+        while (pat[k] && j < n) {
+            if (ws(s[j])) {
+                j++;
+                continue;
+            }
+            if (lc(s[j]) != pat[k])
+                break;
+            j++;
+            k++;
+        }
+        if (!pat[k] && (j >= n || !(alnum(s[j]) || s[j] == '-')))
+            return 1;
+    }
+    return 0;
+}
+static int hides(const char *s, int n) {
+    return hasdecl(s, n, "display:none") || hasdecl(s, n, "visibility:hidden");
+}
+/* Class names that frameworks hide everywhere, even with the style sheet in another file */
+static const char *const hcl_std[] = {"hidden", "d-none", "hide", "is-hidden", "u-hidden",
+                                      "visually-hidden", "invisible", 0};
+static void css_add(C *c, char kind, const char *s, int n) {
+    if (n < 1 || n > 80 || c->nhcls >= HCLS)
+        return;
+    c->hcls[c->nhcls++] = hashn(s, n) ^ (kind == '#' ? 0x9E3779B9u : 0);
+}
+/* Reads the rules of a <style> block. Kept are simple selectors (".name", "div.name", "#id") of
+ * rules that hide; @media and other @ blocks are left out, they depend on the screen. */
+static void css_parse(C *c, const char *p, const char *e) {
+    while (p < e) {
+        while (p < e && (ws(*p) || *p == '}' || *p == ';'))
+            p++;
+        if (p + 1 < e && p[0] == '/' && p[1] == '*') {
+            p += 2;
+            while (p + 1 < e && !(p[0] == '*' && p[1] == '/'))
+                p++;
+            p += 2;
+            continue;
+        }
+        if (p >= e)
+            break;
+        const char *sel = p;
+        while (p < e && *p != '{' && *p != ';')
+            p++;
+        if (p >= e)
+            break;
+        if (*p == ';') { /* @import and the like */
+            p++;
+            continue;
+        }
+        const char *se = p++;
+        const char *b = p;
+        int d = 1;
+        while (p < e && d) {
+            if (*p == '{')
+                d++;
+            else if (*p == '}')
+                d--;
+            p++;
+        }
+        if (*sel == '@' || d || !hides(b, (int)(p - 1 - b)))
+            continue;
+        const char *q = sel;
+        while (q < se) { /* each selector of the list */
+            while (q < se && (ws(*q) || *q == ','))
+                q++;
+            const char *a = q;
+            while (q < se && *q != ',')
+                q++;
+            const char *z = q;
+            while (z > a && ws(z[-1]))
+                z--;
+            const char *t = a;
+            while (t < z && alnum(*t))
+                t++;
+            if (t >= z || (*t != '.' && *t != '#'))
+                continue;
+            char kind = *t++;
+            const char *nm = t;
+            while (t < z && (alnum(*t) || *t == '-' || *t == '_'))
+                t++;
+            if (t == z && t > nm)
+                css_add(c, kind, nm, (int)(t - nm));
+        }
+    }
+}
+static int cls_hidden(C *c, const char *s, int n, char kind) {
+    const char *e = s + n;
+    while (s < e) {
+        while (s < e && ws(*s))
+            s++;
+        const char *a = s;
+        while (s < e && !ws(*s))
+            s++;
+        int l = (int)(s - a);
+        if (!l)
+            break;
+        if (kind == '.')
+            for (int i = 0; hcl_std[i]; i++)
+                if ((int)strlen(hcl_std[i]) == l && ieq(a, hcl_std[i], l))
+                    return 1;
+        uint32_t h = hashn(a, l) ^ (kind == '#' ? 0x9E3779B9u : 0);
+        for (int i = 0; i < c->nhcls; i++)
+            if (c->hcls[i] == h)
+                return 1;
+        if (kind == '#')
+            break;
+    }
+    return 0;
+}
+static int is_hidden(C *c, const attrs *a) {
+    if (a->hidden)
+        return 1;
+    if (a->v[A_ARIAH] && a->n[A_ARIAH] == 4 && ieq(a->v[A_ARIAH], "true", 4))
+        return 1;
+    if (a->v[A_STYLE] && hides(a->v[A_STYLE], a->n[A_STYLE]))
+        return 1;
+    if (a->v[A_CLASS] && cls_hidden(c, a->v[A_CLASS], a->n[A_CLASS], '.'))
+        return 1;
+    return a->v[A_ID] && c->nhcls && cls_hidden(c, a->v[A_ID], a->n[A_ID], '#');
+}
+/* Is there the tag <name (or </name when cl) at p? */
+static int tag_at(const char *p, const char *e, const char *name, int l, int cl) {
+    if (p >= e || *p != '<')
+        return 0;
+    p++;
+    if (cl) {
+        if (p >= e || *p != '/')
+            return 0;
+        p++;
+    }
+    return p + l < e && ieq(p, name, l) && !alnum(p[l]) && p[l] != '-';
+}
+/* The end of the element whose start tag ended at p: just after its </name>, counting nested
+ * ones. Elements whose end tag may be left out (li, p, ...) end at the next sibling too. 0 when no
+ * end is found: then nothing is hidden, better too much than a lost page. */
+static const char *elem_end(const char *p, const char *e, const char *name, int l, int opt) {
+    int d = 1;
+    while (p < e) {
+        if (*p != '<') {
+            p++;
+            continue;
+        }
+        if (p + 3 < e && p[1] == '!' && p[2] == '-' && p[3] == '-') {
+            p += 4;
+            while (p + 2 < e && !(p[0] == '-' && p[1] == '-' && p[2] == '>'))
+                p++;
+            p += 3;
+            continue;
+        }
+        if (tag_at(p, e, name, l, 1)) {
+            if (!--d || opt) {
+                while (p < e && *p != '>')
+                    p++;
+                return p < e ? p + 1 : e;
+            }
+        } else if (tag_at(p, e, name, l, 0)) {
+            if (opt)
+                return p;
+            d++;
+        }
+        p++;
+    }
+    return 0;
+}
+/* Skips a hidden element */
+static void skip_elem(C *c, const char *n, int nl) {
+    static const char *const vo[] = {"img", "input", "br", "hr", "meta", "link", "source",
+                                     "wbr", "area", "col", "embed", "param", "track", 0};
+    static const char *const op[] = {"li", "p", "dt", "dd", "option", "tr", "td", "th", 0};
+    for (int i = 0; vo[i]; i++)
+        if ((int)strlen(vo[i]) == nl && !strncmp(n, vo[i], nl))
+            return;
+    int opt = 0;
+    for (int i = 0; op[i]; i++)
+        if ((int)strlen(op[i]) == nl && !strncmp(n, op[i], nl))
+            opt = 1;
+    if (c->p[-1] == '>' && c->p[-2] == '/')
+        return; /* <div/> has nothing inside */
+    const char *q = elem_end(c->p, c->e, n, nl, opt);
+    if (q)
+        c->p = q;
+}
+/* ---------- Drop-down lists (<select>) ---------- */
+/* Pool: for each option the value and then the label (in screen characters), each with a 0 */
+static int pool_raw(C *c, const uint8_t *s, int n) {
+    hpage *g = c->g;
+    uint32_t o = g->pu;
+    if (o + (uint32_t)n + 2 >= g->pc)
+        return -1;
+    memcpy(g->pool + o, s, (size_t)n);
+    g->pool[o + n] = 0;
+    g->pu = o + (uint32_t)n + 1;
+    return (int)o;
+}
+static void widget_select(C *c, const attrs *a, const char *s, const char *e) {
+    hpage *g = c->g;
+    if (c->form < 0 || !a->v[A_NAME] || g->nf >= g->maxf)
+        return;
+    int nm = pool_add(c, a->v[A_NAME], a->n[A_NAME]);
+    if (nm < 0)
+        return;
+    int first = -1, nopt = 0, sel = 0, wmax = 4;
+    const char *sp = c->p, *se = c->e;
+    const char *p = s;
+    while (p < e && nopt < 1000) {
+        if (!tag_at(p, e, "option", 6, 0)) {
+            p++;
+            continue;
+        }
+        attrs oa;
+        c->p = p + 7;
+        c->e = e;
+        parse_attrs(c, &oa);
+        p = c->p;
+        const char *t = p;
+        while (p < e && *p != '<')
+            p++;
+        const char *te = p;
+        while (t < te && ws(*t))
+            t++;
+        while (te > t && ws(te[-1]))
+            te--;
+        uint8_t lab[48];
+        int ln = 0, sp_ = 0;
+        const char *q = t;
+        while (q < te && ln < 40) {
+            uint32_t u;
+            if (*q == '&') {
+                const char *r;
+                u = entity(q, te, &r);
+                if (u)
+                    q = r;
+                else {
+                    u = '&';
+                    q++;
+                }
+            } else
+                u = nextcp(&q, te, c->lat);
+            if (u == ' ' || u == '\n' || u == '\r' || u == '\t' || u == 0xA0) {
+                sp_ = ln > 0;
+                continue;
+            }
+            uint8_t b[4];
+            int k = cpconv(u, b);
+            if (sp_ && ln < 40)
+                lab[ln++] = ' ';
+            sp_ = 0;
+            for (int i = 0; i < k && ln < 40; i++)
+                lab[ln++] = b[i];
+        }
+        int vo = oa.v[A_VALUE] ? pool_add(c, oa.v[A_VALUE], oa.n[A_VALUE])
+                               : pool_add(c, t, (int)(te - t) < 4000 ? (int)(te - t) : 4000);
+        if (vo < 0 || pool_raw(c, lab, ln) < 0)
+            break;
+        if (first < 0)
+            first = vo;
+        if (oa.selected)
+            sel = nopt;
+        if (ln > wmax)
+            wmax = ln;
+        nopt++;
+    }
+    c->p = sp;
+    c->e = se;
+    if (!nopt)
+        return;
+    hfield *f = &g->fld[g->nf];
+    f->name = (uint32_t)nm;
+    f->form = c->form;
+    f->type = HF_SELECT;
+    f->opt = (uint32_t)first;
+    f->nopt = nopt;
+    f->sel = sel;
+    f->value = (uint32_t)(html_opt(g, f, sel, 0) - g->pool);
+    f->cols = wmax > 30 ? 30 : wmax;
+    f->link = 0;
+    int fi = g->nf++;
+    int id = newlink(c, 0, fi);
+    if (!id)
+        return;
+    f->link = id;
+    pendsp(c);
+    if (c->col + f->cols + 10 >= c->w)
+        flush(c);
+    linknum(c, id, 0);
+    uint16_t sv = c->lk;
+    c->lk = (uint16_t)id;
+    put(c, '[', HS_FIELD);
+    for (int i = 0; i < f->cols; i++)
+        put(c, '_', HS_FIELD);
+    put(c, ' ', HS_FIELD);
+    put(c, 'v', HS_FIELD);
+    put(c, ']', HS_FIELD);
+    c->lk = sv;
+}
+const char *html_opt(const hpage *g, const hfield *f, int i, int label) {
+    const char *p = g->pool + f->opt;
+    if (i < 0 || i >= f->nopt)
+        i = 0;
+    for (int k = 0; k < i * 2 + (label ? 1 : 0); k++)
+        p += strlen(p) + 1;
+    return p;
+}
 /* ---------- Tables ---------- */
 /* Measures a simple table in advance. 0: do not align it, let it flow with separators as before */
 static int tscan(const char *p, const char *e, int *cw, int *nc) {
@@ -915,6 +1268,36 @@ static void trule(C *c) {
     newline(c);
 }
 #define IS(s) (nl == sizeof(s) - 1 && !strncmp(n, s, nl))
+/* Fields inside hidden parts are still sent with the form, as in other browsers */
+static void hidden_input(C *c, const attrs *a) {
+    const char *t = a->v[A_TYPE];
+    int tl = a->n[A_TYPE];
+    if (t && ((tl == 6 && (ieq(t, "submit", 6) || ieq(t, "button", 6))) ||
+              (tl == 5 && (ieq(t, "image", 5) || ieq(t, "reset", 5))) ||
+              (tl == 8 && ieq(t, "password", 8)) || (tl == 4 && ieq(t, "file", 4))))
+        return;
+    if (t && ((tl == 8 && ieq(t, "checkbox", 8)) || (tl == 5 && ieq(t, "radio", 5))) &&
+        !a->checked)
+        return;
+    addfield(c, HF_HIDDEN, a, 0);
+}
+static void hidden_inputs(C *c, const char *p, const char *e) {
+    const char *sp = c->p, *se = c->e;
+    while (p < e) {
+        if (!tag_at(p, e, "input", 5, 0)) {
+            p++;
+            continue;
+        }
+        attrs a;
+        c->p = p + 6;
+        c->e = e;
+        parse_attrs(c, &a);
+        p = c->p;
+        hidden_input(c, &a);
+    }
+    c->p = sp;
+    c->e = se;
+}
 static void tag(C *c) {
     const char *p = c->p + 1, *e = c->e;
     int cl_ = 0;
@@ -948,6 +1331,17 @@ static void tag(C *c) {
                 g->anch[g->nan].line = g->nl;
                 g->nan++;
             }
+    }
+    if (!cl_ && !(IS("html") || IS("body") || IS("head")) &&
+        (is_hidden(c, &a) || (IS("dialog") && !a.open) ||
+         (c->rd && (IS("nav") || IS("aside"))))) {
+        const char *s0 = c->p;
+        if (c->form >= 0 && IS("input"))
+            hidden_input(c, &a);
+        skip_elem(c, n, (int)nl);
+        if (c->form >= 0 && c->p > s0)
+            hidden_inputs(c, s0, c->p);
+        return;
     }
     {
         uint32_t nh = hashn(n, nl);
@@ -1056,8 +1450,20 @@ static void tag(C *c) {
         widget_submit(c, &a, q, (size_t)(qe - q));
         return;
     }
-    if (!cl_ && (IS("script") || IS("style") || IS("svg") || IS("template") || IS("select") ||
-                 IS("iframe") || IS("object") || IS("canvas"))) {
+    if (!cl_ && IS("style")) {
+        const char *s0 = c->p;
+        skip_raw(c, n, nl);
+        css_parse(c, s0, c->p);
+        return;
+    }
+    if (!cl_ && IS("select")) {
+        const char *s0 = c->p;
+        skip_raw(c, n, nl);
+        widget_select(c, &a, s0, c->p);
+        return;
+    }
+    if (!cl_ && (IS("script") || IS("svg") || IS("template") || IS("iframe") || IS("object") ||
+                 IS("canvas"))) {
         skip_raw(c, n, nl);
         return;
     }
@@ -1396,6 +1802,61 @@ static void tag(C *c) {
         return;
     }
 }
+/* Reader mode: only <main>, or else the <article> parts, are laid out. The head before them still
+ * gives the title and the style rules. */
+static const char *find_tag(const char *p, const char *e, const char *name, int l) {
+    for (; p < e; p++)
+        if (*p == '<' && tag_at(p, e, name, l, 0))
+            return p;
+    return 0;
+}
+static void reader_part(C *c) {
+    const char *s = c->p, *e = c->e, *a, *z = 0;
+    const char *m = find_tag(s, e, "main", 4);
+    if (m) {
+        const char *q = m;
+        while (q < e && *q != '>')
+            q++;
+        z = q < e ? elem_end(q + 1, e, "main", 4, 0) : 0;
+        a = m;
+    } else {
+        a = find_tag(s, e, "article", 7);
+        for (const char *q = a; q && q < e;) {
+            const char *t = find_tag(q + 1, e, "article", 7), *x = q;
+            while (x < e && *x != '>')
+                x++;
+            const char *y = x < e ? elem_end(x + 1, e, "article", 7, 0) : 0;
+            if (y)
+                z = y;
+            q = t && y && t < y ? find_tag(y, e, "article", 7) : t;
+        }
+    }
+    if (!a || !z)
+        return;
+    /* the head: only <title> and <style> */
+    c->e = a;
+    for (const char *p = s; p < a; p++) {
+        if (*p != '<')
+            continue;
+        if (tag_at(p, a, "title", 5, 0) || tag_at(p, a, "style", 5, 0)) {
+            c->p = p;
+            tag(c);
+            p = c->p - 1;
+        } else if (p + 3 < a && p[1] == '!' && p[2] == '-' && p[3] == '-') {
+            p += 4;
+            while (p + 2 < a && !(p[0] == '-' && p[1] == '-' && p[2] == '>'))
+                p++;
+        } else if (tag_at(p, a, "script", 6, 0)) {
+            c->p = p + 7;
+            skip_raw(c, "script", 6);
+            p = c->p - 1;
+        }
+    }
+    c->p = a;
+    c->e = z;
+    c->rd = 1;
+    c->g->rdok = 1;
+}
 void html_layout(const char *src, size_t len, int w, int lat, int plain, hpage *g) {
     C c;
     memset(&c, 0, sizeof c);
@@ -1424,6 +1885,9 @@ void html_layout(const char *src, size_t len, int w, int lat, int plain, hpage *
     c.blank = 1;
     if (plain)
         c.pre = 1;
+    g->rdok = 0;
+    if (g->reader && !plain)
+        reader_part(&c);
     while (c.p < c.e && !c.stop) {
         char ch = *c.p;
         if (ch == '<' && !plain && c.p + 1 < c.e) {

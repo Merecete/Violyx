@@ -43,6 +43,7 @@ static void al(int small) {
     g.maxfrm = small ? 1 : 64;
     g.frm = malloc(sizeof(hform) * g.maxfrm);
     g.nums = rand() % 2;
+    g.reader = rand() % 3 == 0;
 }
 static const char *dict[] = {"<form action=\"",
                              "<form method=post>",
@@ -92,7 +93,25 @@ static const char *dict[] = {"<form action=\"",
                              "<svg",
                              "</",
                              "<!",
-                             "<?"};
+                             "<?",
+                             "<select name=s>",
+                             "<option value=",
+                             "<option selected>",
+                             "</select>",
+                             "<style>.h{display:none}",
+                             "</style>",
+                             " class=h",
+                             " hidden",
+                             " style='display:none'",
+                             " aria-hidden=true",
+                             "<main>",
+                             "</main>",
+                             "<article>",
+                             "</article>",
+                             "<nav>",
+                             "</div>",
+                             "<div class=\"h d-none\">",
+                             "<dialog>"};
 int main(int ac, char **av) {
     char *files[64];
     size_t sz[64];
@@ -182,6 +201,10 @@ int main(int ac, char **av) {
                 abort();
             if (g.fld[i].link < 0 || g.fld[i].link > g.nlk)
                 abort();
+            if (g.fld[i].type == HF_SELECT)
+                for (int k = 0; k < g.fld[i].nopt; k++)
+                    if (html_opt(&g, &g.fld[i], k, 1) >= g.pool + g.pu)
+                        abort();
         }
         for (int i = 0; i < g.nlk; i++) {
             const char *r = g.pool + g.links[i].off;
