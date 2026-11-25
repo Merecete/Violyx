@@ -36,20 +36,22 @@ used for the build tools.
 - Every program runs in its own protected memory, so a crash only ends that program
 - Sound, wired network, USB sticks and SD cards (FAT32 and exFAT), CDs and DVDs, English and German
 - Installer for the entire disk or next to Windows or another system
+- Updates over the internet or from a `.vup` file, the previous version stays and can be started
+  again
 
 ### Programming
 
 - Built-in C compiler: write a program in Write and compile it in Commands with `cc`, right on Violyx
 - [SDK](sdk/README.md) in C with one header, `violyx.h`: text grid with 256 colours, keyboard,
-  files, dialogs, network, sound and recording
+  files, dialogs, network, sound, recording and screen savers
 - Programs are shared as `.vpk` packages and installed with one key press in Files
-- New apps will be available in the [Violyx App Store](https://merecete.org/violyx/store.html),
+- Apps and screen savers are in the [Violyx App Store](https://merecete.org/violyx/store.html),
   linked on the start page of the browser
 - The examples, including Snake, Novastrike and the XZN player, come with full source code
 
 ## Try it
 
-Download `violyx_v0.3.6.iso` from the [Releases](../../releases) page.
+Download `violyx_v0.3.7.iso` from the [Releases](../../releases) page.
 
 **VirtualBox:** create a VM with type *Other/Unknown (64-bit)* and 512 MB memory, and start it from
 the ISO. For internet, choose the network adapter *Intel PRO/1000 MT Desktop*. For sound, enable
@@ -61,7 +63,7 @@ the *Intel HD Audio* controller.
 qemu-system-x86_64 -cdrom violyx_v0.3.7.iso -m 512 -nic user,model=e1000 -device intel-hda -device hda-duplex
 ```
 
-**Real PC:** write `violyx_v0.3.6.img` to a USB stick (for example with Rufus in DD mode, this
+**Real PC:** write `violyx_v0.3.7.img` to a USB stick (for example with Rufus in DD mode, this
 erases the stick), turn off Secure Boot and start from the stick.
 
 Once it runs, **F1** shows the help and **F2** all programs. All keys are in the
@@ -87,8 +89,6 @@ The finished images are in the `build` folder.
 - The browser has no JavaScript and no style sheets, many modern sites will not work
 - Network cards: Intel E1000 and Realtek RTL8125B/RTL8126 only, no Wi-Fi
 - One monitor, no sound over HDMI
-- Started from a USB stick, the home folder holds only about 30 MB, so save bigger files such as CD
-  rips on a second USB stick, or install Violyx
 - Installing next to another system needs UEFI and a GPT disk, partitions are not shrunk
 
 ## License
