@@ -48,5 +48,9 @@ int vfs_remove(const char *path);
 int vfs_rename(const char *from, const char *to);
 int vfs_list(const char *path, int (*cb)(const vfs_ent *, void *), void *arg);
 void vfs_usage(uint64_t *total, uint64_t *freeb, uint32_t *files);
+/* Grows the mounted file system to a partition of the given size (sectors), keeping all files.
+ * prog reports progress (may be 0). */
+int vfs_grow(uint64_t sectors, void (*prog)(uint64_t, uint64_t));
+uint64_t vfs_size(void); /* size of the mounted file system in sectors */
 int vfs_norm(const char *cwd, const char *in, char *out, size_t n);
 const char *vfs_errstr(int e, int en);

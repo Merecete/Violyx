@@ -95,6 +95,19 @@ Mbed TLS, just like the Violyx browser does.
 `vx_image_slot(slot, ...)` and `vx_pixcell_slot` a program can keep up to 31 more pictures at once
 (together up to 24 MB).
 
+## Screen savers
+
+A package built with `--saver` (in `VPKFLAGS`) is a screen saver: after installing it, it appears in
+the settings under **Screen saver** instead of under F2 (Violyx 0.3.7 and later). Violyx starts it
+in full screen when nobody types and ends it at the first key. `vx_saver_size()` gives the size of
+the screen in pixels (`width << 16 | height`, below 0 when it runs as a normal program),
+`vx_saver_show(px, w, h)` shows a picture of `w x h` pixels in the 256 colours, stretched to the
+whole screen; a half or a quarter of the size is faster and often looks just as good. Wait between
+pictures with `vx_wait(30)` or so. Dialogs are not possible in a screen saver. If it ends or fails,
+the Violyx logo takes over. `examples/starfield.c` and `examples/plasma.c` show how it works:
+
+    make APP=examples/starfield NAME=starfield TITLE=Sternenflug VPKFLAGS='--saver --author You'
+
 ## Sound
 
 `vx_tone(hz, ms, volume, wave, delay)` plays a tone without blocking. The volume runs from 1 to 100, the wave is `VX_SQUARE`, `VX_TRIANGLE`, `VX_SAW` or `VX_NOISE`, and the delay in milliseconds lets you queue short melodies. Without a sound card the call does nothing.

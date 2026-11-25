@@ -73,6 +73,12 @@ void *dma32_alloc(size_t);
 u64 phys(const void *);
 void mmio_map(u64, u64);
 const u8 *boot_part_guid(void);
+const char *boot_kernel_path(void);
+/* Updates (update.c): the new system onto the boot partition, the previous one kept */
+int upd_info(char *alt, int n);
+int upd_apply(const u8 *vup, u64 n);
+int upd_rollback(void);
+void upd_boot_check(void);
 int efi_available(void); /* started by UEFI, variables can be set */
 int efi_add_boot(int idx, u64 start, u64 len, const u8 *guid);
 unsigned int net_rand(void);
@@ -266,6 +272,10 @@ const char *usb_status(void);
 int fs_init(void);
 int fs_ok(void);
 const char *fs_status(void);
+/* Growing the Violyx partition into free space behind it (a stick written with the image) */
+int fs_grow_info(u64 *now, u64 *after);
+int fs_grow(void (*prog)(u64, u64));
+void fs_grow_offer(int asked); /* the question; asked = 1 from the command: also says why not */
 u32 fs_now(void);
 void fs_detach(void);
 int fs_live(void);
@@ -328,7 +338,17 @@ int wall_use(const u8 *);
 int prog_run_file(const char *, const char *);
 int prog_install(const char *);
 int prog_uninstall(const char *);
-int prog_scan(prog_info *, int);
+int prog_scan(prog_info *, int, int kind); /* kind 0 programs, 1 screen savers */
+/* An installed screen saver: started without being seen, it shows its pictures through
+ * saver_frame; step runs it a little (-1: it has ended), stop ends it */
+void *prog_saver_start(const char *name);
+int prog_saver_step(void *h);
+void prog_saver_stop(void *h);
+void saver_frame(const u8 *px, int w, int h);
+long saver_size(void);
+void saver_choose(const char *pkg);
+void saver_cycle(int d); /* an installed screen saver becomes the chosen one */
+extern char cfg_saver_pkg[24]; /* pixels of the screen saver picture: width << 16 | height, 0 = none */
 
 /* drives.c: VioFS and USB drives under /drives */
 extern u32 fsx_gen;
@@ -535,4 +555,5 @@ void app_bricks(void);
 void app_novastrike(void);
 void app_settings(void);
 void app_web(void);
+void app_update(const char *file);
 void web_app_open(const char *);

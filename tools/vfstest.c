@@ -1,5 +1,5 @@
 /* Host test: gcc -g -fsanitize=address,undefined -Ikernel tools/vfstest.c -o vfstest && ./vfstest 1
- * 1500 96 */
+ * 1500 96 [MB to grow to halfway, with power failures while growing] */
 /* Random operations, a reference model, structure checks and simulated power failures */
 #define HOST
 #include "viofs.c"
@@ -84,6 +84,13 @@ static void walk(u32 n) {
     }
 }
 static void fsck(void) {
+    u64 fr = 0;
+    for (u32 b = sb.data_start; b < sb.blocks; b++)
+        fr += bit(b) == 0;
+    if (fr != freeblk) {
+        printf("freie Bloecke %lu statt %lu\n", (unsigned long)freeblk, (unsigned long)fr);
+        abort();
+    }
     memset(used, 0, sb.blocks);
     walk(1);
     int l = 0;
@@ -190,15 +197,44 @@ static void check(void) {
 int main(int c, char **v) {
     srand(atoi(v[1]));
     int iters = atoi(v[2]);
-    ns = (uint64_t)atoi(v[3]) * 2048;
+    uint64_t small = (uint64_t)atoi(v[3]) * 2048, big = c > 4 ? (uint64_t)atoi(v[4]) * 2048 : 0;
+    ns = big > small ? big : small;
     disk = calloc(ns, SEC);
     used = malloc(ns / 8 + 1);
-    D = (vfs_dev){r_, w_, f_, 0, ns};
+    D = (vfs_dev){r_, w_, f_, 0, small};
     if (vfs_format(&D, 1))
         abort();
     uint64_t t, f0, f;
     vfs_usage(&t, &f0, 0);
     for (int it = 0; it < iters; it++) {
+        if (big > small && it == iters / 2) { /* grow, first with power failures */
+            check();
+            fsck();
+            int tries = 0;
+            for (;;) {
+                uint64_t was = D.sectors;
+                budget = tries < 6 ? rand() % (tries < 3 ? 3000 : 40000) : -1;
+                D.sectors = big; /* the partition is larger now */
+                int r = vfs_grow(big, 0);
+                budget = -1;
+                vfs_unmount();
+                if (vfs_mount(&D)) {
+                    puts("nach Wachsen nicht lesbar");
+                    abort();
+                }
+                check();
+                fsck();
+                tries++;
+                printf("Wachsen Versuch %d: %d, %u Bloecke\n", tries, r, sb.blocks);
+                if (sb.blocks == big / 8)
+                    break;
+                if (!r) {
+                    puts("Wachsen ohne Fehler, aber nicht groesser");
+                    abort();
+                }
+                (void)was;
+            }
+        }
         char p[200], q[200];
         rnd_path(p, 0);
         int op = rand() % 13;

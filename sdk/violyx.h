@@ -118,6 +118,17 @@ static inline long vx_image_slot(int slot, const uint8_t *px, int w, int h) {
 void vx_pixcell_slot(int x, int y, int slot, int ix, int iy);
 /* Program menu: shown in the menu bar after Help, under the window title. Items are separated
    by |, for example vx_menu("Info|Music on/off"). Choosing item n sends the key VK_MENU + n. */
+/* Screen savers: a package built with --saver is not a program in F2 but a screen saver in the
+   settings. Violyx starts it in full screen when nobody types and ends it at the first key.
+   vx_saver_size gives the size of the screen in pixels (width << 16 | height, below 0 when not
+   running as screen saver); vx_saver_show shows a picture of w x h pixels in the 256 colours,
+   stretched to the whole screen (smaller pictures are faster). Dialogs are not possible there. */
+static inline long vx_saver_size(void) {
+    return vx_sys(34, 0, 0, 0);
+}
+static inline long vx_saver_show(const uint8_t *px, int w, int h) {
+    return vx_sys(34, (long)px, w, h);
+}
 static inline long vx_menu(const char *items) {
     return vx_sys(25, (long)items, 0, 0);
 }

@@ -12,12 +12,57 @@ const int saver_min[SWAITS] = {1, 2, 3, 5, 10, 15, 30};
 static u8 *buf;
 static int pw, ph;
 
+/* Installed screen savers (packages of kind 1): cfg_saver == SAVERS means the one named in
+ * cfg_saver_pkg. */
+char cfg_saver_pkg[24];
+static char stitle[24];
+static prog_info *spk;
+static int nspk;
+static void spk_scan(void) {
+    if (!spk)
+        spk = kmalloc(sizeof(prog_info) * 16);
+    nspk = spk ? prog_scan(spk, 16, 1) : 0;
+}
+static int spk_find(const char *n) {
+    for (int i = 0; i < nspk; i++)
+        if (!strcmp(spk[i].name, n))
+            return i;
+    return -1;
+}
 const char *saver_name(int i) {
     static const char *de[SAVERS] = {"Aus",        "Violyx-Logo", "Drahtmodelle",
                                      "Digitaluhr", "Analoguhr",   "Synthwave"},
                       *en[SAVERS] = {"Off",           "Violyx logo",  "Wire frames",
                                      "Digital clock", "Analog clock", "Synthwave"};
+    if (i >= SAVERS) {
+        if (!stitle[0]) { /* the title of the package, looked up once */
+            spk_scan();
+            int k = spk_find(cfg_saver_pkg);
+            strlcpy_(stitle, k >= 0 ? spk[k].title : cfg_saver_pkg, 24);
+        }
+        return stitle;
+    }
     return TR(de[i], en[i]);
+}
+/* Next or previous screen saver in the settings: the built-in ones, then the installed ones */
+void saver_cycle(int d) {
+    spk_scan();
+    int all = SAVERS + nspk, k = spk_find(cfg_saver_pkg);
+    int pos = cfg_saver < SAVERS ? cfg_saver : k >= 0 ? SAVERS + k : 0;
+    pos = (pos + all + d) % all;
+    if (pos < SAVERS) {
+        cfg_saver = pos;
+        return;
+    }
+    cfg_saver = SAVERS;
+    strlcpy_(cfg_saver_pkg, spk[pos - SAVERS].name, 24);
+    strlcpy_(stitle, spk[pos - SAVERS].title, 24);
+}
+void saver_choose(const char *pkg) {
+    strlcpy_(cfg_saver_pkg, pkg, 24);
+    stitle[0] = 0;
+    cfg_saver = SAVERS;
+    cfg_save();
 }
 static int isin(int a) { /* a in half degrees, result * 16384 */
     a = ((a % 720) + 720) % 720;
@@ -649,8 +694,24 @@ static void synth_draw(u32 ms) {
 }
 
 /* ---------- running ---------- */
+static int sfresh;
+long saver_size(void) {
+    return buf ? (long)pw << 16 | ph : 0;
+}
+/* A picture of an installed screen saver, stretched to the screen */
+void saver_frame(const u8 *px, int w, int h) {
+    if (!buf)
+        return;
+    for (int y = 0; y < ph; y++) {
+        const u8 *s = px + (u64)(y * h / ph) * w;
+        u8 *o = buf + (u64)y * pw;
+        for (int x = 0; x < pw; x++)
+            o[x] = s[x * w / pw];
+    }
+    sfresh = 1;
+}
 void saver_run(int kind) {
-    if (kind < 1 || kind >= SAVERS)
+    if (kind < 1 || kind > SAVERS)
         return;
     pw = W * 4;
     ph = H * 8;
@@ -665,6 +726,14 @@ void saver_run(int kind) {
     }
     if (ncache)
         memset(ncache, 0, 32768);
+    void *sp = 0;
+    if (kind == SAVERS) { /* an installed one; without it, the logo */
+        memset(buf, 0, (u64)pw * ph);
+        sfresh = 1;
+        sp = cfg_saver_pkg[0] ? prog_saver_start(cfg_saver_pkg) : 0;
+        if (!sp)
+            kind = 1;
+    }
     if (kind == 1)
         logo_init();
     if (kind == 2)
@@ -675,6 +744,31 @@ void saver_run(int kind) {
     while (!key_poll(&k)) {
         u32 ms = (u32)((ticks - t0) * 10);
         int fixed = 1;
+        if (sp) {
+            u64 next = ticks + 4; /* the program runs until it waits, at most to the next picture */
+            while (ticks < next) {
+                int r = prog_saver_step(sp);
+                if (r < 0) { /* it has ended or failed: the logo takes over */
+                    prog_saver_stop(sp);
+                    sp = 0;
+                    kind = 1;
+                    logo_init();
+                    break;
+                }
+                if (!r)
+                    idle();
+            }
+            if (sp) {
+                if (sfresh)
+                    ui_blit(buf, have ? old : 0, pw, ph, 1);
+                if (sfresh && old) {
+                    memcpy(old, buf, (u64)pw * ph);
+                    have = 1;
+                }
+                sfresh = 0;
+                continue;
+            }
+        }
         if (kind == 1) {
             logo_draw(ms);
             fixed = 2; /* the colours of the logo */
@@ -701,6 +795,8 @@ void saver_run(int kind) {
         while (ticks < next)
             idle();
     }
+    if (sp)
+        prog_saver_stop(sp);
     if (kind == 4)
         clock_picture(0, 0);
     kfree(buf);

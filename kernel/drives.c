@@ -336,8 +336,7 @@ int64_t fsx_free(const char *p) {
     if (split(p, &i, &r) || !fs_ok())
         return -1;
     u64 t, f;
-    u32 n;
-    vfs_usage(&t, &f, &n);
+    vfs_usage(&t, &f, 0); /* without counting the files: that reads every inode */
     return (int64_t)f;
 }
 /* Adds l bytes to the end of an existing file */

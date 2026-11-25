@@ -27,6 +27,8 @@ apps:
 	$(MAKE) APP=examples/gemfall NAME=gemfall TITLE=Gemfall VPKFLAGS='--cols 60 --rows 19 --author Merecete --icon " <> o |  # <>| o## # " --icon-png icons/gemfall.png'
 	$(MAKE) APP=examples/vioisland NAME=vioisland TITLE=Vio-Island EXTRA='-Ihelpers/inc' VPKFLAGS='--cols 76 --rows 20 --author Merecete --icon " \\|/  |  |~~~|~~|~~~" --icon-png icons/vioisland.png'
 	$(MAKE) APP=examples/fetch NAME=fetch TITLE=Fetch VPKFLAGS='--cols 70 --rows 18 --author Merecete --icon " .--. |( () )| '"'"'--'"'"' " --icon-png icons/fetch.png'
+	$(MAKE) APP=examples/starfield NAME=starfield TITLE=Sternenflug VPKFLAGS='--saver --author Merecete'
+	$(MAKE) APP=examples/plasma NAME=plasma TITLE=Plasma VPKFLAGS='--saver --author Merecete'
 	$(MAKE) APP=helpers/vxdec NAME=vxdec TITLE=vxdec EXTRA='-Ihelpers/inc -I../third_party/stb'
 	$(MAKE) APP=examples/xzn NAME=xzn TITLE=XZN EXTRA='-Ihelpers/inc -I../third_party/stb -I../third_party/minimp3 -I../third_party/dr_flac -I../third_party/ogg/include -I../third_party/vorbis/include' LIBSRC='$(VORBIS)' LIBFLAGS='-w -I../third_party/vorbis/lib -include helpers/vxogg.h' VPKFLAGS='--cols 76 --rows 20 --author Merecete --version 1.3 --icon "\\\\/ ~~ |/\\\\ ~~~|  ~~  " --icon-png icons/xzn.png'
 	$(MAKE) APP=examples/vioaudio NAME=vioaudio TITLE=Vio-Audio EXTRA='-Ihelpers/inc -I../third_party/stb -I../third_party/minimp3 -I../third_party/dr_flac -I../third_party/ogg/include -I../third_party/vorbis/include' LIBSRC='$(VORBIS)' LIBFLAGS='-w -I../third_party/vorbis/lib -include helpers/vxogg.h' VPKFLAGS='--cols 76 --rows 20 --author Merecete --icon " ▐▀▀▀▌| ▐   ▌|██ ██▌" --icon-png icons/vioaudio.png'

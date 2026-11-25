@@ -435,7 +435,9 @@ static void download(web_t *b, const char *url, char *data, int n, http_res *r) 
     size_t L = strlen(q);
     if (L > 4 && !strcmp(q + L - 4, ".vpk")) {
         int i = prog_install(q);
-        if (i == 0)
+        if (i == 1) /* a screen saver: the kernel has said where it is */
+            strlcpy_(b->msg, TR("Bildschirmschoner installiert.", "Screen saver installed."), 80);
+        else if (i == 0)
             strlcpy_(b->msg,
                      TR("Programm installiert. Es steht jetzt unter F2.",
                         "Program installed. It is now listed under F2."),

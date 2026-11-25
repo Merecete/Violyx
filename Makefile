@@ -12,7 +12,7 @@ MBSRC   = $(wildcard $(MB)/library/*.c)
 MBOBJ   = $(patsubst $(MB)/library/%.c,build/mb/%.o,$(MBSRC))
 CACERTS ?= third_party/cacert/cacert.pem
 INC     = -Ikernel/lwip_port -Ikernel/libc -I$(LW)/include -I$(MB)/include -Ikernel/mbed_port -DMBEDTLS_CONFIG_FILE='"violyx_tls_config.h"'
-OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/str.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/sound.o build/install.o build/viofs.o build/vfsname.o build/fat.o build/exfat.o build/format.o build/drives.o build/iso9660.o build/cdda.o build/cdrom.o build/clock.o build/saver.o build/prog.o build/rge.o build/wall.o build/efi.o build/shot.o build/rec.o build/usb2.o $(LWOBJ)
+OBJ     = build/entry.o build/main.o build/kbd.o build/lib.o build/str.o build/disk.o build/ui.o build/apps.o build/pci.o build/ahci.o build/nvme.o build/xhci.o build/acpi.o build/net.o build/sound.o build/install.o build/viofs.o build/vfsname.o build/fat.o build/exfat.o build/format.o build/drives.o build/iso9660.o build/cdda.o build/cdrom.o build/clock.o build/saver.o build/prog.o build/rge.o build/wall.o build/efi.o build/shot.o build/rec.o build/usb2.o build/update.o $(LWOBJ)
 all: build/violyx.img build/violyx.iso build/violyx.vdi
 build/font.h: tools/mkfont.py
 	@mkdir -p build
@@ -79,6 +79,10 @@ build/u/games_%.o: system/games.c $(UHDR)
 	$(CC) $(U3) -DGAME=app_$* -c $< -o $@
 build/u/clock.o: kernel/clockface.h kernel/sintab.h
 build/u/commands.o: system/web/web.h
+build/u/update.o: system/update.c system/update_key.h system/web/web.h $(UHDR)
+	@mkdir -p $(dir $@)
+	$(CC) $(U3) $(UMB) -c $< -o $@
+build/sys/update.elf: build/u/update.o $(UWEB) $(URT)
 # name, title, columns and rows of each program
 VPK_calc     = --name calc --title Rechner --cols 40 --rows 10
 VPK_calendar = --name calendar --title Kalender --cols 64 --rows 17
@@ -95,7 +99,8 @@ VPK_invaders = --name invaders --title Invaders --cols 64 --rows 20
 VPK_chomp    = --name chomp --title Chomp --cols 42 --rows 20
 VPK_mines    = --name mines --title Mines --cols 50 --rows 17
 VPK_cc       = --name cc --title C-Compiler --cols 76 --rows 20
-SYSPROG = calc calendar clock voice write view paint files commands web pong invaders chomp mines cc
+VPK_update   = --name update --title Aktualisieren --cols 68 --rows 20
+SYSPROG = calc calendar clock voice write view paint files commands web pong invaders chomp mines cc update
 build/sys/calc.elf: build/u/calc.o $(URT)
 build/sys/calendar.elf: build/u/calendar.o $(URT)
 build/sys/clock.elf: build/u/clock.o $(URT)
@@ -160,7 +165,7 @@ build/sys/cc.elf: $(CCOBJ)
 build/sys/%.elf: sdk/link.ld
 	@mkdir -p build/sys
 	$(ULD) -o $@ $(filter %.o,$^) $(filter %.a,$^)
-build/sys/%.vpk: build/sys/%.elf sdk/mkvpk.py
+build/sys/%.vpk: build/sys/%.elf sdk/mkvpk.py kernel/version.h
 	python3 sdk/mkvpk.py $< $@ $(VPK_$*) --author Merecete --version $(shell sed -n 's/.*"\(.*\)".*/\1/p' kernel/version.h)
 build/apps.h: build/apps/sdk.stamp $(patsubst %,build/sys/%.vpk,$(SYSPROG)) tools/mkapps.py
 	python3 tools/mkapps.py $@ snake=build/apps/snake.vpk bricks=build/apps/bricks.vpk novastrike=build/apps/novastrike.vpk xzn=build/apps/xzn.vpk $(foreach p,$(SYSPROG),$(p)=build/sys/$(p).vpk)
@@ -211,3 +216,10 @@ run: all
 clean:
 	rm -rf build
 .PHONY: all run clean
+
+# An update for merecete.org/violyx/update/ and as file for computers without internet:
+#   make update KEY=/safe/place/violyx-update.key NOTES=release-notes-X.txt
+update: build/violyx.elf build/install.bin
+	@test -n "$(KEY)" || (echo "KEY=... (the secret update key) is missing"; false)
+	python3 tools/vupsign.py pack $(KEY) build/update $(NOTES)
+.PHONY: update

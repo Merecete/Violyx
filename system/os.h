@@ -231,6 +231,9 @@ int prog_run(const char *);
 int prog_run_file(const char *, const char *);
 int prog_uninstall(const char *);
 void drive_format(const char *);
+void data_grow(void);
+long upd_call(int op, long b, long c);
+void ui_present(void); /* hands what was drawn to the screen now */ /* grow the Violyx data area to the whole drive (asks first) */
 int wall_open_file(const char *);
 int wall_use(const u8 *);
 void reboot(void);

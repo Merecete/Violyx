@@ -167,6 +167,12 @@ void gfx_forget(u8 id) {
     for (int i = 0; i < gn; i++)
         if (gt[i].id == id)
             gt[i].px = 0;
+    /* the cells on the screen showed the old picture: they are drawn again even when the next
+     * picture uses the same id and places (a new background over the old one) */
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+            if (pv[y][x] >> 31 && (u8)(pv[y][x] >> 23 & 255) == id)
+                pv[y][x] = 0;
 }
 void gput(int x, int y, u8 id, const u8 *px, int stride, int ix, int iy) {
     if (x >= 0 && y >= 0 && x < W && y < H) {
@@ -506,9 +512,13 @@ static void a_off(void) {
         ui_can_quit())
         poweroff();
 }
+static void a_update(void) {
+    app_update(0);
+}
 static const mi m_sys[] = {{"Über Violyx", "About Violyx", dlg_about, 0, 0},
                            {"Einstellungen", "Settings", app_settings, 0, 0},
                            {"Systeminfo", "System info", app_info, 0, 0},
+                           {"Aktualisieren", "Update", a_update, 0, 0},
                            {"Installieren", "Install", app_install, 0, 0},
                            {"Neustart", "Restart", a_reboot, "Strg+Alt+Entf", "Ctrl+Alt+Del"},
                            {"Ausschalten", "Shut down", a_off, 0, 0},

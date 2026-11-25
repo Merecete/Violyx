@@ -753,6 +753,17 @@ void drive_format(const char *n) {
     present();
     svc(9, (long)n, 0);
 }
+long upd_call(int op, long b, long c) { /* 20 put in, 21 back, 22 state */
+    present();
+    return svc(op, b, c);
+}
+void ui_present(void) {
+    present();
+}
+void data_grow(void) {
+    present();
+    svc(19, 0, 0);
+}
 int wall_open_file(const char *p) {
     present();
     return (int)svc(16, (long)p, 0);

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Packs a program: mkvpk.py PROGRAM.elf OUTPUT.vpk --name snake --title Snake --version 1.0
 [--author NAME] [--cols 60] [--rows 18] [--icon "line1|line2|line3"] [--icon-png ICON.png]
+[--saver]
 
 --icon is the icon in text, three lines of six characters. --icon-png adds a picture icon of
 24x24 pixels (Violyx 0.3.5 and later show it, older ones the text icon): transparent pixels let
-the tile show through, all others become the nearest of the 240 fixed colours of the screen."""
+the tile show through, all others become the nearest of the 240 fixed colours of the screen.
+--saver makes a screen saver: it appears in the settings instead of the programs (Violyx 0.3.7
+and later; older ones list it as a program)."""
 
 import argparse, re, struct, zlib
 
@@ -19,6 +22,7 @@ a.add_argument("--cols", type=int, default=60)
 a.add_argument("--rows", type=int, default=18)
 a.add_argument("--icon", default="      | [==] |      ")
 a.add_argument("--icon-png")
+a.add_argument("--saver", action="store_true")
 o = a.parse_args()
 if not re.fullmatch(r"[a-z0-9_-]{1,23}", o.name):
     raise SystemExit("name: only a-z, 0-9, - and _, up to 23 characters")
@@ -119,4 +123,8 @@ h = (
     + fix(o.author, 32)
     + b"".join(fix(x[:6], 7) for x in ic)
 )
-open(o.out, "wb").write((h.ljust(128, b"\0") + pix).ljust(256, b"\0") + elf)
+ext = bytearray(128)  # 128: "ICN1" and the place of the picture icon, 136: "KND1" and the kind
+ext[0:len(pix)] = pix
+if o.saver:
+    ext[8:16] = b"KND1" + struct.pack("<I", 1)
+open(o.out, "wb").write(h.ljust(128, b"\0") + bytes(ext) + elf)

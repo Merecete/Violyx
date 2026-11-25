@@ -111,6 +111,10 @@ static const struct {
      "Signs a USB stick off safely or opens the CD drive."},
     {"format", "usb1", "usb1", "Formatiert einen USB-Stick mit FAT32 oder exFAT.",
      "Formats a USB stick with FAT32 or exFAT."},
+    {"grow", "", "", "Vergrößert den Violyx-Datenbereich auf das ganze Laufwerk (fragt vorher).",
+     "Grows the Violyx data area to the whole drive (asks first)."},
+    {"update", "[DATEI.vup]", "[FILE.vup]", "Aktualisiert Violyx, online oder aus einer Update-Datei.",
+     "Updates Violyx, online or from an update file."},
     {"usb", "", "", "Listet USB-Controller und -Geräte.", "Lists USB controllers and devices."},
     {"install", "DATEI.vpk", "FILE.vpk", "Installiert ein Programm.", "Installs a program."},
     {"run", "NAME | DATEI.vpk", "NAME | FILE.vpk",
@@ -388,7 +392,7 @@ static void sh_exec(sh_t *s) {
             sh_err(s, VE_INVAL);
         else {
             int r = prog_install(p);
-            if (r)
+            if (r < 0)
                 sh_err(s, r);
             else
                 sh_put(s, TR("Installiert.", "Installed."));
@@ -452,7 +456,15 @@ static void sh_exec(sh_t *s) {
                 sh_put(s, b);
             }
         }
-    } else if (!strcmp(c, "format")) {
+    } else if (!strcmp(c, "grow"))
+        data_grow();
+    else if (!strcmp(c, "update")) {
+        if (!*a)
+            prog_open("update", 0);
+        else if (!sh_path(s, a, p))
+            prog_open("update", p);
+    }
+    else if (!strcmp(c, "format")) {
         if (!*a)
             sh_put(s, TR("Aufruf: format usb1", "Usage: format usb1"));
         else

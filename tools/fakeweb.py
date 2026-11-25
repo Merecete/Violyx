@@ -17,6 +17,7 @@ HOSTS = {
     "tls12.test": (6, 9446, "good12"),
     "redir.test": (7, 9447, "redir"),
     "plain.test": (8, 9448, None),
+    "merecete.org": (9, 9449, "upd"),  # update test: needs pki/upd.crt and FAKEWEB_UPDATE=folder
 }
 LAST = b""
 PAGE = b"<html><head><title>Violyx Test</title></head><body>Hallo vom Testserver</body></html>\n"
@@ -135,6 +136,13 @@ def app(req, host):
         req.split(b"\r\n")[0].decode(),
         [l for l in req.split(b"\r\n") if l.lower().startswith(b"host")],
     )
+    if path.startswith("/violyx/update/"):
+        import os
+
+        f = os.path.join(os.environ.get("FAKEWEB_UPDATE", "/nonexistent"), os.path.basename(path))
+        if os.path.exists(f):
+            return resp(open(f, "rb").read(), "application/octet-stream")
+        return b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
     if host == "redir":
         return (
             b"HTTP/1.1 302 Found\r\nLocation: https://good.test/ziel\r\nContent-Length: 0\r\n\r\n"
@@ -192,7 +200,10 @@ def serve(p, cert, host):
     if cert:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         n = cert.replace("12", "").replace("redir", "good")
-        ctx.load_cert_chain(f"{pki}/{n}.crt", f"{pki}/{n}.key")
+        try:
+            ctx.load_cert_chain(f"{pki}/{n}.crt", f"{pki}/{n}.key")
+        except OSError:
+            return
         if cert == "good12":
             ctx.maximum_version = ssl.TLSVersion.TLSv1_2
     while True:
@@ -262,7 +273,20 @@ class Conn:
         t = t[:16] + struct.pack(">H", ckv) + t[18:]
         rawsend(eth(s.cm, 0x800, ip(s.dst, s.src, 6, t)))
 
+    def resend(s):
+        # a simple retransmission: everything not yet acknowledged once more
+        o = s.acked - s.base
+        sq = s.seq
+        s.seq = s.acked
+        while o < len(s.out):
+            d = bytes(s.out[o : o + 1460])
+            s.seg(0x18, d)
+            s.seq += len(d)
+            o += len(d)
+        s.seq = sq
+
     def pump(s):
+        s.out, s.base = bytearray(), s.seq
         while True:
             try:
                 d = s.sock.recv(1460)
@@ -270,10 +294,26 @@ class Conn:
                 d = b""
             if not d:
                 break
+            t0, last = time.time(), s.acked
             while s.seq - s.acked > 16000:
                 time.sleep(0.002)
+                if s.acked != last:
+                    t0, last = time.time(), s.acked
+                elif time.time() - t0 > 0.3:
+                    s.resend()
+                    t0 = time.time()
+            k = s.acked - s.base
+            if k > 0:
+                del s.out[:k]
+                s.base = s.acked
+            s.out += d
             s.seg(0x18, d)
             s.seq += len(d)
+        for _ in range(30):  # the end: until all is acknowledged, at most about 10 seconds
+            time.sleep(0.3)
+            if s.acked >= s.seq:
+                break
+            s.resend()
         s.seg(0x11)
         s.seq += 1
 

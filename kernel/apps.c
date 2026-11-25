@@ -117,6 +117,76 @@ void drive_format(const char *name) {
                                 : TR("Schreibfehler! Das Laufwerk ist unvollständig formatiert.",
                                      "Write error! The drive is incompletely formatted."));
 }
+/* ---------- Growing the data area of a stick ---------- */
+static void sizetxt(u64 b, char *o, int n) {
+    if (b >= (10ull << 30))
+        ksnprintf(o, n, "%ld GB", (long)(b >> 30));
+    else if (b >= (1ull << 30))
+        ksnprintf(o, n, "%ld,%ld GB", (long)(b >> 30), (long)((b % (1ull << 30)) * 10 >> 30));
+    else
+        ksnprintf(o, n, "%ld MB", (long)(b >> 20));
+}
+static void grow_prog(u64 a, u64 b) {
+    int x, y;
+    dlg_box(TR("Datenbereich vergrößern", "Growing the data area"), 60, 8, &x, &y);
+    text(x + 3, y + 2, AT(C_RAISE, C_LAV),
+         TR("Dateien werden umgeräumt ...", "Moving files into place ..."));
+    int w = b ? (int)(a * 52 / b) : 0;
+    if (w > 52)
+        w = 52;
+    fill(x + 3, y + 4, 54, 1, 0xB0, AT(C_VOID, C_DIM));
+    fill(x + 3, y + 4, w, 1, 0xDB, AT(C_VOID, C_NEON));
+    text(x + 3, y + 6, AT(C_RAISE, C_LAV),
+         TR("Bitte den Stick nicht abziehen.", "Please do not unplug the stick."));
+    ui_show();
+}
+/* Offers to use the whole stick for the data. asked: from the command, then it also says when
+ * there is nothing to grow. */
+void fs_grow_offer(int asked) {
+    const char *T_ = TR("Datenbereich vergrößern", "Grow the data area");
+    u64 now, after;
+    if (fs_grow_info(&now, &after)) {
+        if (asked)
+            dlg_msg(T_, fs_ok() ? TR("Hinter dem Datenbereich ist kein freier Platz, er nutzt das "
+                                     "Laufwerk schon ganz.",
+                                     "There is no free space behind the data area, it already "
+                                     "uses the whole drive.")
+                                : fs_status());
+        return;
+    }
+    char a[24], b[24], t[300];
+    sizetxt(now, a, 24);
+    sizetxt(after, b, 24);
+    ksnprintf(t, 300,
+              TR("Violyx nutzt auf diesem %s nur %s für deine Dateien, möglich sind %s. Den "
+                 "Datenbereich auf das ganze Laufwerk vergrößern? Deine Dateien bleiben erhalten.",
+                 "On this %s Violyx uses only %s for your files, %s are possible. Grow the data "
+                 "area to the whole drive? Your files are kept."),
+              fs_device()->usb ? TR("USB-Stick", "USB stick") : TR("Laufwerk", "drive"), a, b);
+    if (!dlg_confirm(T_, t)) {
+        if (!asked)
+            dlg_msg(T_, TR("Später geht es mit dem Befehl grow in den Befehlen.",
+                           "You can do it later with the command grow in Commands."));
+        return;
+    }
+    grow_prog(0, 1);
+    int r = fs_grow(grow_prog);
+    u64 tt, f;
+    vfs_usage(&tt, &f, 0);
+    sizetxt(f, a, 24);
+    sizetxt(tt, b, 24);
+    ksnprintf(t, 300, TR("Fertig. %s frei von %s.", "Done. %s free of %s."), a, b);
+    dlg_msg(T_, !r ? t
+                : r == VE_NOSPC
+                    ? TR("Zu wenig Arbeitsspeicher. Es wurde nichts verändert.",
+                         "Not enough memory. Nothing was changed.")
+                : r == VE_INVAL
+                    ? TR("Der Datenbereich ist beschädigt, es wurde nichts verändert.",
+                         "The data area is damaged, nothing was changed.")
+                    : TR("Schreibfehler! Deine Dateien sind sicher, mit grow kann es noch einmal "
+                         "versucht werden.",
+                         "Write error! Your files are safe, grow can try it again."));
+}
 /* ---------- Settings ---------- */
 typedef struct {
     int sel, dirty;
@@ -212,7 +282,7 @@ static void se_key(win_t *w, key_t k) {
             else if (s->sel == 8)
                 cfg_kbd = !cfg_kbd;
             else if (s->sel == 11)
-                cfg_saver = (cfg_saver + SAVERS + d) % SAVERS;
+                saver_cycle(d);
             else if (s->sel == 12)
                 cfg_swait = (cfg_swait + SWAITS + d) % SWAITS;
             else if (s->sel == 10) {
@@ -418,7 +488,7 @@ static void lp_draw(void) {
 }
 static int launcher_loop(void);
 void app_launcher(void) {
-    lp_ni = prog_scan(ipr, MAXIP);
+    lp_ni = prog_scan(ipr, MAXIP, 0);
     ui_under(lp_draw);
     int s = launcher_loop();
     ui_under(0); /* what starts now draws over the desktop, not over the overview */
@@ -460,7 +530,7 @@ static int launcher_loop(void) {
                 int r = prog_uninstall(ipr[s - NP].name);
                 if (r)
                     dlg_msg(TR("Deinstallieren", "Uninstall"), vfs_errstr(r, cfg_lang));
-                lp_ni = prog_scan(ipr, MAXIP);
+                lp_ni = prog_scan(ipr, MAXIP, 0);
             }
             continue;
         }
@@ -500,8 +570,7 @@ static void in_draw(win_t *w) {
     ctext(w, 1, 4, T, b);
     {
         u64 t_, f_;
-        u32 n_;
-        vfs_usage(&t_, &f_, &n_);
+        vfs_usage(&t_, &f_, 0); /* the number of files is not shown: counting reads every inode */
         ksnprintf(b, 60, TR("Platte:   %ld MB frei von %ld MB", "Disk:     %ld MB free of %ld MB"),
                   f_ >> 20, t_ >> 20);
         ctext(w, 1, 5, T, b);

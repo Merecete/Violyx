@@ -45,6 +45,13 @@ static int vpk_icon(const u8 *b, u32 *off) {
     *off = b[132] | (u32)b[133] << 8 | (u32)b[134] << 16 | (u32)b[135] << 24;
     return 1;
 }
+/* At 136: "KND1" and the kind of package: 1 = a screen saver (it does not appear among the
+ * programs but in the settings, and runs in full screen while nobody types) */
+static int vpk_kind(const u8 *b) {
+    if (memcmp(b + 136, "KND1", 4))
+        return 0;
+    return b[140];
+}
 static int vpk_check(const u8 *b, u64 n) {
     if (n < VPK_HDR + 64 || n > VPK_MAX)
         return 0;
@@ -302,6 +309,7 @@ typedef struct {
     char grant[NGRANT][VFS_PATH]; /* files the user chose for it in a dialog */
     int ng;
     char ver[12], author[32]; /* from the package, for the Info window */
+    int saver;                /* runs as screen saver: may show full screen pictures */
 } proc_t;
 #define L_NET  1
 #define L_INST 2
@@ -472,6 +480,8 @@ static long sys_dialog(proc_t *p, u64 kind, u64 a) {
     u64 q[5]; /* title, text, buffer, size, flags */
     if (!p->w || !uok(p, a, sizeof q, 0))
         return VE_INVAL;
+    if (p->saver) /* nobody is there to answer */
+        return VE_DENIED;
     memcpy(q, (void *)a, sizeof q);
     t[0] = m[0] = 0;
     if ((q[0] && !ustr(p, q[0], t, 64)) || (q[1] && !ustr(p, q[1], m, 256)))
@@ -993,6 +1003,19 @@ void proc_syscall(regs *r) {
             v = 0;
             break;
         }
+        case 34: /* screen saver: a = 0 asks the size of the picture (width << 16 | height), else
+                    a picture of b x c pixels in the 256 colours, stretched to the screen */
+            if (!p->saver)
+                v = VE_DENIED;
+            else if (!a)
+                v = saver_size();
+            else if ((long)b < 1 || (long)c < 1 || b > 4096 || c > 4096 || !uok(p, a, b * c, 0))
+                v = VE_INVAL;
+            else {
+                saver_frame((const u8 *)a, (int)b, (int)c);
+                v = 0;
+            }
+            break;
         case 27: { /* folder listing with sizes: u64 size, u8 folder, name, 0 */
             if (!upath(p, a, pa)) {
                 v = VE_DENIED;
@@ -1488,7 +1511,8 @@ static const struct {
                {"paint", pkg_paint, sizeof pkg_paint, 1, 1, 0},
                {"files", pkg_files, sizeof pkg_files, 1, 0, 0},
                {"commands", pkg_commands, sizeof pkg_commands, 1, 0, 0},
-               {"web", pkg_web, sizeof pkg_web, 0, 1, L_LIM | L_NET | L_INST}};
+               {"web", pkg_web, sizeof pkg_web, 0, 1, L_LIM | L_NET | L_INST},
+               {"update", pkg_update, sizeof pkg_update, 1, 1, 0}};
 #define NBUILT ((int)(sizeof builtin / sizeof builtin[0]))
 static int is_builtin(const char *n) {
     for (int i = 0; i < NBUILT; i++)
@@ -1624,6 +1648,9 @@ void app_files(void) {
 void app_shell(void) {
     prog_open("commands", 0);
 }
+void app_update(const char *file) {
+    prog_open("update", file);
+}
 void app_web(void) {
     prog_open("web", 0);
 }
@@ -1641,6 +1668,46 @@ int prog_run(const char *name) {
     fsx_mkdir(d, fs_now());
     return prog_run_file(a, d);
 }
+void *prog_saver_start(const char *name) {
+    if (!safe_name(name) || is_builtin(name) || cur)
+        return 0;
+    char a[VFS_PATH], d[VFS_PATH];
+    ksnprintf(a, VFS_PATH, "/programs/%s/app.vpk", name);
+    ksnprintf(d, VFS_PATH, "/programs/%s/data", name);
+    u64 n;
+    int e = 0;
+    u8 *b = pkg_read(a, &n, &e);
+    if (!b)
+        return 0;
+    if (vpk_kind(b) != 1) {
+        kfree(b);
+        return 0;
+    }
+    fsx_mkdir(d, fs_now());
+    e = load(b, n, d);
+    kfree(b);
+    if (e)
+        return 0;
+    lastp->saver = 1;
+    return lastp;
+}
+/* 1 it ran, 0 it waits, -1 it has ended */
+int prog_saver_step(void *h) {
+    proc_t *p = h;
+    int ran = 0;
+    if (runnable(p)) {
+        p->state = P_RUN;
+        proc_run(p);
+        ran = 1;
+    }
+    return p->state > P_WAIT ? -1 : ran;
+}
+void prog_saver_stop(void *h) {
+    proc_t *p = h;
+    if (p->state <= P_WAIT)
+        p->state = P_DONE;
+    win_close(p->w);
+}
 int prog_install(const char *path) {
     if (!fs_ok())
         return VE_NOFS;
@@ -1655,8 +1722,11 @@ int prog_install(const char *path) {
     ksnprintf(t, VFS_PATH, "/programs/%s", h->name);
     ksnprintf(a, VFS_PATH, "%s/app.vpk", t);
     vfs_ent v;
-    const char *ti = fsx_stat(t, &v) ? TR("Programm installieren", "Install program")
-                                     : TR("Programm ersetzen", "Replace program");
+    int sv = vpk_kind(b) == 1;
+    const char *ti = !fsx_stat(t, &v) ? (sv ? TR("Bildschirmschoner ersetzen", "Replace screen saver")
+                                            : TR("Programm ersetzen", "Replace program"))
+                     : sv ? TR("Bildschirmschoner installieren", "Install screen saver")
+                          : TR("Programm installieren", "Install program");
     if (!dlg_confirm(ti, q)) {
         kfree(b);
         return VE_DENIED;
@@ -1664,8 +1734,22 @@ int prog_install(const char *path) {
     fsx_mkdir("/programs", fs_now());
     fsx_mkdir(t, fs_now());
     e = fsx_write(a, b, n, fs_now());
+    char nm[24], tt[24];
+    strlcpy_(nm, h->name, 24);
+    strlcpy_(tt, h->title, 24);
     kfree(b);
-    return e;
+    if (e || !sv)
+        return e;
+    /* a screen saver: chosen right away, if wanted. 1 tells the caller that it was one. */
+    ksnprintf(q, 72, TR("\"%s\" gleich als Bildschirmschoner verwenden?",
+                        "Use \"%s\" as screen saver now?"), tt);
+    if (dlg_confirm(TR("Bildschirmschoner", "Screen saver"), q))
+        saver_choose(nm);
+    else
+        dlg_msg(TR("Bildschirmschoner", "Screen saver"),
+                TR("Installiert. Du findest ihn in den Einstellungen unter Bildschirmschoner.",
+                   "Installed. You find it in the settings under Screen saver."));
+    return 1;
 }
 int prog_uninstall(const char *name) {
     if (!safe_name(name))
@@ -1674,7 +1758,7 @@ int prog_uninstall(const char *name) {
     ksnprintf(t, VFS_PATH, "/programs/%s", name);
     return fsx_rmtree(t);
 }
-int prog_scan(prog_info *o, int max) {
+int prog_scan(prog_info *o, int max, int kind) {
     if (!fs_ok())
         return 0;
     fs_item *it;
@@ -1693,7 +1777,7 @@ int prog_scan(prog_info *o, int max) {
             continue;
         vpk_h *v = (vpk_h *)h;
         if (memcmp(v->magic, "VPK1", 4) || !nulstr(v->name, 24, 1) || !nulstr(v->title, 24, 1) ||
-            strcmp(v->name, it[i].name) || is_builtin(v->name))
+            strcmp(v->name, it[i].name) || is_builtin(v->name) || vpk_kind(h) != kind)
             continue;
         int ok = 1;
         for (int k = 0; k < 3; k++)
@@ -1983,6 +2067,23 @@ static long sys_service(proc_t *p, u64 op, u64 b, u64 c) {
                 break;
             }
             v = wall_photo_set(h + 8 + VFS_PATH, cc, rr, pa);
+            break;
+        }
+        case 19: /* grow the data area into free space behind it (asks first) */
+            fs_grow_offer(1);
+            v = 0;
+            break;
+        case 20: /* update: b = the checked .vup, c = its size */
+            v = c && c <= (64u << 20) && uok(p, b, c, 0) ? upd_apply((const u8 *)b, c) : VE_INVAL;
+            break;
+        case 21: /* back to the previous version */
+            v = upd_rollback();
+            break;
+        case 22: { /* can an update go in? b receives the previous version (24 bytes) */
+            static char al[24];
+            v = upd_info(al, 24);
+            if (b && uok(p, b, 24, 1))
+                memcpy((void *)b, al, 24);
             break;
         }
         default:

@@ -149,6 +149,8 @@ f.add("/EFI/BOOT/BOOTX64.EFI", open(os.path.join(limdir, "BOOTX64.EFI"), "rb").r
 f.add("/limine-bios.sys", open(os.path.join(limdir, "limine-bios.sys"), "rb").read())
 f.add("/limine.conf", open(conf, "rb").read())
 f.add("/boot/violyx.elf", open(kernel, "rb").read())
+_v = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kernel", "version.h")).read()
+f.add("/boot/violyx.ver", (_v.split('"')[1] + "\n").encode())  # for updates: the version of violyx.elf
 if module:
     f.add("/boot/install.bin", open(module, "rb").read())
 esp = f.build()

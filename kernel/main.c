@@ -297,8 +297,10 @@ typedef struct {
     u32 magic;
     int off, wall, lang, kbd, vol, out, scheme, saver, swait;
     int seen; /* 1: the keyboard help was shown once, at the very first start */
+    int grow; /* 1: growing the data area of the stick was offered once */
+    char spkg[24]; /* the installed screen saver (saver = SAVERS + 1) */
 } cfg_t;
-static int cfg_seen;
+static int cfg_seen, cfg_grow;
 #define CFG_NAME "/system/config"
 static u32 to_secs(const rtc_t *t) {
     int y = t->year, m = t->mon;
@@ -368,7 +370,8 @@ void rtc_set(const rtc_t *t) {
 }
 int cfg_save(void) {
     cfg_t c = {0x32464356,  time_off,    cfg_wall,       cfg_lang,      cfg_kbd,
-               cfg_vol + 1, cfg_out + 1, cfg_scheme + 1, cfg_saver + 1, cfg_swait + 1, cfg_seen};
+               cfg_vol + 1, cfg_out + 1, cfg_scheme + 1, cfg_saver + 1, cfg_swait + 1, cfg_seen, cfg_grow, {0}};
+    strlcpy_(c.spkg, cfg_saver_pkg, 24);
     return fs_ok() ? vfs_write(CFG_NAME, &c, sizeof c, fs_now()) : -1;
 }
 void cfg_load(void) {
@@ -384,6 +387,11 @@ void cfg_load(void) {
             cfg_scheme = c.scheme - 1;
         if (c.saver >= 1 && c.saver <= SAVERS)
             cfg_saver = c.saver - 1;
+        c.spkg[23] = 0;
+        if (c.saver == SAVERS + 1 && c.spkg[0]) {
+            cfg_saver = SAVERS;
+            strlcpy_(cfg_saver_pkg, c.spkg, 24);
+        }
         if (c.swait >= 1 && c.swait <= SWAITS)
             cfg_swait = c.swait - 1;
         time_off = c.off;
@@ -392,6 +400,7 @@ void cfg_load(void) {
         cfg_lang = c.lang == 1;
         cfg_kbd = c.kbd == 1;
         cfg_seen = c.seen == 1;
+        cfg_grow = c.grow == 1;
     }
 }
 /* Orderly end before restart or power off: a message, the sound fades out, every drive empties
@@ -464,6 +473,11 @@ const u8 *boot_part_guid(void) {
     static const u8 nul[16];
     struct limine_file *k = kfreq.response ? kfreq.response->kernel_file : 0;
     return k && memcmp(&k->gpt_part_uuid, nul, 16) ? (const u8 *)&k->gpt_part_uuid : 0;
+}
+/* the file the boot loader loaded the system from, for example /boot/violyx.elf */
+const char *boot_kernel_path(void) {
+    struct limine_file *k = kfreq.response ? kfreq.response->kernel_file : 0;
+    return k && k->path ? k->path : "";
 }
 int fs_live(void) {
     return kfreq.response && kfreq.response->kernel_file &&
@@ -567,6 +581,15 @@ void kmain(void) {
     net_init();
     STEP("Logo");
     ui_splash();
+    upd_boot_check(); /* after an update: the boot menu goes away again */
+    if (!cfg_grow && fs_ok() && fs_device()->usb) { /* a stick with free space: asked once */
+        u64 a_, b_;
+        if (!fs_grow_info(&a_, &b_)) {
+            fs_grow_offer(0);
+            cfg_grow = 1;
+            cfg_save();
+        }
+    }
     if (!cfg_seen) { /* the keyboard help only at the first start; F1 brings it back */
         app_help();
         cfg_seen = 1;

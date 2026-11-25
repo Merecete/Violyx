@@ -125,13 +125,17 @@ static void fm_key(win_t *w, key_t k) {
             }
         } else {
             size_t L = strlen(p);
+            if (L > 4 && !strcmp(p + L - 4, ".vup")) { /* an update for Violyx itself */
+                prog_open("update", p);
+                return;
+            }
             if (L > 4 && !strcmp(p + L - 4, ".vpk")) {
                 r = fs_ok() ? prog_install(p)
                     : dlg_confirm(TR("Programm", "Program"),
                                   TR("Dieses Programm jetzt starten?", "Start this program now?"))
                         ? prog_run_file(p, 0)
                         : VE_DENIED;
-                if (r == VE_DENIED)
+                if (r == VE_DENIED || r == 1) /* 1: a screen saver, the kernel has told */
                     return;
                 if (!r && fs_ok()) {
                     dlg_msg(TR("Programm", "Program"), TR("Installiert. Du findest es unter F2.",

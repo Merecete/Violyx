@@ -348,6 +348,12 @@ static int v_wr(u64 l, const void *b) {
 static int v_fl(void) {
     return dev->fl(dev);
 }
+static int v_rdn(u64 l, u32 n, void *b) {
+    return dev->rdn(dev, l, n, b);
+}
+static int v_wrn(u64 l, u32 n, const void *b) {
+    return dev->wrn(dev, l, n, b);
+}
 static const char GUID[16] = "VIOLYXFSPARTITN1";
 u32 fs_now(void) {
     rtc_t r;
@@ -402,7 +408,7 @@ static int probe(blkdev *d) {
     dev = d;
     FS_LBA = lba;
     FS_N = last - lba + 1;
-    vfs_dev v = {v_rd, v_wr, v_fl, lba, FS_N};
+    vfs_dev v = {v_rd, v_wr, v_fl, lba, FS_N, d->rdn ? v_rdn : 0, d->wrn ? v_wrn : 0};
     if (fresh) {
         if (vfs_format(&v, fs_now()))
             return 0;
@@ -467,4 +473,171 @@ const char *fs_status(void) {
         return stbuf;
     }
     return TR(st, sten);
+}
+
+/* ---------- Growing the Violyx partition into free space behind it ----------
+ * A USB stick written with the image has 32 MB of data, the rest of the stick is unused. When the
+ * Violyx partition is the last one, it can take the space up to the end. */
+static u32 gcrc(const u8 *p, size_t n) {
+    u32 c = ~0u;
+    while (n--) {
+        c ^= *p++;
+        for (int i = 0; i < 8; i++)
+            c = (c >> 1) ^ (0xEDB88320u & -(c & 1));
+    }
+    return ~c;
+}
+typedef struct {
+    u8 h[512];
+    u8 *tb;
+    u32 cnt, esz, secs, hs, res; /* res: sectors kept for the entries (at least 32, as usual) */
+    u64 el, end; /* entries; the new last sector of the partition */
+    int idx;
+} grow_gpt;
+/* Reads the partition table and works out the new end. 0 = it can grow. */
+static int grow_plan(grow_gpt *g) {
+    g->tb = 0;
+    blkdev *d = dev;
+    if (!ok || !d || d->cd || d->rd(d, 1, g->h) || memcmp(g->h, "EFI PART", 8))
+        return -1;
+    g->hs = *(u32 *)(g->h + 12);
+    u32 c = *(u32 *)(g->h + 16);
+    if (g->hs < 92 || g->hs > 512)
+        return -1;
+    *(u32 *)(g->h + 16) = 0;
+    u32 cc = gcrc(g->h, g->hs);
+    *(u32 *)(g->h + 16) = c;
+    g->el = *(u64 *)(g->h + 72);
+    g->cnt = *(u32 *)(g->h + 80);
+    g->esz = *(u32 *)(g->h + 84);
+    if (c != cc || g->esz < 128 || g->esz > 512 || g->esz % 128 || !g->cnt || g->cnt > 1024)
+        return -1;
+    g->secs = (g->cnt * g->esz + 511) / 512;
+    if (g->secs > 256 || g->el < 2 || g->el + g->secs >= d->sectors)
+        return -1;
+    g->tb = kmalloc(g->secs * 512);
+    if (!g->tb)
+        return -1;
+    for (u32 i = 0; i < g->secs; i++)
+        if (d->rd(d, g->el + i, g->tb + i * 512))
+            return -1;
+    if (gcrc(g->tb, g->cnt * g->esz) != *(u32 *)(g->h + 88))
+        return -1;
+    g->idx = -1;
+    for (u32 i = 0; i < g->cnt; i++) {
+        u8 *e = g->tb + (u64)i * g->esz;
+        u64 a = *(u64 *)(e + 32);
+        int empty = 1;
+        for (int k = 0; k < 16; k++)
+            if (e[k])
+                empty = 0;
+        if (empty)
+            continue;
+        if (a == FS_LBA && !memcmp(e, GUID, 16))
+            g->idx = (int)i;
+        else if (a > FS_LBA)
+            return -1; /* something behind it: never touched */
+    }
+    if (g->idx < 0)
+        return -1;
+    /* the copy of the table moves to the real end of the drive */
+    g->res = g->secs < 32 ? 32 : g->secs;
+    u64 last = d->sectors - 2 - g->res;
+    if (last <= FS_LBA + 1024)
+        return -1;
+    g->end = FS_LBA + (last + 1 - FS_LBA) / 8 * 8 - 1;
+    return 0;
+}
+/* Current size of the data and the size it can grow to, in bytes. 0 = growing makes sense. */
+int fs_grow_info(u64 *now, u64 *after) {
+    grow_gpt g;
+    int r = grow_plan(&g);
+    kfree(g.tb);
+    if (r)
+        return -1;
+    *now = vfs_size() * 512;
+    *after = (g.end - FS_LBA + 1) * 512;
+    /* the file system can use up to 16 TB */
+    if (*after > 0xFFFFFFF0ull * 4096)
+        *after = 0xFFFFFFF0ull * 4096;
+    return *after >= *now + (64ull << 20) ? 0 : -1;
+}
+int fs_grow(void (*prog)(u64, u64)) {
+    grow_gpt g;
+    blkdev *d = dev;
+    if (grow_plan(&g)) {
+        kfree(g.tb);
+        return VE_INVAL;
+    }
+    u64 tot = d->sectors, alt = tot - 1, bel = alt - g.res, n = g.end - FS_LBA + 1;
+    int r = 0;
+    u8 *e = g.tb + (u64)g.idx * g.esz;
+    if (*(u64 *)(e + 40) < g.end) {
+        /* the partition first, the file system after: a power failure in between leaves a
+         * larger partition with the old file system, it grows at the next try */
+        static u8 s[512], h[512], t[512];
+        int mbr = !d->rd(d, 0, s) && s[510] == 0x55 && s[511] == 0xAA;
+        /* Limine keeps half of its BIOS loader behind the copy of the table and the MBR names
+         * where (offset 0x1A4: sizes, 0x1A8 and 0x1B0: places in bytes): that half moves along */
+        u64 oalt = *(u64 *)(g.h + 32), obel = 0, locb = 0, nlocb = 0;
+        u32 szb = 0;
+        if (mbr && !d->rd(d, oalt, t) && !memcmp(t, "EFI PART", 8))
+            obel = *(u64 *)(t + 72);
+        if (mbr && obel) {
+            locb = *(u64 *)(s + 0x1B0);
+            szb = *(u16 *)(s + 0x1A6);
+            if (szb && !(locb % 512) && locb >= (obel + g.secs) * 512 &&
+                locb + szb <= oalt * 512) {
+                nlocb = locb - obel * 512 + bel * 512;
+                for (u32 i = 0; !r && i < (szb + 511) / 512; i++)
+                    if (d->rd(d, locb / 512 + i, t) || d->wr(d, nlocb / 512 + i, t))
+                        r = VE_IO;
+            }
+        }
+        *(u64 *)(e + 40) = g.end;
+        u32 ec = gcrc(g.tb, g.cnt * g.esz);
+        for (u32 i = 0; !r && i < g.secs; i++)
+            if (d->wr(d, bel + i, g.tb + i * 512))
+                r = VE_IO;
+        memcpy(h, g.h, 512);
+        *(u32 *)(h + 88) = ec;
+        *(u64 *)(h + 24) = alt; /* the copy: its own place, the main header at 1 */
+        *(u64 *)(h + 32) = 1;
+        *(u64 *)(h + 48) = bel - 1;
+        *(u64 *)(h + 72) = bel;
+        *(u32 *)(h + 16) = 0;
+        *(u32 *)(h + 16) = gcrc(h, g.hs);
+        if (!r && d->wr(d, alt, h))
+            r = VE_IO;
+        if (!r && d->fl(d))
+            r = VE_IO;
+        for (u32 i = 0; !r && i < g.secs; i++)
+            if (d->wr(d, g.el + i, g.tb + i * 512))
+                r = VE_IO;
+        memcpy(h, g.h, 512);
+        *(u32 *)(h + 88) = ec;
+        *(u64 *)(h + 32) = alt;
+        *(u64 *)(h + 48) = bel - 1;
+        *(u32 *)(h + 16) = 0;
+        *(u32 *)(h + 16) = gcrc(h, g.hs);
+        if (!r && d->wr(d, 1, h))
+            r = VE_IO;
+        if (!r && mbr) { /* protective MBR: the whole drive, and the moved loader half */
+            u64 v = tot - 1 > 0xFFFFFFFFu ? 0xFFFFFFFFu : tot - 1;
+            for (int i = 0; i < 4; i++)
+                if (s[446 + i * 16 + 4] == 0xEE)
+                    *(u32 *)(s + 446 + i * 16 + 12) = (u32)v;
+            if (nlocb)
+                *(u64 *)(s + 0x1B0) = nlocb;
+            if (d->wr(d, 0, s))
+                r = VE_IO;
+        }
+        if (!r && d->fl(d))
+            r = VE_IO;
+    }
+    kfree(g.tb);
+    if (r)
+        return r;
+    FS_N = n;
+    return vfs_grow(n, prog);
 }

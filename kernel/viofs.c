@@ -1,7 +1,12 @@
 #include "viofs.h"
 #ifdef HOST
 #include <string.h>
+#include <stdlib.h>
+#define kmalloc malloc
+#define kfree   free
 #else
+void *kmalloc(size_t);
+void kfree(void *);
 void *memcpy(void *, const void *, size_t);
 void *memset(void *, int, size_t);
 size_t strlen(const char *);
@@ -428,11 +433,39 @@ static int dclear(u32 b, int sl) {
     memset(p + sl * DE, 0, DE);
     return bput(b, p);
 }
+static int rawrn(u32 b, u32 n, void *p);
+/* Counts the free blocks: the bitmap in pieces of 16 blocks, many sectors per command */
 static void countfree(void) {
+    static u8 t[16 * BS];
     freeblk = 0;
-    for (u32 b = sb.data_start; b < sb.blocks; b++)
-        if (bit(b) == 0)
-            freeblk++;
+    for (u32 m = 0; m < sb.bmap_n; m += 16) {
+        u32 k = sb.bmap_n - m > 16 ? 16 : sb.bmap_n - m;
+        if (rawrn(sb.bmap_start + m, k, t)) { /* the slow way, block by block */
+            freeblk = 0;
+            for (u32 b = sb.data_start; b < sb.blocks; b++)
+                if (bit(b) == 0)
+                    freeblk++;
+            return;
+        }
+        u64 b0 = (u64)m * BS * 8, b1 = b0 + (u64)k * BS * 8;
+        u64 lo = b0 < sb.data_start ? sb.data_start : b0, hi = b1 > sb.blocks ? sb.blocks : b1;
+        for (u64 b = lo; b < hi;) {
+            u64 o = b - b0;
+            if (!(o & 63) && b + 64 <= hi) { /* 64 blocks at once */
+                u64 w;
+                memcpy(&w, t + o / 8, 8);
+                w = w - ((w >> 1) & 0x5555555555555555ull); /* set bits, without a library */
+                w = (w & 0x3333333333333333ull) + ((w >> 2) & 0x3333333333333333ull);
+                w = (w + (w >> 4)) & 0x0F0F0F0F0F0F0F0Full;
+                freeblk += 64 - ((w * 0x0101010101010101ull) >> 56);
+                b += 64;
+                continue;
+            }
+            if (!(t[o / 8] >> (o % 8) & 1))
+                freeblk++;
+            b++;
+        }
+    }
 }
 int vfs_mkdir(const char *path, u32 now);
 int vfs_format(const vfs_dev *d, u32 now) {
@@ -494,6 +527,246 @@ int vfs_format(const vfs_dev *d, u32 now) {
     mounted = 1;
     return 0;
 }
+
+/* ---------- Growing into a larger partition ----------
+ * The layout (bitmap, inode table, data) gets a larger bitmap and inode table, which reach into
+ * the first data blocks. Those blocks are copied into the new space first, every pointer to them
+ * changes in copies of the inode table and of the indirect blocks, and the new bitmap and inode
+ * table are prepared in the new space as well. Until then the old file system stays untouched.
+ * A record in block 0 then names the prepared copy; copying it into place and writing the new
+ * superblock can be repeated after a power failure, the mount finishes it. */
+#define GROW_OFF 2048
+typedef struct {
+    char magic[8];
+    super n;     /* the new layout */
+    u32 stage;   /* first block of the prepared bitmap + inode table */
+    u32 sum;
+} growrec;
+static u32 gsum(const growrec *g) {
+    const u8 *p = (const u8 *)g;
+    u32 h = 2166136261u;
+    for (size_t i = 0; i < offsetof(growrec, sum); i++)
+        h = (h ^ p[i]) * 16777619u;
+    return h;
+}
+/* n blocks at once, through the multi-sector commands of the drive when it has them */
+static int rawrn(u32 b, u32 n, void *p) {
+    if (!dev.rdn) {
+        for (u32 i = 0; i < n; i++)
+            if (rawr(b + i, (u8 *)p + (u64)i * BS))
+                return VE_IO;
+        return 0;
+    }
+    while (n) {
+        u32 k = n > 16 ? 16 : n;
+        if (dev.rdn(dev.start + (u64)b * 8, k * 8, p))
+            return VE_IO;
+        b += k;
+        n -= k;
+        p = (u8 *)p + (u64)k * BS;
+    }
+    return 0;
+}
+static int rawwn(u32 b, u32 n, const void *p) {
+    if (!dev.wrn) {
+        for (u32 i = 0; i < n; i++)
+            if (raww(b + i, (const u8 *)p + (u64)i * BS))
+                return VE_IO;
+        return 0;
+    }
+    while (n) {
+        u32 k = n > 16 ? 16 : n;
+        if (dev.wrn(dev.start + (u64)b * 8, k * 8, p))
+            return VE_IO;
+        b += k;
+        n -= k;
+        p = (const u8 *)p + (u64)k * BS;
+    }
+    return 0;
+}
+/* Copies the prepared bitmap and inode table into place and writes the new superblock */
+static int grow_finish(const growrec *g) {
+    static u8 t[16 * BS];
+    u32 all = g->n.bmap_n + g->n.ino_n;
+    for (u32 i = 0; i < all; i += 16) {
+        u32 k = all - i > 16 ? 16 : all - i;
+        if (rawrn(g->stage + i, k, t) || rawwn(1 + i, k, t))
+            return VE_IO;
+    }
+    if (dev.fl())
+        return VE_IO;
+    static u8 z[BS];
+    memset(z, 0, BS);
+    memcpy(z, &g->n, sizeof g->n);
+    if (raww(0, z) || dev.fl())
+        return VE_IO;
+    return 0;
+}
+typedef struct {
+    super o, n;
+    u32 next;  /* next free block in the new space */
+    u8 *bm;    /* the new bitmap */
+    void (*prog)(u64, u64);
+    u64 done, total;
+} grow_t;
+static void gmark(grow_t *g, u32 b) {
+    g->bm[b / 8] |= (u8)(1 << (b % 8));
+}
+static int gvalid(grow_t *g, u32 b) {
+    return b >= g->o.data_start && b < g->o.blocks;
+}
+/* in the area that becomes bitmap and inode table: must move */
+static int gzone(grow_t *g, u32 b) {
+    return b < g->n.data_start;
+}
+static int gtake(grow_t *g, u32 *b) {
+    if (g->next >= g->n.blocks)
+        return VE_NOSPC;
+    *b = g->next++;
+    return 0;
+}
+/* A data block: moved out of the zone if needed. */
+static int gdata(grow_t *g, u32 *p) {
+    static u8 t[BS];
+    if (!*p)
+        return 0;
+    if (!gvalid(g, *p))
+        return VE_INVAL;
+    if (gzone(g, *p)) {
+        u32 nb;
+        if (gtake(g, &nb) || rawrn(*p, 1, t) || rawwn(nb, 1, t))
+            return VE_IO;
+        *p = nb;
+        if (g->prog && !(++g->done % 64))
+            g->prog(g->done, g->total);
+    }
+    gmark(g, *p);
+    return 0;
+}
+/* A block of pointers (depth 1: to data, depth 2: to blocks of pointers). A changed one is written
+ * to a new place, never over the old one. */
+static int gptrs(grow_t *g, u32 *p, int depth) {
+    if (!*p)
+        return 0;
+    if (!gvalid(g, *p))
+        return VE_INVAL;
+    u32 *t = kmalloc(BS);
+    if (!t)
+        return VE_NOSPC;
+    int r = rawrn(*p, 1, t), ch = 0;
+    for (u32 i = 0; !r && i < PB; i++) {
+        u32 was = t[i];
+        r = depth > 1 ? gptrs(g, &t[i], depth - 1) : gdata(g, &t[i]);
+        ch |= t[i] != was;
+    }
+    if (!r && (ch || gzone(g, *p))) {
+        u32 nb;
+        r = gtake(g, &nb);
+        if (!r)
+            r = rawwn(nb, 1, t);
+        if (!r)
+            *p = nb;
+    }
+    if (!r)
+        gmark(g, *p);
+    kfree(t);
+    return r;
+}
+int vfs_grow(u64 sectors, void (*prog)(u64, u64)) {
+    if (!mounted)
+        return VE_IO;
+    u64 blocks = sectors / 8;
+    if (blocks > 0xFFFFFFF0ull)
+        blocks = 0xFFFFFFF0ull;
+    if (blocks <= sb.blocks)
+        return 0;
+    grow_t g;
+    memset(&g, 0, sizeof g);
+    g.o = sb;
+    g.n = sb;
+    g.n.blocks = (u32)blocks;
+    g.n.bmap_n = (u32)((blocks + BS * 8 - 1) / (BS * 8));
+    u64 ni = blocks / 8;
+    if (ni > 65536)
+        ni = 65536;
+    if (ni < sb.ninodes)
+        ni = sb.ninodes;
+    g.n.ninodes = (u32)ni;
+    g.n.ino_start = 1 + g.n.bmap_n;
+    g.n.ino_n = (u32)((ni * 128 + BS - 1) / BS);
+    g.n.data_start = g.n.ino_start + g.n.ino_n;
+    g.next = sb.blocks > g.n.data_start ? sb.blocks : g.n.data_start;
+    if (g.next + g.n.bmap_n + g.n.ino_n + 64 >= blocks)
+        return VE_NOSPC;
+    u64 ibytes = (u64)g.n.ino_n * BS, bbytes = (u64)g.n.bmap_n * BS;
+    u8 *it = kmalloc(ibytes);
+    g.bm = kmalloc(bbytes);
+    if (!it || !g.bm) {
+        kfree(it);
+        kfree(g.bm);
+        return VE_NOSPC;
+    }
+    memset(it, 0, ibytes);
+    memset(g.bm, 0, bbytes);
+    dev.sectors = sectors;
+    g.prog = prog;
+    g.total = (u64)(g.n.data_start - g.o.data_start) + 1;
+    int r = rawrn(sb.ino_start, sb.ino_n, it);
+    for (u32 b = 0; b < g.n.data_start; b++)
+        gmark(&g, b);
+    /* every file and folder: its blocks, moved where needed */
+    for (u32 n = 1; !r && n < sb.ninodes; n++) {
+        inode *i = (inode *)(it + (u64)n * 128);
+        if (i->type == T_FREE)
+            continue;
+        for (int k = 0; !r && k < NDIR; k++)
+            r = gdata(&g, &i->d[k]);
+        if (!r)
+            r = gptrs(&g, &i->ind, 1);
+        if (!r)
+            r = gptrs(&g, &i->dind, 2);
+    }
+    /* the prepared bitmap and inode table go behind everything that was moved */
+    growrec rec;
+    memset(&rec, 0, sizeof rec);
+    if (!r) {
+        rec.stage = g.next;
+        if ((u64)rec.stage + g.n.bmap_n + g.n.ino_n > blocks)
+            r = VE_NOSPC;
+    }
+    if (!r)
+        r = rawwn(rec.stage, g.n.bmap_n, g.bm);
+    if (!r)
+        r = rawwn(rec.stage + g.n.bmap_n, g.n.ino_n, it);
+    kfree(it);
+    kfree(g.bm);
+    if (!r && dev.fl())
+        r = VE_IO;
+    if (!r) { /* the record: from here on the growing is finished, also after a power failure */
+        memcpy(rec.magic, "VIOGROW1", 8);
+        rec.n = g.n;
+        rec.sum = gsum(&rec);
+        static u8 z[BS];
+        if (rawr(0, z))
+            r = VE_IO;
+        else {
+            memcpy(z + GROW_OFF, &rec, sizeof rec);
+            r = raww(0, z) || dev.fl() ? VE_IO : 0;
+        }
+    }
+    if (!r)
+        r = grow_finish(&rec);
+    if (prog)
+        prog(g.total, g.total);
+    cache_clear();
+    if (r) /* the old file system is still whole (or the record finishes it at the next start) */
+        return r;
+    sb = g.n;
+    hint = sb.data_start;
+    ihint = 2;
+    countfree();
+    return 0;
+}
 int vfs_mount(const vfs_dev *d) {
     dev = *d;
     cache_clear();
@@ -502,6 +775,18 @@ int vfs_mount(const vfs_dev *d) {
     if (rawr(0, b))
         return VE_IO;
     memcpy(&sb, b, sizeof sb);
+    {
+        growrec g; /* growing that a power failure interrupted: finish it */
+        memcpy(&g, b + GROW_OFF, sizeof g);
+        if (!memcmp(g.magic, "VIOGROW1", 8) && g.sum == gsum(&g) && !memcmp(sb.magic, "VIOFS2\0\0", 8) &&
+            g.n.blocks <= d->sectors / 8 && g.n.blocks > sb.blocks && g.stage >= g.n.data_start &&
+            (u64)g.stage + g.n.bmap_n + g.n.ino_n <= g.n.blocks) {
+            if (grow_finish(&g))
+                return VE_IO;
+            sb = g.n;
+            cache_clear();
+        }
+    }
     if (memcmp(sb.magic, "VIOFS2\0\0", 8) || sb.ver != 2 || sb.blocks > d->sectors / 8 ||
         sb.data_start >= sb.blocks || sb.ninodes < 3 || sb.bmap_start != 1 ||
         sb.ino_start != 1 + sb.bmap_n || (u64)sb.ninodes * 128 > (u64)sb.ino_n * BS ||
@@ -875,6 +1160,9 @@ int vfs_list(const char *path, int (*cb)(const vfs_ent *, void *), void *arg) {
     }
     return 0;
 }
+u64 vfs_size(void) {
+    return mounted ? (u64)sb.blocks * 8 : 0;
+}
 void vfs_usage(u64 *t, u64 *f, u32 *files) {
     if (!mounted) {
         *t = *f = 0;
@@ -884,12 +1172,18 @@ void vfs_usage(u64 *t, u64 *f, u32 *files) {
     }
     *t = (u64)(sb.blocks - sb.data_start) * BS;
     *f = freeblk * BS;
-    if (files) {
+    if (files) { /* the inode table in pieces of 16 blocks */
+        static u8 t[16 * BS];
         u32 c = 0;
-        for (u32 n = 2; n < sb.ninodes; n++) {
-            inode i;
-            if (!iget(n, &i) && i.type == T_FILE)
-                c++;
+        for (u32 m = 0; m < sb.ino_n; m += 16) {
+            u32 k = sb.ino_n - m > 16 ? 16 : sb.ino_n - m;
+            if (rawrn(sb.ino_start + m, k, t))
+                break;
+            for (u32 j = 0; j < k * (BS / 128); j++) {
+                u32 n = m * (BS / 128) + j;
+                if (n >= 2 && n < sb.ninodes && ((inode *)(t + (u64)j * 128))->type == T_FILE)
+                    c++;
+            }
         }
         *files = c;
     }
