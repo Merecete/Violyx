@@ -74,9 +74,25 @@ static u32 c2s(fatvol *v, u32 c) {
 static int cvalid(fatvol *v, u32 c) {
     return c >= 2 && c < v->clusters + 2;
 }
+/* Changes to the FAT can be collected (v->batch): the sector in buf is written to every FAT copy
+ * only when another sector is needed or at the end. Writing a file then costs one write per 128
+ * clusters instead of four per cluster, which matters a lot on USB sticks with small clusters. */
+static int fflush_(fatvol *v) {
+    if (!v->fdirty)
+        return 0;
+    v->fdirty = 0;
+    for (u32 f = 0; f < v->nfat; f++)
+        if (ws(v, v->cs + f * v->fatsz, v->buf))
+            return VE_IO;
+    return 0;
+}
 static int fsec(fatvol *v, u32 s) {
     if (v->cs == s)
         return 0;
+    if (fflush_(v)) {
+        v->cs = 0xFFFFFFFFu;
+        return VE_IO;
+    }
     int r = rs(v, s, v->buf);
     v->cs = r ? 0xFFFFFFFFu : s;
     return r;
@@ -105,6 +121,10 @@ static int put(fatvol *v, u32 c, u32 val) {
         return VE_IO;
     u32 o = (c % 128) * 4;
     W32(v->buf, o, (R32(v->buf, o) & 0xF0000000u) | (val & 0x0FFFFFFFu));
+    if (v->batch) {
+        v->fdirty = 1;
+        return 0;
+    }
     for (u32 f = 0; f < v->nfat; f++)
         if (ws(v, v->rsvd + f * v->fatsz + c / 128, v->buf))
             return VE_IO;
@@ -124,11 +144,16 @@ static u32 calloc_(fatvol *v) {
 }
 static void cfree(fatvol *v, u32 c) {
     v->ap_first = 0;
+    int was = v->batch;
+    v->batch = 1;
     for (u32 g = 0; cvalid(v, c) && g <= v->clusters; g++) {
         u32 n = get(v, c);
         put(v, c, 0);
         c = n;
     }
+    v->batch = was;
+    if (!was)
+        fflush_(v);
 }
 static int czero(fatvol *v, u32 c) {
     static u8 z[512];
@@ -432,6 +457,24 @@ int64_t fat_read_at(fatvol *v, const char *p, void *b, u64 off, u64 max) {
         v->cc_idx = skip + g;
         v->cc_clus = c;
         u32 s0 = c2s(v, c);
+        if (!in && sz - o >= cb * 2) { /* neighbouring clusters in one go (up to 64 KB) */
+            u32 k = 1, e = c, nx;
+            while ((u64)(k + 1) * cb <= sz - o && (u64)(k + 1) * v->spc <= 128 &&
+                   (nx = get(v, e)) == e + 1 && cvalid(v, nx)) {
+                e = nx;
+                k++;
+            }
+            if (k > 1) {
+                if (rsn(v, s0, k * v->spc, (u8 *)b + o))
+                    return VE_IO;
+                o += (u64)k * cb;
+                g += k - 1;
+                v->cc_idx = skip + g;
+                v->cc_clus = e;
+                c = get(v, e);
+                continue;
+            }
+        }
         for (u32 i = (u32)(in / 512); i < v->spc && o < sz; i++) {
             if (!(in % 512) && sz - o >= 1024) { /* whole sectors straight into the buffer */
                 u64 run = v->spc - i, m = (sz - o) / 512;
@@ -769,7 +812,7 @@ static int spl(fatvol *v, const char *p, u32 *dir, const char **n, int *l) {
         *dir = v->root;
     return cvalid(v, *dir) ? 0 : VE_IO;
 }
-int fat_write(fatvol *v, const char *p, const void *b, u64 len, u32 now) {
+static int fat_write_(fatvol *v, const char *p, const void *b, u64 len, u32 now) {
     if (len > 0xFFFFFFFFull)
         return VE_NOSPC;
     u32 dir;
@@ -796,48 +839,58 @@ int fat_write(fatvol *v, const char *p, const void *b, u64 len, u32 now) {
     u64 o = 0;
     u64 cb = (u64)v->spc * 512;
     static u8 s[512];
+    /* the new clusters, a few at a time; neighbouring ones are written in one go */
+    static u32 cl[256];
     while (o < len) {
-        u32 c = calloc_(v);
-        if (!c) {
-            if (first)
-                cfree(v, first);
-            return VE_NOSPC;
+        int k = 0;
+        for (u64 want = o; k < 256 && want < len; k++, want += cb) {
+            u32 c = calloc_(v);
+            if (!c) {
+                if (first)
+                    cfree(v, first);
+                return VE_NOSPC;
+            }
+            if (prev) {
+                if (put(v, prev, c)) {
+                    cfree(v, first);
+                    return VE_IO;
+                }
+            } else
+                first = c;
+            prev = c;
+            cl[k] = c;
         }
-        if (prev) {
-            if (put(v, prev, c)) {
+        for (int i = 0; i < k;) {
+            int j = i + 1;
+            while (j < k && cl[j] == cl[j - 1] + 1)
+                j++;
+            u64 bytes = (u64)(j - i) * cb;
+            if (bytes > len - o)
+                bytes = len - o;
+            u32 s0 = c2s(v, cl[i]), whole = (u32)(bytes / 512), rest = (u32)(bytes % 512);
+            if (whole && wsn(v, s0, whole, (const u8 *)b + o)) {
                 cfree(v, first);
                 return VE_IO;
             }
-        } else
-            first = c;
-        prev = c;
-        u32 s0 = c2s(v, c);
-        for (u32 i = 0; i < v->spc && o < len; i++) {
-            if (len - o >= 1024) { /* whole sectors straight from the buffer */
-                u64 run = v->spc - i, m = (len - o) / 512;
-                if (run > m)
-                    run = m;
-                if (run > 1) {
-                    if (wsn(v, s0 + i, (u32)run, (const u8 *)b + o)) {
-                        cfree(v, first);
-                        return VE_IO;
-                    }
-                    o += run * 512;
-                    i += (u32)run - 1;
-                    continue;
+            if (rest) { /* the end of the file: the last sector filled up with zeros */
+                memset(s, 0, 512);
+                memcpy(s, (const u8 *)b + o + (u64)whole * 512, rest);
+                if (ws(v, s0 + whole, s)) {
+                    cfree(v, first);
+                    return VE_IO;
                 }
             }
-            u64 k = len - o > 512 ? 512 : len - o;
-            memset(s, 0, 512);
-            memcpy(s, (const u8 *)b + o, k);
-            if (ws(v, s0 + i, s)) {
-                cfree(v, first);
-                return VE_IO;
-            }
-            o += k;
+            o += bytes;
+            i = j;
         }
     }
     (void)cb;
+    /* the chain must be on the disk before the directory entry points to it */
+    if (fflush_(v)) {
+        if (first)
+            cfree(v, first);
+        return VE_IO;
+    }
     v->d.fl();
     if (f.hit) {
         u32 old = ecl(f.r.e);
@@ -866,6 +919,16 @@ int fat_write(fatvol *v, const char *p, const void *b, u64 len, u32 now) {
     r = add(v, dir, nm, l, 0x20, first, (u32)len, now, 0);
     if (r && first)
         cfree(v, first);
+    return r;
+}
+int fat_write(fatvol *v, const char *p, const void *b, u64 len, u32 now) {
+    v->batch = 1;
+    int r = fat_write_(v, p, b, len, now);
+    v->batch = 0;
+    int f = fflush_(v);
+    if (!r && f)
+        r = VE_IO;
+    v->d.fl();
     return r;
 }
 /* Writes into cluster c from byte in on, at most len bytes; returns how many or < 0 */
@@ -902,7 +965,7 @@ static int64_t cwrite(fatvol *v, u32 c, u32 in, const u8 *b, u64 len) {
 }
 /* Adds len bytes to the end of an existing file: the free rest of its last cluster first, then
  * new clusters. The size in the directory entry changes last. */
-int fat_append(fatvol *v, const char *p, const void *buf, u64 len, u32 now) {
+static int fat_append_(fatvol *v, const char *p, const void *buf, u64 len, u32 now) {
     dent d;
     u32 par;
     int root;
@@ -970,6 +1033,10 @@ int fat_append(fatvol *v, const char *p, const void *buf, u64 len, u32 now) {
         }
         o += (u64)n;
     }
+    if (fflush_(v)) { /* the chain first, then the size in the directory */
+        r = VE_IO;
+        goto fail;
+    }
     v->d.fl();
     static u8 t[512];
     if (rs(v, d.sec, t)) {
@@ -1001,6 +1068,14 @@ fail:
     if (nfirst)
         cfree(v, nfirst);
     v->ap_first = 0;
+    return r;
+}
+int fat_append(fatvol *v, const char *p, const void *buf, u64 len, u32 now) {
+    v->batch = 1;
+    int r = fat_append_(v, p, buf, len, now);
+    v->batch = 0;
+    if (fflush_(v) && !r)
+        r = VE_IO;
     return r;
 }
 int fat_mkdir(fatvol *v, const char *p, u32 now) {

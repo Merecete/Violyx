@@ -65,8 +65,12 @@ static void decode(view_t *v, int cols, int rows) {
                          ui_rgb(C_PANEL) | (long)(v->fit ? 1 : 0) << 24, 15000, 0);
     int c = k >= 12 ? o[0] | o[1] << 8 : 0, r = k >= 12 ? o[2] | o[3] << 8 : 0;
     if (k < 12 || c < 1 || c > 240 || r < 1 || r > 100 || k != 12 + (long)c * r * 32) {
+        if (k == 12 && !c && !r) { /* the decoder says: too big */
+            v->iw = o[4] | o[5] << 8;
+            v->ih = o[6] | o[7] << 8;
+        }
         kfree(o);
-        v->err = VE_FORMAT;
+        v->err = k == 12 && !c && !r ? VE_NOSPC : VE_FORMAT;
         return;
     }
     kfree(v->px);
@@ -132,7 +136,9 @@ static void vw_draw(win_t *w) {
     for (int x = 0; x < cols; x++)
         cput(w, x, rows, ' ', AT(C_RAISE, C_LAV));
     char b[80];
-    if (v->iw)
+    if (v->iw && v->err)
+        ksnprintf(b, 80, " %d x %d", v->iw, v->ih);
+    else if (v->iw)
         ksnprintf(b, 80, " %d x %d  %s", v->iw, v->ih,
                   v->fit          ? TR("angepasst", "fitted")
                   : v->sw < v->iw ? TR("verkleinert", "scaled down")

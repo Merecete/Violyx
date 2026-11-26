@@ -100,13 +100,17 @@ Mbed TLS, just like the Violyx browser does.
 A package built with `--saver` (in `VPKFLAGS`) is a screen saver: after installing it, it appears in
 the settings under **Screen saver** instead of under F2 (Violyx 0.3.7 and later). Violyx starts it
 in full screen when nobody types and ends it at the first key. `vx_saver_size()` gives the size of
-the screen in pixels (`width << 16 | height`, below 0 when it runs as a normal program),
+the picture (`width << 16 | height`, below 0 when it runs as a normal program); depending on the
+screen it can be as small as 320 x 200, so draw everything relative to it.
 `vx_saver_show(px, w, h)` shows a picture of `w x h` pixels in the 256 colours, stretched to the
 whole screen; a half or a quarter of the size is faster and often looks just as good. Wait between
 pictures with `vx_wait(30)` or so. Dialogs are not possible in a screen saver. If it ends or fails,
-the Violyx logo takes over. `examples/starfield.c` and `examples/plasma.c` show how it works:
+the Violyx logo takes over. Build it like any program, with the flag:
 
-    make APP=examples/starfield NAME=starfield TITLE=Sternenflug VPKFLAGS='--saver --author You'
+    make APP=examples/mysaver NAME=mysaver TITLE='My saver' VPKFLAGS='--saver --author You'
+
+Ready-made screen savers, with their source code, are in the
+[Violyx App Store](https://merecete.org/violyx/store.html#savers).
 
 ## Sound
 

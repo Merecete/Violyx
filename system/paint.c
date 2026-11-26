@@ -62,7 +62,7 @@ static int pimport(const char *p, u8 *out) {
         return r;
     if (e.dir)
         return VE_INVAL;
-    if (!e.size || e.size > (32u << 20))
+    if (!e.size || e.size > (48u << 20))
         return e.size ? VE_NOSPC : VE_FORMAT;
     u8 *d = kmalloc(e.size), *o = kmalloc(12 + WSZ);
     if (!d || !o) {
@@ -78,7 +78,7 @@ static int pimport(const char *p, u8 *out) {
         memcpy(out, o + 12, WSZ);
     kfree(d);
     kfree(o);
-    return k == 12 + WSZ ? 0 : k < 0 ? (int)k : VE_FORMAT;
+    return k == 12 + WSZ ? 0 : k < 0 ? (int)k : k == 12 ? VE_NOSPC : VE_FORMAT;
 }
 static u8 cv[WSZ], und[WSZ];
 static const u8 QP[16] = {16, 231, 244, 196, 208, 226, 46,     51,

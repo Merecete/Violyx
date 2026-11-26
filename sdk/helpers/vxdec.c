@@ -81,7 +81,7 @@ static void *a_realloc(void *p, size_t n) {
 #define STBI_NO_PNM
 #define STBI_NO_FAILURE_STRINGS
 #define STBI_NO_THREAD_LOCALS
-#define STBI_MAX_DIMENSIONS 8192
+#define STBI_MAX_DIMENSIONS 30000 /* JPEG photos; other formats stay below 12 megapixels */
 #define STBI_ASSERT(x)      ((void)0)
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
@@ -104,13 +104,21 @@ static int px_info(const uint8_t *in, int n, int *w, int *h) {
 #endif
     return stbi_info_from_memory(in, n, w, h, &c);
 }
-static uint8_t *px_load(const uint8_t *in, int n, int *w, int *h) {
+static int is_jpeg(const uint8_t *in, int n) {
+    return n >= 4 && in[0] == 0xff && in[1] == 0xd8 && !is_webp(in, n);
+}
+/* sh > 0 decodes a JPEG at 1/2, 1/4 or 1/8 of its size: a photo of any size then needs little
+ * memory (w and h receive the smaller size) */
+static uint8_t *px_load(const uint8_t *in, int n, int *w, int *h, int sh) {
     int c;
 #ifdef VXDEC_WEBP
     if (is_webp(in, n))
         return WebPDecodeRGBA(in, (size_t)n, w, h);
 #endif
-    return stbi_load_from_memory(in, n, w, h, &c, 4);
+    stbi__vx_shift = is_jpeg(in, n) ? sh : 0;
+    uint8_t *p = stbi_load_from_memory(in, n, w, h, &c, 4);
+    stbi__vx_shift = 0;
+    return p;
 }
 static void px_free(const uint8_t *in, int n, uint8_t *p) {
 #ifdef VXDEC_WEBP
@@ -152,6 +160,13 @@ static uint8_t nearest(int r, int g, int b) {
     int v = 8 + 10 * gi, e = sq(r - v) + sq(g - v) + sq(b - v);
     return e < d ? (uint8_t)(232 + gi) : (uint8_t)(16 + 36 * cr + 6 * cg + cb);
 }
+/* Too large to decode: modes 2 and 3 answer with a header of 0 x 0 cells and the size */
+static void too_big(int mode, int hd, int w, int h) {
+    if (mode < 2)
+        return;
+    uint8_t o[12] = {0, 0, 0, 0, (uint8_t)w, (uint8_t)(w >> 8), (uint8_t)h, (uint8_t)(h >> 8)};
+    out(o, hd, 0);
+}
 /* Mode 0 (browser): 4-byte header, tiny images are skipped. Mode 2 (image viewer): 12-byte header
  * that also holds the original and the shown size; bit 24 of bg enlarges small images to fit, bit
  * 25 fills the whole area and cuts off what sticks out (for a background). */
@@ -170,16 +185,20 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
         }
         bg = 0;
     }
-    if (!px_info(in, n, &w, &h) || w < 1 || h < 1 || (long)w * h > 12000000L)
+    if (!px_info(in, n, &w, &h) || w < 1 || h < 1)
         return;
+    /* Most formats are decoded whole, so they may have up to 12 megapixels. JPEG photos are decoded
+     * at a smaller scale when they are big, so they can be much larger. */
+    int jpg = is_jpeg(in, n);
+    if ((long)w * h > (jpg ? 400000000L : 12000000L)) {
+        too_big(mode, hd, w, h);
+        return;
+    }
     if (mode == 0 && (w < MINPX || h < MINPX)) {
         uint8_t z[4] = {0, 0, 0, 0};
         out(z, 4, 0);
         return;
     }
-    uint8_t *p = px_load(in, n, &w, &h);
-    if (!p)
-        return;
     /* A cell has 4x8 pixels. Small images stay 1:1, large ones are scaled down to fit, the rest
      * stays background. */
     long dw = w, dh = h, sx = 0, sy = 0, sw = w, sh = h; /* the part of the image used */
@@ -232,6 +251,32 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
         dw = 1;
     if (dh < 1)
         dh = 1;
+    /* a big JPEG: decode it only as large as needed, at least as large as it is shown */
+    int scale = 0;
+    if (jpg)
+        while (scale < 3 && (sw >> (scale + 1)) >= dw && (sh >> (scale + 1)) >= dh)
+            scale++;
+    int lw = w, lh = h;
+    uint8_t *p = px_load(in, n, &lw, &lh, scale);
+    if (!p) {
+        if ((long)w * h > 12000000L)
+            too_big(mode, hd, w, h); /* a progressive JPEG needs all of it at once */
+        return;
+    }
+    if (lw != w || lh != h) { /* the part used, in the smaller picture */
+        sx = sx * lw / w;
+        sy = sy * lh / h;
+        sw = sw * lw / w;
+        sh = sh * lh / h;
+        if (sw < 1)
+            sw = 1;
+        if (sh < 1)
+            sh = 1;
+        if (sx + sw > lw)
+            sx = lw - sw;
+        if (sy + sh > lh)
+            sy = lh - sh;
+    }
     long cols = (dw + 3) / 4, rows = (dh + 7) / 8;
     long pw = cols * 4, ph = rows * 8;
     if (mode == 3) {
@@ -275,7 +320,7 @@ static void image(int mode, const uint8_t *in, int n, int maxc, int maxr, uint32
                 x1 = x0 + 1;
             long sr = 0, sg = 0, sb = 0, sa = 0, cnt = 0;
             for (long j = y0; j < y1; j++) {
-                const uint8_t *q = p + (j * w + x0) * 4;
+                const uint8_t *q = p + (j * lw + x0) * 4;
                 for (long i = x0; i < x1; i++, q += 4) {
                     int a = q[3];
                     sr += (q[0] * a + br * (255 - a)) / 255;

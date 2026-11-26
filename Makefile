@@ -187,7 +187,7 @@ build/exfat.o: build/cp437.h kernel/exfat.h kernel/viofs.h
 build/format.o: build/cp437.h build/upcase.h kernel/format.h kernel/viofs.h
 build/drives.o: kernel/fat.h kernel/exfat.h kernel/format.h kernel/viofs.h
 build/clock.o: kernel/clockface.h kernel/sintab.h
-build/%.o: kernel/%.c kernel/os.h kernel/version.h kernel/str.h
+build/%.o: kernel/%.c $(wildcard kernel/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -Ibuild $(INC) -c $< -o $@
 build/lw/%.o: $(LW)/%.c kernel/lwip_port/lwipopts.h

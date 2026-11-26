@@ -1,5 +1,28 @@
 /* Files: the file manager, a program in ring 3 */
 #include "common.h"
+/* music files open in XZN */
+static int is_music(const char *p) {
+    static const char *const ex[] = {".mp3", ".mp2", ".mp1", ".mpa", ".ogg", ".oga",
+                                     ".flac", ".wav", ".aif", ".aiff", ".aifc", ".caf",
+                                     ".wv",  ".tta", ".dsf", ".dff", ".mka", ".ac3"};
+    size_t l = strlen(p);
+    for (unsigned i = 0; i < sizeof ex / sizeof ex[0]; i++) {
+        size_t e = strlen(ex[i]), k = 0;
+        if (l <= e)
+            continue;
+        while (k < e) {
+            char c = p[l - e + k];
+            if (c >= 'A' && c <= 'Z')
+                c += 32;
+            if (c != ex[i][k])
+                break;
+            k++;
+        }
+        if (k == e)
+            return 1;
+    }
+    return 0;
+}
 /* ---------- Files ---------- */
 typedef struct {
     char cwd[VFS_PATH];
@@ -148,6 +171,9 @@ static void fm_key(win_t *w, key_t k) {
                     return;
             } else if (view_is_image(p)) {
                 app_view(p);
+                return;
+            } else if (is_music(p)) { /* XZN plays it, a running XZN takes it into its list */
+                prog_open("xzn", p);
                 return;
             } else {
                 app_write(p);

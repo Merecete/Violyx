@@ -1969,6 +1969,7 @@ typedef struct
       int dc_pred;
 
       int x,y,w2,h2;
+      int sw2,sh2; // Violyx: size of the plane when decoded at a smaller scale
       stbi_uc *data;
       void *raw_data, *raw_coeff;
       stbi_uc *linebuf;
@@ -2946,6 +2947,31 @@ static void stbi__jpeg_reset(stbi__jpeg *j)
    // since we don't even allow 1<<30 pixels
 }
 
+// Violyx: JPEGs can be decoded at 1/2, 1/4 or 1/8 of their size (stbi__vx_shift = 1, 2, 3), so
+// that large photos need only a fraction of the memory. Every 8x8 block is transformed as usual
+// and then averaged down to 4x4, 2x2 or 1x1 pixels.
+static int stbi__vx_shift;
+static void stbi__vx_idct(stbi__jpeg *z, int n, int x, int y, short *data)
+{
+   int sh = stbi__vx_shift;
+   if (!sh) {
+      z->idct_block_kernel(z->img_comp[n].data+z->img_comp[n].w2*y+x, z->img_comp[n].w2, data);
+   } else {
+      STBI_SIMD_ALIGN(stbi_uc, t[64]);
+      int b = 8 >> sh, f = 1 << sh, i, j, u, v, st = z->img_comp[n].sw2;
+      stbi_uc *o = z->img_comp[n].data + st*(y >> sh) + (x >> sh);
+      z->idct_block_kernel(t, 8, data);
+      for (j=0; j < b; ++j)
+         for (i=0; i < b; ++i) {
+            int sum = 0;
+            for (v=0; v < f; ++v)
+               for (u=0; u < f; ++u)
+                  sum += t[(j*f+v)*8 + i*f+u];
+            o[j*st+i] = (stbi_uc) ((sum + f*f/2) >> (2*sh));
+         }
+   }
+}
+
 static int stbi__parse_entropy_coded_data(stbi__jpeg *z)
 {
    stbi__jpeg_reset(z);
@@ -2964,7 +2990,7 @@ static int stbi__parse_entropy_coded_data(stbi__jpeg *z)
             for (i=0; i < w; ++i) {
                int ha = z->img_comp[n].ha;
                if (!stbi__jpeg_decode_block(z, data, z->huff_dc+z->img_comp[n].hd, z->huff_ac+ha, z->fast_ac[ha], n, z->dequant[z->img_comp[n].tq])) return 0;
-               z->idct_block_kernel(z->img_comp[n].data+z->img_comp[n].w2*j*8+i*8, z->img_comp[n].w2, data);
+               stbi__vx_idct(z, n, i*8, j*8, data);
                // every data block is an MCU, so countdown the restart interval
                if (--z->todo <= 0) {
                   if (z->code_bits < 24) stbi__grow_buffer_unsafe(z);
@@ -2992,7 +3018,7 @@ static int stbi__parse_entropy_coded_data(stbi__jpeg *z)
                         int y2 = (j*z->img_comp[n].v + y)*8;
                         int ha = z->img_comp[n].ha;
                         if (!stbi__jpeg_decode_block(z, data, z->huff_dc+z->img_comp[n].hd, z->huff_ac+ha, z->fast_ac[ha], n, z->dequant[z->img_comp[n].tq])) return 0;
-                        z->idct_block_kernel(z->img_comp[n].data+z->img_comp[n].w2*y2+x2, z->img_comp[n].w2, data);
+                        stbi__vx_idct(z, n, x2, y2, data);
                      }
                   }
                }
@@ -3089,7 +3115,7 @@ static void stbi__jpeg_finish(stbi__jpeg *z)
             for (i=0; i < w; ++i) {
                short *data = z->img_comp[n].coeff + 64 * (i + j * z->img_comp[n].coeff_w);
                stbi__jpeg_dequantize(data, z->dequant[z->img_comp[n].tq]);
-               z->idct_block_kernel(z->img_comp[n].data+z->img_comp[n].w2*j*8+i*8, z->img_comp[n].w2, data);
+               stbi__vx_idct(z, n, i*8, j*8, data);
             }
          }
       }
@@ -3334,7 +3360,9 @@ static int stbi__process_frame_header(stbi__jpeg *z, int scan)
       z->img_comp[i].coeff = 0;
       z->img_comp[i].raw_coeff = 0;
       z->img_comp[i].linebuf = NULL;
-      z->img_comp[i].raw_data = stbi__malloc_mad2(z->img_comp[i].w2, z->img_comp[i].h2, 15);
+      z->img_comp[i].sw2 = z->img_comp[i].w2 >> stbi__vx_shift;
+      z->img_comp[i].sh2 = z->img_comp[i].h2 >> stbi__vx_shift;
+      z->img_comp[i].raw_data = stbi__malloc_mad2(z->img_comp[i].sw2, z->img_comp[i].sh2, 15);
       if (z->img_comp[i].raw_data == NULL)
          return stbi__free_jpeg_components(z, i+1, stbi__err("outofmem", "Out of memory"));
       // align blocks for idct using mmx/sse
@@ -3443,6 +3471,17 @@ static int stbi__decode_jpeg_image(stbi__jpeg *j)
    }
    if (j->progressive)
       stbi__jpeg_finish(j);
+   if (stbi__vx_shift) { // Violyx: from here on the picture is the smaller one
+      int f = 1 << stbi__vx_shift;
+      for (m = 0; m < j->s->img_n; m++) {
+         j->img_comp[m].x = (j->img_comp[m].x + f-1) >> stbi__vx_shift;
+         j->img_comp[m].y = (j->img_comp[m].y + f-1) >> stbi__vx_shift;
+         j->img_comp[m].w2 = j->img_comp[m].sw2;
+         j->img_comp[m].h2 = j->img_comp[m].sh2;
+      }
+      j->s->img_x = (j->s->img_x + f-1) >> stbi__vx_shift;
+      j->s->img_y = (j->s->img_y + f-1) >> stbi__vx_shift;
+   }
    return 1;
 }
 

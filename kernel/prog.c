@@ -1419,7 +1419,20 @@ static int load(const u8 *b, u64 n, const char *base) {
     p->bi = -1;
     p->state = P_RUN;
     lastp = p;
-    p->w = win_open(h->title, (80 - h->cols - 2) / 2, 1 + (21 - h->rows) / 2, h->cols + 2,
+    /* the built-in programs carry German titles; in English their window starts with the English
+     * one (most programs set their own title soon after, the image viewer only once the picture
+     * is decoded) */
+    static const char *const tt[][2] = {
+        {"Rechner", "Calculator"},   {"Kalender", "Calendar"},    {"Uhr", "Clock"},
+        {"Sprachnotizen", "Voice notes"}, {"Schreiben", "Write"}, {"Bildbetrachter", "Image viewer"},
+        {"Malprogramm", "Paint"},    {"Dateien", "Files"},        {"Befehle", "Commands"},
+        {"Aktualisieren", "Update"}};
+    const char *title = h->title;
+    if (cfg_lang)
+        for (unsigned i = 0; i < sizeof tt / sizeof tt[0]; i++)
+            if (!strcmp(title, tt[i][0]))
+                title = tt[i][1];
+    p->w = win_open(title, (80 - h->cols - 2) / 2, 1 + (21 - h->rows) / 2, h->cols + 2,
                     h->rows + 2, &pw_app, p);
     if (!p->w)
         goto oom;
@@ -1496,7 +1509,7 @@ static const struct {
 } builtin[] = {{"snake", pkg_snake, sizeof pkg_snake, 0, 0, 0},
                {"bricks", pkg_bricks, sizeof pkg_bricks, 0, 0, 0},
                {"novastrike", pkg_novastrike, sizeof pkg_novastrike, 0, 0, 0},
-               {"xzn", pkg_xzn, sizeof pkg_xzn, 0, 0, 0},
+               {"xzn", pkg_xzn, sizeof pkg_xzn, 0, 1, 0},
                {"pong", pkg_pong, sizeof pkg_pong, 0, 0, 0},
                {"invaders", pkg_invaders, sizeof pkg_invaders, 0, 0, 0},
                {"chomp", pkg_chomp, sizeof pkg_chomp, 0, 0, 0},

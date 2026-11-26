@@ -171,6 +171,8 @@ static long total, dec_pos;   /* source frames */
 static long t_start, base_ms; /* mix position where the track began, and its offset */
 static long written, flushed; /* frames written to the kernel */
 static int pend = -1;
+static long moved_at = -1000; /* a track was moved: its arrow button lights up */
+static int moved_dir;
 static long pend_at, pend_base;
 /* What the screen shows about the track you hear. With gapless playing the next track is
  * already loaded (fmt, srate ... are its values) while the last one still plays. */
@@ -2316,6 +2318,7 @@ static void draw_help(void) {
                                      "Tab  Playlist bedienen, Enter spielt",
                                      "A  Dateien und Ordner hinzufuegen",
                                      "Entf  Titel entfernen",
+                                     "Umschalt+Hoch/Runter  Titel verschieben",
                                      "X  Liste leeren",
                                      "/  Suchen",
                                      "AUDIO-CD",
@@ -2341,6 +2344,7 @@ static void draw_help(void) {
                                      "Tab  Use the playlist, Enter plays",
                                      "A  Add files and folders",
                                      "Del  Remove track",
+                                     "Shift+Up/Down  Move track",
                                      "X  Clear list",
                                      "/  Search",
                                      "AUDIO CD",
@@ -2350,7 +2354,7 @@ static void draw_help(void) {
     fillr(1, 0, W - 2, H, S->raised);
     tx(3, 0, vx_english() ? "KEYS  (F1, H or Esc closes)" : "TASTEN  (F1, H oder Esc schliesst)",
        S->lcd, S->raised, 40);
-    int x = 3, y = 1, half_ = W >= 70 ? 12 : 99, n = 0;
+    int x = 3, y = 1, half_ = W >= 70 ? 11 : 99, n = 0;
     for (int i = 0; t[i]; i++, n++) {
         if (n == half_) {
             x = W / 2;
@@ -2691,7 +2695,19 @@ static void draw(long t) {
     y++;
     spectrum(y, spec, W, W >= 120 ? 60 : W / 2);
     y += spec;
-    draw_list(y, H - y - 2);
+    draw_list(y, H - y - 3);
+    /* below the list, at the right like in the original: the arrow buttons that move the
+       selected track (Shift+Up/Down) */
+    fillr(0, H - 2, W, 1, S->panel);
+    {
+        int on = vx_ms() - moved_at < 250;
+        const char *h = vx_english() ? "Shift+Up/Down" : "Umschalt+Hoch/Runter";
+        int hl = (int)strlen(h);
+        if (W >= hl + 14)
+            tx(W - 10 - hl - 1, H - 2, h, S->dim, S->panel, hl);
+        button(W - 9, H - 2, "\x1E", on && moved_dir < 0);
+        button(W - 5, H - 2, "\x1F", on && moved_dir > 0);
+    }
     y = H - 1;
     fillr(0, y, W, 1, S->raised);
     if (overlay == O_FIND) {
@@ -2766,8 +2782,61 @@ static void set_mini(int on) {
 }
 static void set_overlay(int o);
 static void set_mini(int on);
+/* Shift+Up/Down in the playlist: the selected track moves one place up or down, like the arrow
+ * buttons of the original. The track playing stays the one playing. */
+static void move_track(int d) {
+    moved_at = vx_ms();
+    moved_dir = d;
+    int a = sel, b = sel + d;
+    if (a < 0 || b < 0 || a >= nt || b >= nt)
+        return;
+    track t = list[a];
+    list[a] = list[b];
+    list[b] = t;
+#define SWAPI(v)                                                                                   \
+    do {                                                                                           \
+        if ((v) == a)                                                                              \
+            (v) = b;                                                                               \
+        else if ((v) == b)                                                                         \
+            (v) = a;                                                                               \
+    } while (0)
+    SWAPI(cur);
+    SWAPI(shown);
+    SWAPI(pend);
+#undef SWAPI
+    sel = b;
+    save_list();
+}
+/* A music file opened from Files (Enter on it): into the playlist and play it right away. A
+ * second one while XZN runs comes the same way. */
+static int open_arg(void) {
+    char a[PATHN + 8];
+    long q[2] = {(long)a, (long)sizeof a};
+    if (vx_sys(30, 1, (long)q, 0) < 0 || !a[0] || strlen(a) >= PATHN || !audio_name(a))
+        return 0;
+    int i = 0;
+    while (i < nt && strcmp(list[i].path, a))
+        i++;
+    if (i == nt) {
+        char nm[NAMEN];
+        base_name(a, nm, NAMEN);
+        add_track(a, nm);
+        if (i == nt) /* the list is full */
+            return 0;
+        save_list();
+    }
+    set_overlay(O_NONE);
+    sel = i;
+    if (au_free() >= 0) /* without a sound card it waits in the list */
+        play(i, 0, 0);
+    return 1;
+}
 static void key(int full) {
     int k = full & 0xFFFF, sh = (full >> 16) & 1;
+    if (k == 0x1BE) { /* Files sent another music file */
+        open_arg();
+        return;
+    }
     if (k >= VK_MENU && k < VK_MENU + 4) { /* the XZN menu in the menu bar */
         if (k == VK_MENU + 3) {
             set_overlay(O_NONE);
@@ -2845,11 +2914,15 @@ static void key(int full) {
         int page = H > 24 ? H - 16 : 8;
         switch (k) {
             case VK_UP:
-                if (sel)
+                if (sh)
+                    move_track(-1);
+                else if (sel)
                     sel--;
                 return;
             case VK_DOWN:
-                if (sel < nt - 1)
+                if (sh)
+                    move_track(1);
+                else if (sel < nt - 1)
                     sel++;
                 return;
             case VK_PGUP:
@@ -3054,8 +3127,11 @@ int main(void) {
         vx_sys(23, 4, 50, 4);
     eq_update();
     set_gain();
+    int opened = open_arg(); /* started with a music file from Files */
     if (au_free() < 0)
         errmsg = vx_english() ? "No sound card found" : "Keine Soundkarte gefunden";
+    else if (opened)
+        ;
     else if (nt) { /* the last track waits at its position: Space starts it */
         cur = st.cur >= 0 && st.cur < nt ? st.cur : 0;
         resume_ms = (long)st.pos * 1000;

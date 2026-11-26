@@ -10,6 +10,7 @@ typedef struct {
     uint32_t cc_first, cc_idx, cc_clus; /* last position in a cluster chain */
     uint32_t ap_first, ap_size, ap_last; /* end of the file appended to last */
     uint8_t buf[512];
+    int fdirty, batch; /* the FAT sector in buf is changed but not yet written; collect changes */
     int ok;
 } fatvol;
 int fat_mount(fatvol *v, const vfs_dev *d);
